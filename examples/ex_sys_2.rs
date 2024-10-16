@@ -1,13 +1,13 @@
 /// Bateman example
 /// showing use of BDF, RK, and EPIRK time integrators
 use faer::prelude::*;
-use matexp_rs::ode_sys::*;
-use matexp_rs::ode_bdf;
-use matexp_rs::ode_rk;
-use matexp_rs::ode_epirk;
-use matexp_rs::matexp_krylov;
-use matexp_rs::ode_test_common::*;
-use plotters::prelude::*;
+use ormatex::ode_sys::*;
+use ormatex::ode_bdf;
+use ormatex::ode_rk;
+use ormatex::ode_epirk;
+use ormatex::matexp_krylov;
+use ormatex::ode_test_common::*;
+// use plotters::prelude::*;
 
 
 pub fn main() {
@@ -60,58 +60,58 @@ pub fn main() {
         println!("{:?}, {:?}, {:?}, {:?}", t_points[i], c0[i], c1[i], c2[i]);
     }
 
-    plot_time_series(t_points.clone(), c0.clone(), c1.clone(), c2.clone());
+    // plot_time_series(t_points.clone(), c0.clone(), c1.clone(), c2.clone());
 }
 
 
-fn plot_time_series(t: Vec<f64>, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), Box<dyn std::error::Error>> {
-    let root = BitMapBackend::new("ex_bateman.png", (640, 480)).into_drawing_area();
-    root.fill(&WHITE)?;
-    let mut chart = ChartBuilder::on(&root)
-        .margin(5)
-        .x_label_area_size(30)
-        .y_label_area_size(30)
-        .build_cartesian_2d((0f64..10000f64).log_scale(), (1e-9f64..2.0f64).log_scale())?;
-
-    chart.configure_mesh()
-        .y_desc("Population")
-        .x_desc("Time")
-        .draw()?;
-
-    chart
-        .draw_series(LineSeries::new(
-            // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-            t.clone().into_iter().zip(x),
-            &RED,
-        ))?
-        .label("n0")
-        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
-
-    chart
-        .draw_series(LineSeries::new(
-            // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-            t.clone().into_iter().zip(y),
-            &BLUE,
-        ))?
-        .label("n1")
-        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
-
-    chart
-        .draw_series(LineSeries::new(
-            // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-            t.clone().into_iter().zip(z),
-            &GREEN,
-        ))?
-        .label("n2")
-        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
-
-    chart
-        .configure_series_labels()
-        .background_style(&WHITE.mix(0.8))
-        .border_style(&BLACK)
-        .draw()?;
-
-    root.present()?;
-
-    Ok(())
-}
+// fn plot_time_series(t: Vec<f64>, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), Box<dyn std::error::Error>> {
+//     let root = BitMapBackend::new("ex_bateman.png", (640, 480)).into_drawing_area();
+//     root.fill(&WHITE)?;
+//     let mut chart = ChartBuilder::on(&root)
+//         .margin(5)
+//         .x_label_area_size(30)
+//         .y_label_area_size(30)
+//         .build_cartesian_2d((0f64..10000f64).log_scale(), (1e-9f64..2.0f64).log_scale())?;
+// 
+//     chart.configure_mesh()
+//         .y_desc("Population")
+//         .x_desc("Time")
+//         .draw()?;
+// 
+//     chart
+//         .draw_series(LineSeries::new(
+//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
+//             t.clone().into_iter().zip(x),
+//             &RED,
+//         ))?
+//         .label("n0")
+//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+// 
+//     chart
+//         .draw_series(LineSeries::new(
+//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
+//             t.clone().into_iter().zip(y),
+//             &BLUE,
+//         ))?
+//         .label("n1")
+//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
+// 
+//     chart
+//         .draw_series(LineSeries::new(
+//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
+//             t.clone().into_iter().zip(z),
+//             &GREEN,
+//         ))?
+//         .label("n2")
+//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
+// 
+//     chart
+//         .configure_series_labels()
+//         .background_style(&WHITE.mix(0.8))
+//         .border_style(&BLACK)
+//         .draw()?;
+// 
+//     root.present()?;
+// 
+//     Ok(())
+// }
