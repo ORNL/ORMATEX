@@ -5,7 +5,7 @@
 ORMATEX contains methods to compute the matrix exponential:  $`\mathrm{exp}(A t)`$, and the action of the matrix exponential on a vector: $`\mathrm{exp}(A t)v_0`$, where $`A`$ is a matrix.  Additionally, this package contains related methods for the $`\varphi`$-functions.  Krylov methods to evaluate the matrix exponential-vector and $`\varphi`$-vector products are provided for cases where $`A`$ is large and sparse.
 Utilizing these methods, ORMATEX implements performant exponential integrators for large systems of coupled ODEs.
 
-ORMATEX is a mixed Rust and Python package. ORMATEX provides an extensible foundation to construct advanced exponential integrators.
+ORMATEX is a mixed Rust and Python package that provides an extensible foundation to construct advanced exponential integrators.
 
 The current set of implemented and planned time integration methods in each language:
 
