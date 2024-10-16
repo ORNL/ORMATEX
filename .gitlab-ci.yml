@@ -1,0 +1,45 @@
+stages:
+  - test
+
+before_script:
+  - echo $PATH
+  - rustup update
+
+variables:
+  GIT_STRATEGY: clone
+
+debug:
+  stage: test
+  only:
+    - merge_requests
+    - web
+    - schedules
+  tags:
+    - linux
+  artifacts:
+    paths:
+      - test.out
+    expire_in: 1 week
+    when: always
+  script:
+    - cargo clean
+    - cargo build
+    - cargo test -- --nocapture |& tee test.out
+
+release:
+  stage: test
+  only:
+    - merge_requests
+    - web
+    - schedules
+  tags:
+    - linux
+  artifacts:
+    paths:
+      - test_rel.out
+    expire_in: 1 week
+    when: always
+  script:
+    - cargo clean
+    - cargo build --release
+    - cargo test --release |& tee test_rel.out
