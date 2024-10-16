@@ -56,10 +56,13 @@ Classic integrators:
 - jax
 - numpy
 - scipy
+- python3.8+
 
 ### Install
 
-TODO
+For a local development install, run:
+
+    pip install -e .
 
 ### Use
 
