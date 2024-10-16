@@ -1,8 +1,5 @@
 # ORMATEX
 
-About
-=====
-
 **O**ak **R**idge **MAT**rix **EX**ponential tools.
 
 ORMATEX contains methods to compute the matrix exponential:  $`\mathrm{exp}(A t)`$, and the action of the matrix exponential on a vector: $`\mathrm{exp}(A t)v_0`$, where $`A`$ is a matrix.  Additionally, this package contains related methods for the $`\varphi`$-functions.  Krylov methods to evaluate the matrix exponential-vector and $`\varphi`$-vector products are provided for cases where $`A`$ is large and sparse.
@@ -34,11 +31,15 @@ Classic integrators:
 
 ### Python
 
+Exponential integrators:
+
 - [ ] EPIRK2
 - [ ] EPIRK3
 - [ ] EPIRK4
 - [ ] EXPROS4
 - [ ] EXPROS2
+
+Classic integrators:
 
 - [ ] RK1,RK2,RK3,RK4
 - [ ] Backward Euler
@@ -46,6 +47,7 @@ Classic integrators:
 - [ ] Crank-Nicolson
 - [ ] DIRK
 - [ ] SDIRK
+
 
 # Python Setup
 
@@ -64,6 +66,21 @@ TODO
 TODO
 
 # Rust Setup
+
+Download rustup: https://www.rust-lang.org/tools/install
+
+Then, get rust dev stuff:
+
+    rustup toolchain install stable
+
+rustup handles installing the rust toolchain.
+For improved editing, install the language server for rust (lsp), rust-analyzer:
+
+    rustup component add rust-analyzer
+
+To update rust toolchain
+
+    rustup update
 
 ### Build
 
@@ -94,22 +111,6 @@ Expected result from the Bateman system in the sectiond example integrated with 
 
 ![plot](./docs/images/ex_bateman.png)
 
-### Rust Setup
-
-Download rustup: https://www.rust-lang.org/tools/install
-
-Then, get rust dev stuff:
-
-    rustup toolchain install stable
-
-rustup handles installing the rust toolchain.
-For improved editing, install the language server for rust (lsp), rust-analyzer:
-
-    rustup component add rust-analyzer
-
-To update rust toolchain
-
-    rustup update
 
 License
 ========
