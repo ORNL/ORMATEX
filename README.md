@@ -57,6 +57,9 @@ Classic integrators:
 - numpy
 - scipy
 - python3.8+
+- equinox
+- matplotlib
+- scikit-fem
 
 ### Install
 
