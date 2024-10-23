@@ -48,7 +48,7 @@ def gen_bateman_matrix(keymap: List, bateman_lib: Dict) -> jax.Array:
             dest = keydict[child_species]
             dest = int(dest)
             bat_mat[dest,i] = decay_const
-        bat_mat[i,dest] = -decay_const
+        bat_mat[i,i] = -decay_const
     return jnp.asarray(bat_mat)
 
 
@@ -66,6 +66,8 @@ class TestBatemanSysFdJac(OdeSys):
         super().__init__()
 
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        # print(self.bat_mat)
+        # print(u)
         return self.bat_mat @ u
 
 
@@ -85,7 +87,7 @@ if __name__ == "__main__":
     test_ode_sys = TestBatemanSysFdJac()
     t = 0.0
     y0 = jnp.array([0.001, 0.1, 1.0])
-    sys_int = EpirkIntegrator(test_ode_sys, t, y0, 2, method="epirk2")
+    sys_int = EpirkIntegrator(test_ode_sys, t, y0, 2, method="epirk2", max_krylov_dim=4, iom=5)
 
     t_res = []
     y_res = []

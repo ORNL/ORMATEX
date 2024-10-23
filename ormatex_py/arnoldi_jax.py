@@ -10,6 +10,7 @@ from jax import numpy as jnp
 
 # inner ortho procedure, modifies hs and qs in-place
 # TODO: jit this
+# @partial(jax.jit, static_argnums=(4,5,6,))
 def arnoldi_mgs_lop(a_lo: Callable, hs: jax.Array, qs: jax.Array,
              a_scale: float, k: int, n: int, iom: int) -> bool:
     """
@@ -55,7 +56,7 @@ def arnoldi_mgs_lop(a_lo: Callable, hs: jax.Array, qs: jax.Array,
     return hs, qs, False
 
 
-# @partial(jax.jit(static_argnums=(3,4,)))
+# @partial(jax.jit, static_argnums=(3,4,))
 def arnoldi_lop(a_lo: Callable, a_scale: float, b: jax.Array, n: int, iom: int) -> (jax.Array, jax.Array, int):
     b_nrows = b.shape[0]
     hs = jax.numpy.zeros((n,n))

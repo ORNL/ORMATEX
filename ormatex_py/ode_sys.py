@@ -69,7 +69,7 @@ class FdJacLinOp(eqx.Module, LinearOperator):
         self.scale = scale
         # shift
         self.gamma = gamma
-        self.eps = kwargs.get("eps", 0.5e-8)
+        self.eps = kwargs.get("eps", 0.5e-6)
 
     @property
     def shape(self) -> (int, int):
@@ -115,7 +115,8 @@ class FdJacLinOp(eqx.Module, LinearOperator):
         u_pert = self.u + scaled_eps*v
 
         # compute the ushifited jac-vec product.
-        j_v = (self.frhs(self.t, u_pert, **self.frhs_kwargs) - self.frhs_u)*ieps
+        diff = self.frhs(self.t, u_pert, **self.frhs_kwargs) - self.frhs_u
+        j_v = (diff)*ieps
 
         # shift j_v product
         j_v += self.gamma * v
@@ -161,9 +162,9 @@ class OdeSys(metaclass=ABCMeta):
         """
         return self._fjac(t, u, **kwargs)
 
-    def fm(self, t, u, **kwargs) -> LinearOperator:
+    def fm(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
         """
-        Methods that returns the mass matrix liner operator
+        Method that returns the mass matrix lin op
         """
         return self._fm(t, u, **kwargs)
 
