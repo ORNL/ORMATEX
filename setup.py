@@ -18,7 +18,7 @@ setup(
     description='Matrix exponential routines and exponential time integrators',
     author='William Gurecky, Konstantin Pieper',
     platforms=["Linux", "Mac OS-X"],
-    install_requires=['numpy>=1.8.0', 'scipy>=0.12.0', 'jax', 'matplotlib'],
+    install_requires=['numpy>=1.8.0', 'scipy>=0.12.0', 'jax', 'equinox', 'matplotlib'],
     package_data={'': ['*.txt']},
     license='TBD',
     author_email='gureckywl@ornl.gov',
