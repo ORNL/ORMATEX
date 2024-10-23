@@ -46,6 +46,7 @@ class FdJacLinOp(eqx.Module, LinearOperator):
     frhs_kwargs: dict
     scale: float
     gamma: float
+    eps: float
 
     def __init__(self, t, u, frhs: Callable, frhs_kwargs: dict,
                  scale: float=1.0,  gamma: float=0.0, *args, **kwargs):
@@ -104,7 +105,7 @@ class FdJacLinOp(eqx.Module, LinearOperator):
         u_pert = self.u + scaled_eps*v
 
         # compute the ushifited jac-vec product.
-        j_v = (self.frhs(self.t, u_pert, **self.frhs_kwargs) - self.frhs_x)*ieps
+        j_v = (self.frhs(self.t, u_pert, **self.frhs_kwargs) - self.frhs_u)*ieps
 
         # shift j_v product
         j_v += self.gamma * v
@@ -130,7 +131,7 @@ class OdeSys(metaclass=ABCMeta):
             t:  current time
             u:  current system state.
         """
-        return self._frhs(t, u, kwargs)
+        return self._frhs(t, u, **kwargs)
 
     def fjac(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
         """
@@ -148,7 +149,7 @@ class OdeSys(metaclass=ABCMeta):
             t:  current time
             u:  current system state.
         """
-        self._fjac(t, u, kwargs)
+        return self._fjac(t, u, **kwargs)
 
     @abstractmethod
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
@@ -156,7 +157,7 @@ class OdeSys(metaclass=ABCMeta):
         raise NotImplementedError
 
     def frhs_aug(self, t: float, u: jax.Array, aug: jax.Array, aug_scale: float, **kwargs) -> jax.Array:
-        return aug_scale * self.frhs(t, u, kwargs) + aug
+        return aug_scale * self.frhs(t, u, **kwargs) + aug
 
     # @partial(jax.jit(static_argnums=(0,)))
     def _fjac(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:

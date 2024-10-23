@@ -20,8 +20,8 @@ def matexp_linop(a_lo: Callable, dt: float, v0: jax.Array, max_krylov_dim: int, 
     matexp = jax.scipy.linalg.expm(h)
     beta = jnp.linalg.norm(v0, 2)
     unit_vec = jnp.zeros((matexp.shape[0],))
-    unit_vec.at[0,0].set(1.0)
-    return beta * q * matexp * unit_vec
+    unit_vec = unit_vec.at[0].set(1.0)
+    return beta * q @ matexp @ unit_vec
 
 
 def phi_linop(a_lo: Callable, dt: float, v0: jax.Array, k: int, max_krylov_dim: int, iom: int=2):
@@ -31,6 +31,7 @@ def phi_linop(a_lo: Callable, dt: float, v0: jax.Array, k: int, max_krylov_dim: 
     (q, h, _) = arnoldi_lop(a_lo, 1.0, v0, max_krylov_dim, iom)
     phi_k = f_phi_k(dt*h, k)
     beta = jnp.linalg.norm(v0, 2)
-    unit_vec = jnp.zeros((phi_k.shape[0],))
-    unit_vec.at[0,0].set(1.0)
-    return beta * q * phi_k * unit_vec
+    unit_vec = jnp.zeros((phi_k.shape[0]))
+    unit_vec = unit_vec.at[0].set(1.0)
+    tmp = q @ phi_k @ unit_vec
+    return beta * tmp

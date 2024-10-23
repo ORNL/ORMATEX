@@ -4,8 +4,8 @@ Implements the phi-functions
 import jax
 from jax import numpy as jnp
 
-
-@jax.jit
+# TODO:
+# @jax.jit
 def f_phi_k(z: jax.Array, k: int) -> jax.Array:
     """
     Computes phi_k(Z) for dense Z

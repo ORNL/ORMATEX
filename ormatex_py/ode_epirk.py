@@ -14,6 +14,8 @@ class EpirkIntegrator(IntegrateSys):
         # dummy value for now
         # TODO: add more epirk methods to pick from
         self.method = "epirk2"
+        self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
+        self.iom = kwargs.get("iom", 2)
 
     def _remf(self, tr: float, yr: jax.Array,
               frhs_y0: jax.Array, sys_jac_lop_y0: Callable):
@@ -35,7 +37,8 @@ class EpirkIntegrator(IntegrateSys):
         sys_jac_lop = self.sys.fjac(t, y0)
         fy0 = self.sys.frhs(t, y0)
         fy0_dt = fy0 * dt
-        y_new = y0 + phi_linop(sys_jac_lop, dt, fy0_dt, 1)
+        y_new = y0 + phi_linop(
+                sys_jac_lop, dt, fy0_dt, 1, self.max_krylov_dim, self.iom)
         # no error est. avail
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
