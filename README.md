@@ -56,6 +56,7 @@ Classic integrators:
 - jax
 - numpy
 - scipy
+- pytest
 - python3.8+
 
 ### Install
@@ -63,6 +64,11 @@ Classic integrators:
 For a local development install, run:
 
     pip install -e .
+
+After running the above, the python unit tests can be executed.
+From the project base directory (the directory this readme is located in), run:
+
+    pytest
 
 ### Use
 
