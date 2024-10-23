@@ -26,6 +26,23 @@ debug:
     - cargo build
     - cargo test -- --nocapture |& tee test.out
 
+debug_py:
+  stage: test
+  only:
+    - merge_requests
+    - web
+    - schedules
+  tags:
+    - linux
+  artifacts:
+    paths:
+      - test_py.out
+    expire_in: 1 week
+    when: always
+  script:
+    - python setup.py develop --user
+    - pytest
+
 release:
   stage: test
   only:
