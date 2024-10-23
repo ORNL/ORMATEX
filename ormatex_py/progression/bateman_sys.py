@@ -59,6 +59,8 @@ class TestBatemanSysFdJac(OdeSys):
     def __init__(self, *args, **kwargs):
         keymap = ["c_0", "c_1", "c_2"]
         bmat = gen_bateman_matrix(keymap, decay_lib_test)
+        print("Bateman test system to solve:")
+        print(bmat)
         self.keymap = keymap
         self.bat_mat = bmat
         super().__init__()
@@ -87,7 +89,7 @@ if __name__ == "__main__":
 
     t_res = []
     y_res = []
-    dt = 1.0
+    dt = 5.0
     nsteps = 10
     for i in range(nsteps):
         res = sys_int.step(dt)
@@ -98,4 +100,5 @@ if __name__ == "__main__":
         # estimated err was too large
         sys_int.accept_step(res)
 
-    print(np.asarray(y_res))
+    for i in range(nsteps):
+        print("%0.4e, %0.4e, %0.4e, %0.4e" % (t_res[i], y_res[i][0], y_res[i][1],y_res[i][2]))

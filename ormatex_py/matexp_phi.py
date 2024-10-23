@@ -1,11 +1,12 @@
 """
 Implements the phi-functions
 """
+from functools import partial
 import jax
 from jax import numpy as jnp
 
-# TODO:
-# @jax.jit
+
+@partial(jax.jit, static_argnums=(1,))
 def f_phi_k(z: jax.Array, k: int) -> jax.Array:
     """
     Computes phi_k(Z) for dense Z
@@ -19,5 +20,6 @@ def f_phi_k(z: jax.Array, k: int) -> jax.Array:
         z_inv = jax.scipy.linalg.inv(z)
         id = jnp.eye(z.shape[0])
         for i in range(1, k+1):
-            phi_k = z_inv * (phi_k - (1./jax.scipy.special.factorial(i))*id)
+            ifact = 1./jax.scipy.special.factorial(i-1)
+            phi_k = z_inv * (phi_k - ifact*id)
     return phi_k

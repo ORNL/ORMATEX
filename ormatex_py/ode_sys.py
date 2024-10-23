@@ -24,16 +24,26 @@ import equinox as eqx
 from dataclasses import dataclass
 
 
-@dataclass
-class StepResult:
-    # time at end of the step
-    t: float
-    # step size taken
-    dt: float
-    # state after step
-    y: jax.Array
-    # step error estimate
-    err: float
+class JaxMatrixLinop(eqx.Module):
+    """
+    Helper class to wrap a jax.Array as a linop
+    similar to scipy.sparse.linalg.aslinearoperator()
+    """
+    a: jax.Array
+
+    def __init__(self, a):
+        assert len(a.shape) == 2
+        assert a.shape[0] == a.shape[1]
+        self.a = a
+
+    def __call__(self, b):
+        return self.a @ b
+
+    def _matvec(self, b):
+        return self(b)
+
+    def matvec(self, b):
+        return self._matvec(b)
 
 
 class FdJacLinOp(eqx.Module, LinearOperator):
@@ -151,6 +161,12 @@ class OdeSys(metaclass=ABCMeta):
         """
         return self._fjac(t, u, **kwargs)
 
+    def fm(self, t, u, **kwargs) -> LinearOperator:
+        """
+        Methods that returns the mass matrix liner operator
+        """
+        return self._fm(t, u, **kwargs)
+
     @abstractmethod
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         # the user must ovrride this
@@ -163,6 +179,22 @@ class OdeSys(metaclass=ABCMeta):
     def _fjac(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
         # default implementation
         return FdJacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
+
+    def _fm(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
+        # default implementation
+        return lambda x: x
+
+
+@dataclass
+class StepResult:
+    # time at end of the step
+    t: float
+    # step size taken
+    dt: float
+    # state after step
+    y: jax.Array
+    # step error estimate
+    err: float
 
 
 class IntegrateSys(metaclass=ABCMeta):

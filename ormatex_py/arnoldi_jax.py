@@ -8,8 +8,8 @@ from functools import partial
 import jax
 from jax import numpy as jnp
 
-
-# @partial(jax.jit(static_argnums=(5,6)))
+# inner ortho procedure, modifies hs and qs in-place
+# TODO: jit this
 def arnoldi_mgs_lop(a_lo: Callable, hs: jax.Array, qs: jax.Array,
              a_scale: float, k: int, n: int, iom: int) -> bool:
     """
@@ -23,14 +23,16 @@ def arnoldi_mgs_lop(a_lo: Callable, hs: jax.Array, qs: jax.Array,
     Return:
         bool. true if happy breakdown
     """
-    breakdown_tol = 1e-14
+    breakdown_tol = 1e-12
     iom_depth = max(k - iom, 0)
 
     # current vector to ortho against
     q_col = qs[:, k]
 
     # matvec
-    qv = a_lo(q_col)
+    qv = a_lo(q_col) * a_scale
+    # TODO: re-enable
+    # qv = m_lo(qv)
 
     # incomplete ortho
     for i in range(iom_depth, k+1):
@@ -59,7 +61,7 @@ def arnoldi_lop(a_lo: Callable, a_scale: float, b: jax.Array, n: int, iom: int) 
     hs = jax.numpy.zeros((n,n))
     qs = jax.numpy.zeros((b_nrows, n))
     q0 = b / jnp.linalg.norm(b, 2)
-    qs = qs.at[:, 0].set(q0)
+    qs = qs.at[:, 0].set(q0.flatten())
 
     breakdown_n = 0
     for k in range(0, n):
