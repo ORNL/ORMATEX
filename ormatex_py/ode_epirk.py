@@ -30,7 +30,7 @@ class EpirkIntegrator(IntegrateSys):
     def _step_epirk2(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
-        u_t+1 = u_t + dt*\varphi_1(dt*J|_t)F(t, u_t)
+        u_{t+1} = u_t + dt*\varphi_1(dt*J_t)F(t, u_t)
         """
         t = self.t
         y0 = self.y_hist[0]
