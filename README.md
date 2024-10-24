@@ -33,7 +33,7 @@ Classic integrators:
 
 Exponential integrators:
 
-- [ ] EPIRK2
+- [x] EPIRK2
 - [ ] EPIRK3
 - [ ] EPIRK4
 - [ ] EXPROS4
