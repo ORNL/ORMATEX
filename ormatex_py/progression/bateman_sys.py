@@ -88,7 +88,7 @@ if __name__ == "__main__":
     test_ode_sys = TestBatemanSysFdJac()
     t = 0.0
     y0 = jnp.array([0.001, 0.1, 1.0])
-    sys_int = EpirkIntegrator(test_ode_sys, t, y0, 2, method="epirk2", max_krylov_dim=4, iom=5)
+    sys_int = EpirkIntegrator(test_ode_sys, t, y0, method="epirk3", max_krylov_dim=4, iom=5)
 
     t_res = []
     y_res = []
