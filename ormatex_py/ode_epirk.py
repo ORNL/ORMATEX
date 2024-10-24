@@ -9,12 +9,12 @@ from ormatex_py.matexp_krylov import phi_linop, matexp_linop
 
 
 class EpirkIntegrator(IntegrateSys):
-    def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, *args, **kwargs):
+    def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epirk2", *args, **kwargs):
         valid_methods = {"epirk2": 2, "epirk3": 3}
-        self.method = kwargs.get("method", "epirk2")
+        self.method = method
         assert self.method in list(valid_methods.keys())
         order = valid_methods[self.method]
-        super().__init__(sys, t0, y0, order, *args, **kwargs)
+        super().__init__(sys, t0, y0, order, method, *args, **kwargs)
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
         self.iom = kwargs.get("iom", 2)
 
