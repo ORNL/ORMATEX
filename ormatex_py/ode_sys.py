@@ -69,7 +69,7 @@ class FdJacLinOp(eqx.Module, LinearOperator):
         self.scale = scale
         # shift
         self.gamma = gamma
-        self.eps = kwargs.get("eps", 0.5e-6)
+        self.eps = kwargs.get("eps", 0.5e-8)
 
     @property
     def shape(self) -> (int, int):
@@ -120,7 +120,6 @@ class FdJacLinOp(eqx.Module, LinearOperator):
 
         # shift j_v product
         j_v += self.gamma * v
-
         return j_v
 
 

@@ -8,6 +8,7 @@ from functools import partial
 import jax
 from jax import numpy as jnp
 
+
 # inner ortho procedure, modifies hs and qs in-place
 # TODO: jit this
 # @partial(jax.jit, static_argnums=(4,5,6,))

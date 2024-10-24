@@ -55,15 +55,14 @@ pub fn bateman_sys_rhs(t: f64, x: MatRef<f64>) -> Mat<f64> {
     let n1 = x[(1, 0)];
     let n2 = x[(2, 0)];
 
-    let n0_dot = - lambda_0*n0 + lambda_1*n1;
-    let n1_dot = - lambda_1*n1 + lambda_2*n2;
-    let n2_dot = - lambda_2*n2;
+    let bat_mat = faer::mat![
+        [-lambda_0,  lambda_1,        0.],
+        [       0., -lambda_1,  lambda_2],
+        [       0.,        0., -lambda_2],
+    ];
 
-    faer::mat![
-        [n0_dot],
-        [n1_dot],
-        [n2_dot],
-    ]
+    let xdot = bat_mat * x.as_ref();
+    xdot
 }
 
 /// Robertson

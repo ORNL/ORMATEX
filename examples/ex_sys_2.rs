@@ -40,7 +40,7 @@ pub fn main() {
     // step the solution forward
     let mut t = 0.0;
     let dt = 5.0;
-    let nsteps = 10;
+    let nsteps = 100;
     for _i in 0..nsteps {
         let y_new = sys_solver.step(dt).unwrap();
 
