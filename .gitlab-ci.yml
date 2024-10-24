@@ -2,7 +2,10 @@ stages:
   - test
 
 before_script:
+  - echo "USER INFO"
   - echo $PATH
+  - echo $USER
+  - export PATH="/home/wll/.cargo/bin:$PATH"
   - rustup update
 
 variables:
