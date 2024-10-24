@@ -58,16 +58,17 @@ def arnoldi_mgs_lop(a_lo: Callable, hs: jax.Array, qs: jax.Array,
 
 
 # @partial(jax.jit, static_argnums=(3,4,))
-def arnoldi_lop(a_lo: Callable, a_scale: float, b: jax.Array, n: int, iom: int) -> (jax.Array, jax.Array, int):
+def arnoldi_lop(a_lo: Callable, a_scale: float, b: jax.Array, m: int, iom: int) -> (jax.Array, jax.Array, int):
     b_nrows = b.shape[0]
-    hs = jax.numpy.zeros((n,n))
-    qs = jax.numpy.zeros((b_nrows, n))
+    m = min(b_nrows, m)
+    hs = jax.numpy.zeros((m,m))
+    qs = jax.numpy.zeros((b_nrows, m))
     q0 = b / jnp.linalg.norm(b, 2)
     qs = qs.at[:, 0].set(q0.flatten())
 
     breakdown_n = 0
-    for k in range(0, n):
-        hs, qs, breakdown_flag = arnoldi_mgs_lop(a_lo, hs, qs, a_scale, k, n, iom)
+    for k in range(0, m):
+        hs, qs, breakdown_flag = arnoldi_mgs_lop(a_lo, hs, qs, a_scale, k, m, iom)
         breakdown_n += 1
         if breakdown_flag:
             break
