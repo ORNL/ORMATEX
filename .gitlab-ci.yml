@@ -43,7 +43,7 @@ debug_py:
     expire_in: 1 week
     when: always
   script:
-    - python setup.py develop --user
+    - pip install -e .
     - pytest
 
 release:
