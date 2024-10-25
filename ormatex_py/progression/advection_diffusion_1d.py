@@ -20,7 +20,7 @@ from ormatex_py.ode_epirk import EpirkIntegrator
 ## problem and weak form specification
 
 nu = 5e-3
-vel = lambda x: 1 - x
+vel = lambda x: (x+1.)/(x+1.)
 f = lambda x: np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
 
 @fem.BilinearForm
@@ -30,7 +30,7 @@ def adv_diff(u, v, w):
 @fem.BilinearForm
 def adv_diff_cons(u, v, w):
     return nu * dot(grad(u), grad(v)) - dot(vel(w.x) * u, grad(v))
-    
+
 @fem.BilinearForm
 def robin(u, v, w):
     return dot(vel(w.x), w.n) * u * v
@@ -56,7 +56,7 @@ class AdDiffSEM:
         self.assemble()
 
     def assemble(self):
-        
+
         # create the mesh
         mesh0 = fem.MeshLine1().with_boundaries({
             'left': lambda x: np.isclose(x[0], 0.),
@@ -72,7 +72,7 @@ class AdDiffSEM:
             self.element = el_nodal.ElementLinePp_nodal(self.p)
             ## implementation with skfem provided element does not support easy mass lumping for p >= 3
             #self.element = fem.ElementLinePp(self.p)
-    
+
         #if self.p < 3:
         #    quad = GL_quad[self.p + 1]
         #    basis = fem.Basis(self.mesh, self.element, quadrature=quad)
@@ -89,7 +89,7 @@ class AdDiffSEM:
             self.A_pre = adv_diff_cons.assemble(basis) + robin.assemble(basis_f)
         else:
             self.A_pre = adv_diff.assemble(basis)
-        
+
         self.b_pre = rhs.assemble(basis)
         self.M_pre = mass.assemble(basis)
 
@@ -105,8 +105,9 @@ class AdDiffSEM:
         self.jb = jnp.asarray(self.b)
 
     def get_initial(self):
-        return jnp.zeros(self.jb.shape)
-                    
+        # return jnp.zeros(self.jb.shape)
+        return jnp.ones(self.jb.shape)
+
     def ode_sys(self):
         return AffineLinearSEM(self.jA, self.jMl, self.jb)
 
@@ -126,21 +127,31 @@ class AffineLinearSEM(OdeSys):
 
 
 if __name__ == "__main__":
-
+    import matplotlib.pyplot as plt
     jax.config.update('jax_platform_name', 'cpu')
     print(f"Running on {jax.devices()}.")
 
     # test simple exp integrator
-    sem = AdDiffSEM(p=3, nrefs=3)
+    sem = AdDiffSEM(p=1, nrefs=5)
     ode_sys = sem.ode_sys()
     t = 0.0
-    y0 = sem.get_initial()
-    sys_int = EpirkIntegrator(ode_sys, t, y0, 2, method="epirk2")
+
+    # mesh mask for bcs
+    x = sem.mesh.doflocs
+    sx = np.asarray(x.flatten())
+    ic_points = np.where((sx > 0.1) & (sx < 0.4))
+
+    # square wave
+    y0_profile = np.zeros(sem.jb.shape) + 1e-9
+    y0_profile[ic_points] = 1.0
+    y0 = jnp.asarray(y0_profile)
+
+    sys_int = EpirkIntegrator(ode_sys, t, y0, method="epirk2")
 
     t_res = [0,]
     y_res = [y0,]
-    dt = .00001
-    nsteps = 10
+    dt = .01
+    nsteps = 100
     for i in range(nsteps):
         res = sys_int.step(dt)
         # log the results for plotting
@@ -151,3 +162,23 @@ if __name__ == "__main__":
         sys_int.accept_step(res)
 
     print(np.asarray(y_res))
+    # plot the result at a few time steps
+    outdir = './advection_diffusion_1d_out/'
+    # sorted x
+    x = sem.mesh.doflocs
+    sx = np.asarray(x.flatten())
+    si = sx.argsort()
+    sx = sx[si]
+    plt.figure()
+    for i in range(nsteps):
+        if i % 10 == 0 or i == 0:
+            t = t_res[i]
+            y = y_res[i][si]
+            plt.plot(sx, y, label='t=%0.4f' % t)
+    plt.legend()
+    plt.grid(ls='--')
+    plt.ylabel('u')
+    plt.xlabel('x')
+    plt.savefig('adv_diff_1d.png')
+    plt.close()
+
