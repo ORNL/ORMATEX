@@ -132,7 +132,7 @@ if __name__ == "__main__":
     print(f"Running on {jax.devices()}.")
 
     # test simple exp integrator
-    sem = AdDiffSEM(p=1, nrefs=5)
+    sem = AdDiffSEM(p=2, nrefs=4)
     ode_sys = sem.ode_sys()
     t = 0.0
 
