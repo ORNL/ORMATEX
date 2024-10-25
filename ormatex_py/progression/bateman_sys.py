@@ -47,8 +47,8 @@ def gen_bateman_matrix(keymap: List, bateman_lib: Dict) -> jax.Array:
         else:
             dest = keydict[child_species]
             dest = int(dest)
-            bat_mat[dest,i] = decay_const
-        bat_mat[i,dest] = -decay_const
+            bat_mat[dest,i] += decay_const
+        bat_mat[i,i] -= decay_const
     return jnp.asarray(bat_mat)
 
 
@@ -59,15 +59,20 @@ class TestBatemanSysFdJac(OdeSys):
     def __init__(self, *args, **kwargs):
         keymap = ["c_0", "c_1", "c_2"]
         bmat = gen_bateman_matrix(keymap, decay_lib_test)
+        print("Bateman test system to solve:")
+        print(bmat)
         self.keymap = keymap
         self.bat_mat = bmat
         super().__init__()
 
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-        return self.bat_mat @ u
+        res = self.bat_mat @ u
+        return res
 
 
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+
     # associates names with variable index
     keymap = ["c_0", "c_1", "c_2"]
     bmat = gen_bateman_matrix(keymap, decay_lib_0)
@@ -83,12 +88,12 @@ if __name__ == "__main__":
     test_ode_sys = TestBatemanSysFdJac()
     t = 0.0
     y0 = jnp.array([0.001, 0.1, 1.0])
-    sys_int = EpirkIntegrator(test_ode_sys, t, y0, 2, method="epirk2")
+    sys_int = EpirkIntegrator(test_ode_sys, t, y0, 2, method="epirk2", max_krylov_dim=4, iom=5)
 
     t_res = []
     y_res = []
-    dt = 1.0
-    nsteps = 10
+    dt = 5.0
+    nsteps = 100
     for i in range(nsteps):
         res = sys_int.step(dt)
         # log the results for plotting
@@ -98,4 +103,21 @@ if __name__ == "__main__":
         # estimated err was too large
         sys_int.accept_step(res)
 
-    print(np.asarray(y_res))
+    t_res = np.asarray(t_res)
+    y_res = np.asarray(y_res)
+    for i in range(nsteps):
+        print("%0.4e, %0.4e, %0.4e, %0.4e" % (t_res[i], y_res[i][0], y_res[i][1],y_res[i][2]))
+
+    plt.figure()
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.ylim((1e-14, 10.0))
+    plt.plot(t_res, y_res[:, 0], label="c_0")
+    plt.plot(t_res, y_res[:, 1], label="c_1")
+    plt.plot(t_res, y_res[:, 2], label="c_2")
+    plt.legend()
+    plt.grid(ls='--')
+    plt.ylabel("Species concentration")
+    plt.xlabel("Time [s]")
+    plt.savefig("bateman_ex_1.png")
+    plt.close()

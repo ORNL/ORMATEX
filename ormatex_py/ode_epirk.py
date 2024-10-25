@@ -9,8 +9,8 @@ from ormatex_py.matexp_krylov import phi_linop, matexp_linop
 
 
 class EpirkIntegrator(IntegrateSys):
-    def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, *args, **kwargs):
-        super().__init__(sys, t0, y0, *args, **kwargs)
+    def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, order: int, *args, **kwargs):
+        super().__init__(sys, t0, y0, order, *args, **kwargs)
         # dummy value for now
         # TODO: add more epirk methods to pick from
         self.method = "epirk2"
@@ -37,6 +37,7 @@ class EpirkIntegrator(IntegrateSys):
         sys_jac_lop = self.sys.fjac(t, y0)
         fy0 = self.sys.frhs(t, y0)
         fy0_dt = fy0 * dt
+        # import pdb; pdb.set_trace()
         y_new = y0 + phi_linop(
                 sys_jac_lop, dt, fy0_dt, 1, self.max_krylov_dim, self.iom)
         # no error est. avail

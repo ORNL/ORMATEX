@@ -33,7 +33,6 @@ pub fn phi(z: MatRef<f64>, k: usize) -> Mat<f64>
 {
     // phi 0 is e^Z, where Z is a matrix
     let mut phi_k = matexp(z.as_ref(), 1.0);
-    // println!("h_inv={:?}, phi_0={:?}", z_inv.as_ref(), phi_0.as_ref());
     if k == 0 {
         return phi_k
     }
