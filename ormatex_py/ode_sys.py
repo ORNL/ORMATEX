@@ -80,8 +80,8 @@ class AugMatrixLinop(eqx.Module):
         Computes a_lo_aug @ v
         """
         assert v.shape[0] == self.n + self.p
-        ab_v = self.dt*self.a_lo(v[0:self.n]) + self.B @ v[self.p+1:]
-        k_v = self.K @ v[self.p+1:]
+        ab_v = self.dt*self.a_lo(v[0:self.n]) + self.B @ v[-self.p:]
+        k_v = self.K @ v[-self.p:]
         res = jnp.concat((ab_v, k_v))
         return res
 
