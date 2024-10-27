@@ -46,7 +46,7 @@ class JaxMatrixLinop(eqx.Module):
         return self._matvec(b)
 
 
-class FdJacLinOp(eqx.Module, LinearOperator):
+class FdJacLinOp(eqx.Module):
     t: float
     u: jax.Array
     frhs: Callable
@@ -123,7 +123,9 @@ class FdJacLinOp(eqx.Module, LinearOperator):
         return j_v
 
 
-class OdeSys(metaclass=ABCMeta):
+# NOTE:  https://docs.kidger.site/equinox/api/module/module/
+# every eqx.Module is an abstarct base class by default
+class OdeSys(eqx.Module):
     def __init__(self, *args, **kwargs):
         pass
 

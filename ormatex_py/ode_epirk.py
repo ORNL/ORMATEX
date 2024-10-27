@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from typing import Callable
 from ormatex_py.ode_sys import IntegrateSys, OdeSys, StepResult
-from ormatex_py.matexp_krylov import phi_linop, matexp_linop
+from ormatex_py.matexp_krylov import phi_linop, matexp_linop, phipm_unstable
 
 
 class EpirkIntegrator(IntegrateSys):
@@ -58,13 +58,22 @@ class EpirkIntegrator(IntegrateSys):
         sys_jac_lop = self.sys.fjac(t, y0)
         fy0 = self.sys.frhs(t, y0)
         fy0_dt = fy0 * dt
-        y1 = y0 + phi_linop(
-                sys_jac_lop, dt, fy0_dt, 1, self.max_krylov_dim, self.iom)
-
         rn_dt = self._remf(tp, yp, fy0, sys_jac_lop) * dt
-        y_new = y1 + (2./3.)*phi_linop(
-                sys_jac_lop, dt, rn_dt, 2, self.max_krylov_dim, self.iom)
-        y_err = jnp.max(jnp.abs(y1 - y_new))
+
+        # y1 = y0 + phi_linop(
+        #         sys_jac_lop, dt, fy0_dt, 1, self.max_krylov_dim, self.iom)
+        # y_new = y1 + (2./3.)*phi_linop(
+        #         sys_jac_lop, dt, rn_dt, 2, self.max_krylov_dim, self.iom)
+
+        # use phipm to save 1 call to arnoldi. almost 2x speedup
+        vb0 = jnp.zeros(y0.shape)
+        y_update = phipm_unstable(
+            sys_jac_lop, dt, [vb0, fy0_dt, (2./3.)*rn_dt],
+            2, max_krylov_dim=self.max_krylov_dim, iom=self.iom)
+        y_new = y0 + y_update
+
+        # y_err = jnp.max(jnp.abs(y1 - y_new))
+        y_err = -1.0
         return StepResult(t+dt, dt, y_new, y_err)
 
     def step(self, dt: float) -> StepResult:

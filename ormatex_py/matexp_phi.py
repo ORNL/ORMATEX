@@ -4,9 +4,12 @@ Implements the phi-functions
 from functools import partial
 import jax
 from jax import numpy as jnp
+import equinox as eqx
 
 
-@partial(jax.jit, static_argnums=(1,))
+# @partial(jax.jit, static_argnums=(1,))
+# @eqx.debug.assert_max_traces(max_traces=1)
+@eqx.filter_jit
 def f_phi_k(z: jax.Array, k: int) -> jax.Array:
     """
     Computes phi_k(Z) for dense Z

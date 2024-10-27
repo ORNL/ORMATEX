@@ -4,12 +4,15 @@ import scipy as sp
 import jax
 import jax.numpy as jnp
 from jax.experimental import sparse as jsp
+import equinox as eqx
+from typing import Callable
 
 import skfem as fem
 from skfem.helpers import dot, grad
 import warnings
 
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
+from ormatex_py.ode_sys import JaxMatrixLinop
 
 jax.config.update("jax_enable_x64", True)
 
@@ -116,14 +119,23 @@ class AffineLinearSEM(OdeSys):
     """
     Define ODE System associated to affine linear sparse Jacobian problem
     """
+    A: jax.Array
+    Ml: jax.Array
+    b: jax.Array
+    jac_lop: Callable
+
     def __init__(self, A: jsp.JAXSparse, Ml: jax.Array, b: jax.Array, *args, **kwargs):
         self.A = A
         self.Ml = Ml
         self.b = b
+        self.jac_lop = JaxMatrixLinop(-self.A / self.Ml)
         super().__init__()
 
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         return (self.b - self.A @ u) / self.Ml
+
+    def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        return self.jac_lop
 
 
 if __name__ == "__main__":
@@ -132,21 +144,27 @@ if __name__ == "__main__":
     print(f"Running on {jax.devices()}.")
 
     # test simple exp integrator
-    sem = AdDiffSEM(p=2, nrefs=4)
+    sem = AdDiffSEM(p=1, nrefs=5)
     ode_sys = sem.ode_sys()
     t = 0.0
 
-    # mesh mask for bcs
+    # mesh mask for initial conditions
     x = sem.mesh.doflocs
     sx = np.asarray(x.flatten())
-    ic_points = np.where((sx > 0.1) & (sx < 0.4))
 
     # square wave
+    ic_points = np.where((sx > 0.1) & (sx < 0.4))
     y0_profile = np.zeros(sem.jb.shape) + 1e-9
     y0_profile[ic_points] = 1.0
     y0 = jnp.asarray(y0_profile)
 
-    sys_int = EpirkIntegrator(ode_sys, t, y0, method="epirk2")
+    # gaussian profile
+    wc, ww = 0.3, 0.05
+    g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
+    y0_profile = g_prof(sx)
+    y0 = jnp.asarray(y0_profile)
+
+    sys_int = EpirkIntegrator(ode_sys, t, y0, method="epirk3", max_krylov_dim=20, iom=2)
 
     t_res = [0,]
     y_res = [y0,]

@@ -56,6 +56,9 @@ class TestBatemanSysFdJac(OdeSys):
     """
     Test fallback to finite diff based Jacobian Linop
     """
+    keymap: List
+    bat_mat: jax.Array
+
     def __init__(self, *args, **kwargs):
         keymap = ["c_0", "c_1", "c_2"]
         bmat = gen_bateman_matrix(keymap, decay_lib_test)
@@ -88,7 +91,7 @@ if __name__ == "__main__":
     test_ode_sys = TestBatemanSysFdJac()
     t = 0.0
     y0 = jnp.array([0.001, 0.1, 1.0])
-    sys_int = EpirkIntegrator(test_ode_sys, t, y0, method="epirk3", max_krylov_dim=4, iom=5)
+    sys_int = EpirkIntegrator(test_ode_sys, t, y0, method="epirk3", max_krylov_dim=3, iom=3)
 
     t_res = []
     y_res = []
