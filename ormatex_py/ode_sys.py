@@ -46,6 +46,52 @@ class JaxMatrixLinop(eqx.Module):
         return self._matvec(b)
 
 
+class AugMatrixLinop(eqx.Module):
+    """
+    Helper class to create a larger linear operator
+    out of a block matrix comprised of components:
+    a_lo_aug =
+        [[A,  B],
+         [0,  K]]
+    where A is the original NxN linop
+    b is a Nxp dense matrix
+    K is a pxp sparse matrix
+    """
+    a_lo: Callable
+    # scalar factor applied to a_lo
+    dt: float
+    B: jax.Array
+    K: jax.Array
+    n: int
+    p: int
+
+    def __init__(self, a_lo, dt, B, K):
+        self.a_lo = a_lo
+        self.dt = dt
+        self.B = B
+        self.K = K
+        self.n = self.B.shape[0]
+        self.p = self.B.shape[1]
+        assert self.p == self.K.shape[0]
+        assert self.p == self.K.shape[1]
+
+    def __call__(self, v):
+        """
+        Computes a_lo_aug @ v
+        """
+        assert v.shape[0] == self.n + self.p
+        ab_v = self.dt*self.a_lo(v[0:self.n]) + self.B @ v[self.p+1:]
+        k_v = self.K @ v[self.p+1:]
+        res = jnp.concat((ab_v, k_v))
+        return res
+
+    def _matvec(self, v):
+        return self(v)
+
+    def matvec(self, v):
+        return self._matvec(v)
+
+
 class FdJacLinOp(eqx.Module):
     t: float
     u: jax.Array
