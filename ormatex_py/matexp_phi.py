@@ -23,7 +23,7 @@ def f_phi_k(z: jax.Array, k: int) -> jax.Array:
 
 
 @partial(jax.jit, static_argnums=(1,2))
-def f_phi_k_inv(z: jax.Array, k: int, eps: float) -> [jax.Array, float]:
+def f_phi_k_inv(z: jax.Array, k: int, eps: float) -> (jax.Array, float):
     """
     Computes phi_k(Z) for dense Z, using a formula involving the inverse of Z.
     Returns an error estimate to warn about nearly singular Z.

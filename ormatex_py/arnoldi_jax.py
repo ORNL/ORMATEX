@@ -3,7 +3,7 @@ Arnoldi impl
 TODO: The linear operator, a_lo, needs to be jit-able
 """
 from scipy.sparse.linalg import LinearOperator
-from typing import Callable
+from collections.abc import Callable
 from functools import partial
 import jax
 from jax import numpy as jnp
