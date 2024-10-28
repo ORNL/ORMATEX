@@ -13,7 +13,7 @@ from discussion here:  https://github.com/jax-ml/jax/discussions/10598
 """
 from abc import ABCMeta
 from abc import abstractmethod, abstractproperty
-from typing import Callable, List, Deque
+from collections.abc import Callable
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 from functools import partial
@@ -256,8 +256,8 @@ class IntegrateSys(metaclass=ABCMeta):
     # additional info and storage
     order: int
     method: str
-    t_hist: Deque[float]
-    y_hist: Deque[jax.Array]
+    t_hist: deque[float]
+    y_hist: deque[jax.Array]
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, order: int, method: str, *args, **kwargs):
         assert order > 0

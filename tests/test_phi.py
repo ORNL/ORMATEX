@@ -137,8 +137,6 @@ def test_phi_linop_1():
         d_z_lo, 1.0, b, k=1, max_krylov_dim=ref_z.shape[0], iom=100)
     assert jnp.allclose(jax_phi_1_b, ref_phi[1,:])
 
-
-
 def test_kiops_fixedstep():
     """
     Test that the KIOPS method correctly computes
@@ -214,5 +212,3 @@ def test_phipm_unstable():
     p = 2
     phipm_phi_combo = phipm_unstable(test_a_lo, dt, vb, p, max_krylov_dim=n, iom=3, n_steps=2)
     assert jnp.allclose(phipm_phi_combo, base_phi_combo, atol=1e-6)
-
-

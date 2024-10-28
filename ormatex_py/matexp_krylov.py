@@ -4,7 +4,7 @@ phi_k(A*dt)*v with sparse A
 """
 from scipy.sparse.linalg import LinearOperator
 from scipy.special import factorial
-from typing import Callable, List
+from collections.abc import Callable
 import jax
 import numpy as np
 from jax import numpy as jnp
@@ -41,7 +41,7 @@ def phi_linop(a_lo: Callable, dt: float, v0: jax.Array, k: int, max_krylov_dim: 
     return beta * tmp.flatten()
 
 
-def kiops_fixedsteps(a_lo: Callable, dt: float, vb: List[jax.Array], p: int, max_krylov_dim: int, iom: int=2, n_steps: int=1):
+def kiops_fixedsteps(a_lo: Callable, dt: float, vb: list[jax.Array], p: int, max_krylov_dim: int, iom: int=2, n_steps: int=1):
     r"""
     Mehtod based roughly on simplified KIOPS with fixes stepsize
     and not krylov adaptivity.  TODO: add adaptivity routines.
@@ -88,7 +88,7 @@ def kiops_fixedsteps(a_lo: Callable, dt: float, vb: List[jax.Array], p: int, max
     return w[0:n]
 
 
-def phipm_unstable(a_lo: Callable, dt: float, vb: List[jax.Array], p: int, max_krylov_dim: int, iom: int=2, n_steps: int=1):
+def phipm_unstable(a_lo: Callable, dt: float, vb: list[jax.Array], p: int, max_krylov_dim: int, iom: int=2, n_steps: int=1):
     """
     Computes linear combinations of phi functions, using the
     phipm approach. Ref:
