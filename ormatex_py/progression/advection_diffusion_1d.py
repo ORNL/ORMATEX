@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax.experimental import sparse as jsp
 import equinox as eqx
-from typing import Callable
+from collections.abc import Callable
 
 import skfem as fem
 from skfem.helpers import dot, grad
