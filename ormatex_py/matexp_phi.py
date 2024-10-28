@@ -74,3 +74,35 @@ def f_phi_k_ext(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
     else:
         phi_k = phi_ks[:N,-N:]
     return phi_k
+
+
+@partial(jax.jit, static_argnums=(2,))
+def f_phi_k_appl(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
+    """
+    Computes phi_k(Z)B for dense Z and dense B, using an extension formula
+    """
+    assert k >= 0
+    assert len(z.shape) == 2
+    N, N1 = z.shape
+    assert N == N1
+    if len(b.shape) == 1:
+        N2 = b.shape[0]
+        M = 1
+        B = b[:,None]
+        assert N2 == N
+    else:
+        assert len(b.shape) == 2
+        N2, M = b.shape
+        B = b
+        assert N2 == N
+
+    if k > 0:
+        z_ext = jnp.block([ [z, B, jnp.zeros((N, (k-1)*M))],
+                            [jnp.zeros(((k-1)*M, N+M)), jnp.eye((k-1)*M)],
+                            [jnp.zeros((M, N+k*M))] ])
+        phi_k_ext = jax.scipy.linalg.expm(z_ext)
+        phi_kb = phi_k_ext[:N,-M:].reshape(b.shape)
+    else:
+        phi_kb = jax.scipy.linalg.expm(z) @ b
+
+    return phi_kb

@@ -2,27 +2,21 @@
 Krylov methods to calculate exp(A*dt)*v and
 phi_k(A*dt)*v with sparse A
 """
-from scipy.sparse.linalg import LinearOperator
 from collections.abc import Callable
 import jax
 from jax import numpy as jnp
 import equinox as eqx
+
 # internal imports
 from ormatex_py.arnoldi_jax import arnoldi_lop
-from ormatex_py.matexp_phi import f_phi_k
+from ormatex_py.matexp_phi import f_phi_k_appl
 
 
-def matexp_linop(a_lo: Callable, dt: float, v0: jax.Array, max_krylov_dim: int, iom: int=2):
+def matexp_linop(a_lo: Callable, dt: float, v0: jax.Array, max_krylov_dim: int, iom: int=2) -> jax.Array:
     """
     Computes exp(A*dt)*v where A is a sparse linop
     """
-    (q, h, _) = arnoldi_lop(a_lo, dt, v0, max_krylov_dim, iom)
-    matexp = jax.scipy.linalg.expm(h)
-    beta = jnp.linalg.norm(v0, 2)
-    unit_vec = jnp.zeros((matexp.shape[0],1))
-    unit_vec = unit_vec.at[0,0].set(1.0)
-    tmp = q @ (matexp @ unit_vec)
-    return beta * tmp.flatten()
+    return phi_linop(a_lo, dt, v0, k=0, max_krylov_dim=max_krylov_dim, iom=iom)
 
 
 def phi_linop(a_lo: Callable, dt: float, v0: jax.Array, k: int, max_krylov_dim: int, iom: int=2):
@@ -30,9 +24,11 @@ def phi_linop(a_lo: Callable, dt: float, v0: jax.Array, k: int, max_krylov_dim: 
     Computes phi_k(A*dt)*v where A is a sparse linop
     """
     (q, h, _) = arnoldi_lop(a_lo, 1.0, v0, max_krylov_dim, iom)
-    phi_k = f_phi_k(dt*h, k)
+
+    unit_vec = jnp.zeros((h.shape[0],))
+    unit_vec = unit_vec.at[0].set(1.0)
+
+    phi_k_e1 = f_phi_k_appl(dt*h, unit_vec, k)
     beta = jnp.linalg.norm(v0, 2)
-    unit_vec = jnp.zeros((phi_k.shape[0],1))
-    unit_vec = unit_vec.at[0,0].set(1.0)
-    tmp = q @ (phi_k @ unit_vec)
-    return beta * tmp.flatten()
+
+    return beta * (q @ phi_k_e1)
