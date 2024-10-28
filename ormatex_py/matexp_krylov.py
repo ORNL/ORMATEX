@@ -3,7 +3,7 @@ Krylov methods to calculate exp(A*dt)*v and
 phi_k(A*dt)*v with sparse A
 """
 from scipy.sparse.linalg import LinearOperator
-from typing import Callable, List
+from collections.abc import Callable
 import jax
 from jax import numpy as jnp
 import equinox as eqx

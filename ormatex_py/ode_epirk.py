@@ -3,7 +3,7 @@ EPIRK time integration methods
 """
 import jax
 import jax.numpy as jnp
-from typing import Callable
+from collections.abc import Callable
 from ormatex_py.ode_sys import IntegrateSys, OdeSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop
 

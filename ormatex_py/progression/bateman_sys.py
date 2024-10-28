@@ -1,7 +1,6 @@
 """
 Methods to define a Bateman system of equations
 """
-from typing import Dict, List
 import jax
 import numpy as np
 from jax import numpy as jnp
@@ -34,7 +33,7 @@ decay_lib_1 = {
     'cs_135': ('none', jnp.log(2) / (1.33e6*365*24*3600) ),
 }
 
-def gen_bateman_matrix(keymap: List, bateman_lib: Dict) -> jax.Array:
+def gen_bateman_matrix(keymap: list, bateman_lib: dict) -> jax.Array:
     keydict = dict([(k, i) for i, k in enumerate(keymap)])
     d = len(keymap)
     bat_mat = np.zeros((d, d), dtype=np.float64)
