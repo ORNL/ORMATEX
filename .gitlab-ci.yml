@@ -2,10 +2,11 @@ stages:
   - test
 
 before_script:
+  - conda activate ormatex311
   - echo "USER INFO"
   - echo $PATH
   - echo $USER
-  - export PATH="/home/wll/.cargo/bin:$PATH"
+  - which python
   - rustup update
 
 variables:
