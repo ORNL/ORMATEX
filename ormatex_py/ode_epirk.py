@@ -60,12 +60,6 @@ class EpirkIntegrator(IntegrateSys):
         fy0_dt = fy0 * dt
         rn_dt = self._remf(tp, yp, fy0, sys_jac_lop) * dt
 
-        # y1 = y0 + phi_linop(
-        #         sys_jac_lop, dt, fy0_dt, 1, self.max_krylov_dim, self.iom)
-        # y_new = y1 + (2./3.)*phi_linop(
-        #         sys_jac_lop, dt, rn_dt, 2, self.max_krylov_dim, self.iom)
-        # y_err = jnp.max(jnp.abs(y1 - y_new))
-
         # use kiops to save 1 call to arnoldi. almost 2x speedup
         vb0 = jnp.zeros(y0.shape)
         y_update = kiops_fixedsteps(

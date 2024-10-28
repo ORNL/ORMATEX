@@ -6,7 +6,7 @@ import numpy as np
 from jax import numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
-from ormatex_py.ode_sys import OdeSys
+from ormatex_py.ode_sys import OdeSys, JaxMatrixLinop
 from ormatex_py.ode_epirk import EpirkIntegrator
 
 
@@ -55,7 +55,7 @@ class TestBatemanSysFdJac(OdeSys):
     """
     Test fallback to finite diff based Jacobian Linop
     """
-    keymap: List
+    keymap: list
     bat_mat: jax.Array
 
     def __init__(self, *args, **kwargs):
@@ -70,6 +70,9 @@ class TestBatemanSysFdJac(OdeSys):
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         res = self.bat_mat @ u
         return res
+
+    def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        return JaxMatrixLinop(self.bat_mat)
 
 
 if __name__ == "__main__":
