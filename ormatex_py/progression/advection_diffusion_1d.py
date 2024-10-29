@@ -253,13 +253,14 @@ if __name__ == "__main__":
         y0 = jnp.asarray(y0_profile)
 
         # expected solution
-        pass
+        g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))/(2*ww))**2.0)
 
     # init the time integrator
     sys_int = EpirkIntegrator(ode_sys, t, y0, method="epirk3", max_krylov_dim=20, iom=2)
 
     t_res = [0,]
     y_res = [y0,]
+    y_exact_res = [g_prof_exact(0.0, sx),]
     dt = .1
     nsteps = 10
     for i in range(nsteps):
@@ -267,6 +268,7 @@ if __name__ == "__main__":
         # log the results for plotting
         t_res.append(res.t)
         y_res.append(res.y)
+        y_exact_re.append(g_prof_exact(res.t, sx))
         # this would be where you could reject a step, if the
         # estimated err was too large
         sys_int.accept_step(res)
@@ -284,7 +286,9 @@ if __name__ == "__main__":
         if i % 1 == 0 or i == 0:
             t = t_res[i]
             y = y_res[i][si]
+            y_exact = y_exact_res[i][si]
             plt.plot(sx, y, label='t=%0.4f' % t)
+            plt.plot(sx, y_exact, ls='--', label='exact t=%0.4f' % t)
     plt.legend()
     plt.grid(ls='--')
     plt.ylabel('u')
