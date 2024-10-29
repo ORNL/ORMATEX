@@ -20,7 +20,7 @@ from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_epirk import EpirkIntegrator
 
 # diffusion coeff
-nu = 5e-12
+nu = 1e-12
 
 # Specify velocity
 vel = 0.5
@@ -227,8 +227,7 @@ if __name__ == "__main__":
 
     # init the system
     sem = AdDiffSEM(mesh, p=args.p, params=param_dict)
-    # ode_sys = sem.ode_sys(vel=vel)
-    ode_sys = AffineLinearSEM(sem, vel=vel)
+    ode_sys = AffineLinearSEM(sem)
     t = 0.0
 
     # mesh mask for initial conditions
