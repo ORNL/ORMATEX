@@ -206,6 +206,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
+    parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     args = parser.parse_args()
 
     # create the mesh
@@ -214,11 +215,11 @@ if __name__ == "__main__":
         'right': lambda x: np.isclose(x[0], 1.)
     })
     # mesh refinement
-    nrefs=6
+    nrefs=args.mr
     mesh = mesh0.refined(nrefs)
 
     # diffusion coeff
-    nu = 5e-5
+    nu = 1e-12
 
     # Specify velocity fn(x)
     vel = 0.5
@@ -241,10 +242,13 @@ if __name__ == "__main__":
 
     if args.ic == "square":
         # square wave
-        ic_points = np.where((sx > 0.1) & (sx < 0.4))
-        y0_profile = np.zeros(sem.jb.shape) + 1e-9
+        startx, endx = 0.1, 0.4
+        ic_points = np.where((sx > startx) & (sx < endx))
+        y0_profile = np.zeros(ode_sys.b.shape) + 1e-9
         y0_profile[ic_points] = 1.0
         y0 = jnp.asarray(y0_profile)
+        g_prof_exact = lambda t, x: \
+                np.asarray([1.0 if (x_i > startx+t*vel) & (x_i < endx+t*vel) else 0.0 for x_i in x])
     else:
         # gaussian profile
         wc, ww = 0.3, 0.05
@@ -268,12 +272,12 @@ if __name__ == "__main__":
         # log the results for plotting
         t_res.append(res.t)
         y_res.append(res.y)
-        y_exact_re.append(g_prof_exact(res.t, sx))
+        y_exact_res.append(g_prof_exact(res.t, sx))
         # this would be where you could reject a step, if the
         # estimated err was too large
         sys_int.accept_step(res)
 
-    print(np.asarray(y_res))
+    # print(np.asarray(y_res))
     # plot the result at a few time steps
     outdir = './advection_diffusion_1d_out/'
     # sorted x
@@ -283,7 +287,7 @@ if __name__ == "__main__":
     sx = sx[si]
     plt.figure()
     for i in range(nsteps):
-        if i % 1 == 0 or i == 0:
+        if i % 2 == 0 or i == 0:
             t = t_res[i]
             y = y_res[i][si]
             y_exact = y_exact_res[i][si]
@@ -300,4 +304,11 @@ if __name__ == "__main__":
     mesh_spacing = (sx[1] - sx[0])
     cfl = dt * vel / mesh_spacing
     print("CFL: %0.4f" % cfl)
+
+    l2 = np.linalg.norm(y_exact - y)
+    l1 = np.linalg.norm(y_exact - y, 1)
+    linf = np.linalg.norm(y_exact - y, np.inf)
+    print("mesh_spacing, cfl, l1, l2, linf")
+    print("%0.4e, %0.4f, %0.4e, %0.4e, %0.4e" % (mesh_spacing, cfl, l1, l2, linf))
+
 
