@@ -190,6 +190,5 @@ def test_kiops_fixedstep():
 
     # compute same thing using phipm method
     vb = [test_b0, test_b1, test_b2]
-    p = 2
-    phipm_phi_combo = kiops_fixedsteps(test_a_lo, dt, vb, p, max_krylov_dim=10, iom=10, n_steps=1)
+    phipm_phi_combo = kiops_fixedsteps(test_a_lo, dt, vb, max_krylov_dim=10, iom=10, n_steps=1)
     assert jnp.allclose(phipm_phi_combo, base_phi_combo, atol=1e-6)

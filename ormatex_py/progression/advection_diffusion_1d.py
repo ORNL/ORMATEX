@@ -19,53 +19,96 @@ jax.config.update("jax_enable_x64", True)
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_epirk import EpirkIntegrator
 
+# diffusion coeff
+nu = 1e-12
 
-## problem and weak form specification
+# Specify velocity
+vel = 0.5
 
-nu = 5e-3
-vel = lambda x: (x+1.)/(x+1.)
-f = lambda x: np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
+def src_f(x, **kwargs):
+    """
+    Custom source term, could depend on solution y
+    """
+    return 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
+
+
+def vel_f(x, **kwargs):
+    """
+    Custom velocity field
+    """
+    return 0.0*x + vel
 
 @fem.BilinearForm
 def adv_diff(u, v, w):
-    return nu * dot(grad(u), grad(v)) + dot(vel(w.x), grad(u)) * v
+    """
+    Combo Adv Diff kernel
+
+    Args:
+        w: is a dict of skfem.element.DiscreteField
+            w.x (dof locs)
+    """
+    return w.nu * dot(grad(u), grad(v)) + dot(vel_f(w.x), grad(u)) * v
 
 @fem.BilinearForm
 def adv_diff_cons(u, v, w):
-    return nu * dot(grad(u), grad(v)) - dot(vel(w.x) * u, grad(v))
+    """
+    Combo Adv Diff kernel conservative form
+    """
+    return w.nu * dot(grad(u), grad(v)) - dot(vel_f(w.x) * u, grad(v))
+
+@fem.BilinearForm
+def adv_cons(u, v, w):
+    """
+    Adv kernel, conservative form
+    """
+    return - dot(vel_f(w.x) * u, grad(v))
+
+@fem.BilinearForm
+def diff(u, v, w):
+    """
+    Diffusion kernel
+    """
+    return w.nu * dot(grad(u), grad(v))
 
 @fem.BilinearForm
 def robin(u, v, w):
-    return dot(vel(w.x), w.n) * u * v
+    """
+    Args:
+        w: is a dict of skfem.element.DiscreteField (or user types)
+            w.n (face normals)
+    """
+    return dot(vel_f(w.x), w.n) * u * v
 
 @fem.LinearForm
 def rhs(v, w):
-    return f(w.x) * v
+    """
+    Source term
+    """
+    return src_f(w.x) * v
 
 @fem.BilinearForm
 def mass(u, v, _):
     return u * v
 
+
 class AdDiffSEM:
     """
-    Assemble matrices for spectral finite element discretization of an advection diffusion eqaution
+    Assemble matrices for spectral finite element discretization
+    of an advection diffusion eqaution
 
     p: polynomial order
-    nrefs: refinement level of the mesh
+    nu: diffusion coeff
     """
-    def __init__(self, p=1, nrefs=1):
+    def __init__(self, mesh, p=1, field_fns={}, params={}, **kwargs):
+        # diffusion coeff
+        self.params = {"nu": params.get("nu", 5e-3)}
         self.p = p
-        self.nrefs = nrefs
-        self.assemble()
+        self.mesh = mesh
 
-    def assemble(self):
-
-        # create the mesh
-        mesh0 = fem.MeshLine1().with_boundaries({
-            'left': lambda x: np.isclose(x[0], 0.),
-            'right': lambda x: np.isclose(x[0], 1.)
-        })
-        self.mesh = mesh0.refined(self.nrefs)
+        # register custom field functions
+        self.field_fns = {}
+        for k, v in field_fns.items():
+            self.validate_add_field_fn(k, v)
 
         if self.p < 2:
             self.element = fem.ElementLineP1()
@@ -73,46 +116,61 @@ class AdDiffSEM:
             self.element = fem.ElementLineP2()
         elif self.p >= 3:
             self.element = el_nodal.ElementLinePp_nodal(self.p)
-            ## implementation with skfem provided element does not support easy mass lumping for p >= 3
-            #self.element = fem.ElementLinePp(self.p)
-
-        #if self.p < 3:
-        #    quad = GL_quad[self.p + 1]
-        #    basis = fem.Basis(self.mesh, self.element, quadrature=quad)
-        #else:
-        #    warnings.warn(f"Dofs are not Lagrange basis for p={self.p}. Mass lumping not applied.")
-        #    basis = fem.Basis(self.mesh, self.element)
 
         quad = el_nodal.GLL_quad()(self.p + 1)
-        basis = fem.Basis(self.mesh, self.element, quadrature=quad)
-        basis_f = fem.FacetBasis(self.mesh, self.element)
+        self.basis = fem.Basis(self.mesh, self.element, quadrature=quad)
+        self.basis_f = fem.FacetBasis(self.mesh, self.element)
 
+    def validate_add_field_fn(self, field_name: str, f: Callable):
+        assert callable(f)
+        self.field_fns[field_name] = f
+
+    def w_ext(self, basis, reshape=True, **kwargs):
+        """
+        Extra kwargs passed with the `w` dict to kernels
+        """
+        fields = {}
+        basis_shape = basis.global_coordinates().shape
+        for field_name, field_f in self.field_fns.items():
+            vals = field_f(basis.doflocs, **kwargs).flatten()
+            # NOTE: reshape is needed here
+            # when using these fields in the kernels.
+            # is this an issue in skfem??
+            fv = basis.interpolate(vals)
+            if reshape:
+                fv = np.reshape(fv, basis_shape)
+            fields[field_name] = fv
+        return {**self.params, **fields}
+
+    def assemble(self, **kwargs):
+        """
+        kwargs: extra args passed to user defined field functions
+        """
         conservative = True
         if conservative:
-            self.A_pre = adv_diff_cons.assemble(basis) + robin.assemble(basis_f)
+            # remark: w_dict must contain only scalars and skfem.element.DiscreteField
+            A_pre = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs)) \
+                    + robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
         else:
-            self.A_pre = adv_diff.assemble(basis)
+            A_pre = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
-        self.b_pre = rhs.assemble(basis)
-        self.M_pre = mass.assemble(basis)
+        b_pre = rhs.assemble(self.basis, **self.w_ext(self.basis, reshape=False, **kwargs))
+        M_pre = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
         # Dirichlet boundary conditions
-        self.A, self.b = fem.enforce(self.A_pre, self.b_pre, D=self.mesh.boundaries['left'].flatten())
-        self.M = fem.enforce(self.M_pre, D=self.mesh.boundaries['left'].flatten())
+        A, b = fem.enforce(A_pre, b_pre, D=self.mesh.boundaries['left'].flatten())
+        M = fem.enforce(M_pre, D=self.mesh.boundaries['left'].flatten())
 
-        self.Ml = (self.M @ np.ones([self.M.shape[1], 1])).reshape(-1)
+        Ml = (M @ np.ones([M.shape[1], 1])).reshape(-1)
 
         # provide jax arrays
-        self.jMl = jnp.asarray(self.Ml)
-        self.jA = jsp.BCOO.from_scipy_sparse(self.A)
-        self.jb = jnp.asarray(self.b)
+        jMl = jnp.asarray(Ml)
+        jA = jsp.BCOO.from_scipy_sparse(A)
+        jb = jnp.asarray(b)
+        return jA, jMl, jb
 
-    def get_initial(self):
-        # return jnp.zeros(self.jb.shape)
-        return jnp.ones(self.jb.shape)
-
-    def ode_sys(self):
-        return AffineLinearSEM(self.jA, self.jMl, self.jb)
+    def ode_sys(self, **kwargs):
+        return AffineLinearSEM(self, **kwargs)
 
 
 class AffineLinearSEM(OdeSys):
@@ -122,64 +180,98 @@ class AffineLinearSEM(OdeSys):
     A: jax.Array
     Ml: jax.Array
     b: jax.Array
-    jac_lop: Callable
+    # jac_lop: Callable
+    sys_assembler: AdDiffSEM
 
-    def __init__(self, A: jsp.JAXSparse, Ml: jax.Array, b: jax.Array, *args, **kwargs):
-        self.A = A
-        self.Ml = Ml
-        self.b = b
-        self.jac_lop = JaxMatrixLinop(-self.A / self.Ml)
+    def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
+        self.sys_assembler = sys_assembler
+        self.A, self.Ml, self.b = self.sys_assembler.assemble(**kwargs)
         super().__init__()
 
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        # NOTE: in principle one could do:
+        # self.A, self.Ml, self.b = self.sys_assembler.assemble(t=t, u=u, **kwargs)
+        # here to rebuild the system given the current system state, u
         return (self.b - self.A @ u) / self.Ml
 
-    def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-        return self.jac_lop
+#     @property
+#     def jac_lop(self):
+#         return JaxMatrixLinop(-self.A / self.Ml)
+# 
+#     def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+#         return self.jac_lop
 
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
+    import argparse
     jax.config.update('jax_platform_name', 'cpu')
     print(f"Running on {jax.devices()}.")
 
-    # test simple exp integrator
-    sem = AdDiffSEM(p=1, nrefs=5)
-    ode_sys = sem.ode_sys()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
+    parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
+    parser.add_argument("-p", help="basis order", type=int, default=2)
+    args = parser.parse_args()
+
+    # create the mesh
+    mesh0 = fem.MeshLine1().with_boundaries({
+        'left': lambda x: np.isclose(x[0], 0.),
+        'right': lambda x: np.isclose(x[0], 1.)
+    })
+    # mesh refinement
+    nrefs=args.mr
+    mesh = mesh0.refined(nrefs)
+
+    param_dict = {"nu": nu}
+
+    # init the system
+    sem = AdDiffSEM(mesh, p=args.p, params=param_dict)
+    ode_sys = AffineLinearSEM(sem)
     t = 0.0
 
     # mesh mask for initial conditions
-    x = sem.mesh.doflocs
+    x = sem.basis.doflocs
     sx = np.asarray(x.flatten())
 
-    # square wave
-    ic_points = np.where((sx > 0.1) & (sx < 0.4))
-    y0_profile = np.zeros(sem.jb.shape) + 1e-9
-    y0_profile[ic_points] = 1.0
-    y0 = jnp.asarray(y0_profile)
+    if args.ic == "square":
+        # square wave
+        startx, endx = 0.1, 0.4
+        ic_points = np.where((sx > startx) & (sx < endx))
+        y0_profile = np.zeros(ode_sys.b.shape) + 1e-9
+        y0_profile[ic_points] = 1.0
+        y0 = jnp.asarray(y0_profile)
+        g_prof_exact = lambda t, x: \
+                np.asarray([1.0 if (x_i > startx+t*vel) & (x_i < endx+t*vel) else 0.0 for x_i in x])
+    else:
+        # gaussian profile
+        wc, ww = 0.3, 0.05
+        g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
+        y0_profile = g_prof(sx)
+        y0 = jnp.asarray(y0_profile)
 
-    # gaussian profile
-    wc, ww = 0.3, 0.05
-    g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
-    y0_profile = g_prof(sx)
-    y0 = jnp.asarray(y0_profile)
+        # expected solution
+        g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))/(2*ww))**2.0)
 
+    # init the time integrator
     sys_int = EpirkIntegrator(ode_sys, t, y0, method="epirk3", max_krylov_dim=20, iom=2)
 
     t_res = [0,]
     y_res = [y0,]
-    dt = .01
-    nsteps = 100
+    y_exact_res = [g_prof_exact(0.0, sx),]
+    dt = .1
+    nsteps = 10
     for i in range(nsteps):
         res = sys_int.step(dt)
         # log the results for plotting
         t_res.append(res.t)
         y_res.append(res.y)
+        y_exact_res.append(g_prof_exact(res.t, sx))
         # this would be where you could reject a step, if the
         # estimated err was too large
         sys_int.accept_step(res)
 
-    print(np.asarray(y_res))
+    # print(np.asarray(y_res))
     # plot the result at a few time steps
     outdir = './advection_diffusion_1d_out/'
     # sorted x
@@ -189,14 +281,28 @@ if __name__ == "__main__":
     sx = sx[si]
     plt.figure()
     for i in range(nsteps):
-        if i % 10 == 0 or i == 0:
+        if i % 2 == 0 or i == 0:
             t = t_res[i]
             y = y_res[i][si]
+            y_exact = y_exact_res[i][si]
             plt.plot(sx, y, label='t=%0.4f' % t)
+            plt.plot(sx, y_exact, ls='--', label='exact t=%0.4f' % t)
     plt.legend()
     plt.grid(ls='--')
     plt.ylabel('u')
     plt.xlabel('x')
     plt.savefig('adv_diff_1d.png')
     plt.close()
+
+    # CFL
+    mesh_spacing = (sx[1] - sx[0])
+    cfl = dt * vel / mesh_spacing
+    print("CFL: %0.4f" % cfl)
+
+    l2 = np.linalg.norm(y_exact - y)
+    l1 = np.linalg.norm(y_exact - y, 1)
+    linf = np.linalg.norm(y_exact - y, np.inf)
+    print("mesh_spacing, cfl, l1, l2, linf")
+    print("%0.4e, %0.4f, %0.4e, %0.4e, %0.4e" % (mesh_spacing, cfl, l1, l2, linf))
+
 
