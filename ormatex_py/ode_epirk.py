@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from collections.abc import Callable
 from ormatex_py.ode_sys import IntegrateSys, OdeSys, StepResult
-from ormatex_py.matexp_krylov import phi_linop, matexp_linop, phipm_unstable, kiops_fixedsteps
+from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 
 
 class EpirkIntegrator(IntegrateSys):
@@ -64,7 +64,7 @@ class EpirkIntegrator(IntegrateSys):
         vb0 = jnp.zeros(y0.shape)
         y_update = kiops_fixedsteps(
             sys_jac_lop, dt, [vb0, fy0_dt, (2./3.)*rn_dt],
-            2, max_krylov_dim=self.max_krylov_dim, iom=self.iom)
+            max_krylov_dim=self.max_krylov_dim, iom=self.iom)
         y_new = y0 + y_update
         y_err = -1.0
 

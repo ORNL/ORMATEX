@@ -41,7 +41,7 @@ def phi_linop(a_lo: Callable, dt: float, v0: jax.Array, k: int, max_krylov_dim: 
     return beta * tmp.flatten()
 
 
-def kiops_fixedsteps(a_lo: Callable, dt: float, vb: list[jax.Array], p: int, max_krylov_dim: int, iom: int=2, n_steps: int=1):
+def kiops_fixedsteps(a_lo: Callable, dt: float, vb: list[jax.Array], max_krylov_dim: int, iom: int=2, n_steps: int=1):
     r"""
     Mehtod based roughly on simplified KIOPS with fixes stepsize
     and not krylov adaptivity.  TODO: add adaptivity routines.
@@ -50,7 +50,7 @@ def kiops_fixedsteps(a_lo: Callable, dt: float, vb: list[jax.Array], p: int, max
 
     .. math::
 
-        w(\tau) = \sum_0^p \tau^j \varphi_j(\tau A) b_j
+        w(\tau) = \sum_{j=0}^p \tau^j \varphi_j(\tau A) b_j
 
         w(\tau) = matrm{exp}(\tau \tilde A)v
 
@@ -62,10 +62,10 @@ def kiops_fixedsteps(a_lo: Callable, dt: float, vb: list[jax.Array], p: int, max
 
     where A=a_lo is NxN,
     B = vb[::-1] is Nxp,
-    K = [[0, I_{p-1}],[0, 0]] is pxp
+    K = [[0, I_{p-1}],[0, 0]] is pxp,
     :math:` \tilde A ` is N+p x N+p
     """
-    assert p+1 == len(vb)
+    p = len(vb) - 1
     # fixed stepsize
     tau_i = 1.0
     n = vb[0].shape[0]
@@ -88,8 +88,8 @@ def kiops_fixedsteps(a_lo: Callable, dt: float, vb: list[jax.Array], p: int, max
     return w[0:n]
 
 
-def phipm_unstable(a_lo: Callable, dt: float, vb: list[jax.Array], p: int, max_krylov_dim: int, iom: int=2, n_steps: int=1):
-    """
+def phipm_unstable(a_lo: Callable, dt: float, vb: list[jax.Array], max_krylov_dim: int, iom: int=2, n_steps: int=1):
+    r"""
     Computes linear combinations of phi functions, using the
     phipm approach. Ref:
 
@@ -99,19 +99,24 @@ def phipm_unstable(a_lo: Callable, dt: float, vb: list[jax.Array], p: int, max_k
         ACM Trans. Math. Softw. 38 (3) (2012) 22.
 
     Computes:
-    \tau*phi_0(A*\tau)*v_0 +
-    \tau^1*phi_1(A*\tau)*v_1 +
-    \tau^2*phi_2(A*\tau)*v_2
+
+    .. math::
+
+        \tau*\varphi_0(A*\tau)*v_0 +
+        \tau^1*\varphi_1(A*\tau)*v_1 +
+        \tau^2*\varphi_2(A*\tau)*v_2 + ...
+        \tau^p*\varphi_2(A*\tau)*v_p + ...
+
     where A is a sparse linop
 
     Args:
-        a_lo: linear operator.  implements __call__ for matvec
+        a_lo: linear operator.  implements `__call__` for matvec
         vb: list of rhs vectors [v_0, ... v_p] where p is the highest order phi fn to compute.
         dt: step size.  TODO: support list of tau
-        p: int. highest order phi fn to compute.
     """
     # TODO: this substepping needs to be replaced
     # step sizes
+    p = len(vb) - 1
     tau = np.ones(n_steps)
     tau = (tau / np.sum(tau)) # .cumsum()
 
