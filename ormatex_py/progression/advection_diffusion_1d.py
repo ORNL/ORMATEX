@@ -152,7 +152,7 @@ class AdDiffSEM:
         return jA, jMl, jb
 
     def ode_sys(self, **kwargs):
-        return AffineLinearSEM(*self.assemble(**kwargs))
+        return AffineLinearSEM(self, **kwargs)
 
 
 class AffineLinearSEM(OdeSys):
@@ -163,19 +163,23 @@ class AffineLinearSEM(OdeSys):
     Ml: jax.Array
     b: jax.Array
     jac_lop: Callable
+    sys_assembler: AdDiffSEM
 
-    def __init__(self, A: jsp.JAXSparse, Ml: jax.Array, b: jax.Array, *args, **kwargs):
-        self.A = A
-        self.Ml = Ml
-        self.b = b
+    def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
+        self.sys_assembler = sys_assembler
+        self.A, self.Ml, self.b = self.sys_assembler.assemble(**kwargs)
         self.jac_lop = JaxMatrixLinop(-self.A / self.Ml)
         super().__init__()
 
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        # NOTE: in principle one could do:
+        # self.A, self.Ml, self.b = self.sys_assembler.assemble(t=t, u=u, **kwargs)
+        # here to rebuild the system given the current system state, u
         return (self.b - self.A @ u) / self.Ml
 
     def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         return self.jac_lop
+
 
 def src_f(x, **kwargs):
     """
@@ -183,8 +187,13 @@ def src_f(x, **kwargs):
     """
     return 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
 
+
 def vel_f(x, **kwargs):
+    """
+    Custom velocity field
+    """
     return 0.0*x + kwargs.get("vel", 1.0)
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
@@ -219,7 +228,8 @@ if __name__ == "__main__":
 
     # init the system
     sem = AdDiffSEM(mesh, p=1, field_fns=field_fns, params=param_dict)
-    ode_sys = sem.ode_sys(vel=vel)
+    # ode_sys = sem.ode_sys(vel=vel)
+    ode_sys = AffineLinearSEM(sem, vel=vel)
     t = 0.0
 
     # mesh mask for initial conditions
