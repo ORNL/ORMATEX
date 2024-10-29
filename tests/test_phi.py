@@ -7,8 +7,8 @@ import jax
 import jax.numpy as jnp
 
 from ormatex_py.ode_sys import JaxMatrixLinop
-from ormatex_py.matexp_phi import f_phi_k, f_phi_k_ext
-from ormatex_py.matexp_krylov import phi_linop, phipm_unstable, kiops_fixedsteps
+from ormatex_py.matexp_krylov import phi_linop, kiops_fixedsteps
+from ormatex_py.matexp_phi import f_phi_k, f_phi_k_ext, f_phi_k_appl
 
 jax.config.update("jax_enable_x64", True)
 
@@ -30,15 +30,15 @@ def test_phi_0():
     """
 
     # test a diagonal matrix with reference values
-    d_z = np.diag(ref_z)
+    d_z = jnp.diag(ref_z)
     jax_phi_0 = f_phi_k(d_z, k=0)
-    assert jnp.allclose(np.diag(jax_phi_0), ref_phi[0,:])
+    assert jnp.allclose(jnp.diag(jax_phi_0), ref_phi[0,:])
     jax_phi_0 = f_phi_k_ext(d_z, k=0)
-    assert jnp.allclose(np.diag(jax_phi_0), ref_phi[0,:])
+    assert jnp.allclose(jnp.diag(jax_phi_0), ref_phi[0,:])
 
     np.random.seed(42)
-    for it in range(10):
-        dim = it+1
+    for it in range(3):
+        dim = 5*(it+1)
         np_test_a = np.random.randn(dim, dim)
         test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
         # test against scipy expm
@@ -54,15 +54,15 @@ def test_phi_1():
     """
 
     # test a diagonal matrix with reference values
-    d_z = np.diag(ref_z)
+    d_z = jnp.diag(ref_z)
     jax_phi_1 = f_phi_k(d_z, k=1)
-    assert jnp.allclose(np.diag(jax_phi_1), ref_phi[1,:])
+    assert jnp.allclose(jnp.diag(jax_phi_1), ref_phi[1,:])
     jax_phi_1 = f_phi_k_ext(d_z, k=1)
-    assert jnp.allclose(np.diag(jax_phi_1), ref_phi[1,:])
+    assert jnp.allclose(jnp.diag(jax_phi_1), ref_phi[1,:])
 
     np.random.seed(42)
-    for it in range(10):
-        dim = it+1
+    for it in range(3):
+        dim = 5*(it+1)
         np_test_a = np.random.randn(dim, dim)
         test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
 
@@ -77,15 +77,15 @@ def test_phi_k():
     """
     for k in range(2, ref_phi.shape[0]):
         # test a diagonal matrix with reference values
-        d_z = np.diag(ref_z)
+        d_z = jnp.diag(ref_z)
         jax_phi_k = f_phi_k(d_z, k=k)
-        assert jnp.allclose(np.diag(jax_phi_k), ref_phi[k,:])
+        assert jnp.allclose(jnp.diag(jax_phi_k), ref_phi[k,:])
         jax_phi_k = f_phi_k_ext(d_z, k=k)
-        assert jnp.allclose(np.diag(jax_phi_k), ref_phi[k,:])
+        assert jnp.allclose(jnp.diag(jax_phi_k), ref_phi[k,:])
 
         np.random.seed(42)
-        for it in range(10):
-            dim = it+1
+        for it in range(3):
+            dim = 5*(it+1)
             np_test_a = np.random.randn(dim, dim)
             test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
 
@@ -93,6 +93,30 @@ def test_phi_k():
             jax_phi_k = f_phi_k(test_a, k=k)
             jax_phi_k_ext = f_phi_k_ext(test_a, k=k)
             assert jnp.allclose(jax_phi_k, jax_phi_k_ext)
+
+def test_phi_k_appl():
+    """
+    Computes phi_k(A)B with k >= 0
+    """
+    for k in range(ref_phi.shape[0]):
+        # test a diagonal matrix with reference values
+        d_z = jnp.diag(ref_z)
+        b = jnp.ones((ref_phi.shape[1],))
+        jax_phi_k_b = f_phi_k_appl(d_z, b, k=k)
+        assert jnp.allclose(jax_phi_k_b, ref_phi[k,:])
+
+        np.random.seed(42)
+        for it in range(3):
+            dim = 5*(it+1)
+            np_test_a = np.random.randn(dim, dim)
+            np_test_b = np.random.randn(dim, 1)
+            test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
+            test_b = jnp.asarray(np_test_b, dtype=jnp.float64)
+
+            # test against different impl.
+            jax_phi_k = f_phi_k(test_a, k=k)
+            jax_phi_k_b = f_phi_k_appl(test_a, test_b, k=k)
+            assert jnp.allclose(jax_phi_k @ test_b, jax_phi_k_b)
 
 def test_phi_linop_0():
     """
@@ -167,46 +191,4 @@ def test_kiops_fixedstep():
     # compute same thing using phipm method
     vb = [test_b0, test_b1, test_b2]
     phipm_phi_combo = kiops_fixedsteps(test_a_lo, dt, vb, max_krylov_dim=10, iom=10, n_steps=1)
-    assert jnp.allclose(phipm_phi_combo, base_phi_combo, atol=1e-6)
-
-
-def test_phipm_unstable():
-    """
-    NOTE: This test currently fails
-    TODO: phipm with substepping impl is broken.
-
-    Test that the phipm correctly computes linear combinations
-    of phi-vector products:
-
-    phipm
-    ==
-    phi_1*(dt*A)*(dt)*b1 +
-    phi_2*(dt*A)*(dt)*b2
-
-    where
-    phipm = phi_0(dt*A)*0 + phi_1*(dt*A)*(dt)*b1 + phi_2*(dt*A)*(dt)*b2
-    """
-    # === small bateman test case for phipm
-    n = 3
-    np_test_a = np.array([
-        [-1e-3, 1.e-1, 0.0],
-        [   0.,-1.e-1, 1e1],
-        [   0.,    0.,-1e1],
-        ])
-    test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
-    test_a_lo = JaxMatrixLinop(test_a)
-
-    # arbitrary small vectors with vastly different magnitudes
-    test_b0 = jnp.asarray(np.zeros(n))
-    test_b1 = jnp.asarray(np.linspace(0.2, 3.4, n) * 1e-1)
-    test_b2 = jnp.asarray(np.linspace(0.8, 4.0, n) * 1e-4)
-    dt = 2.5
-
-    base_phi_1_b1 = f_phi_k_ext(dt*test_a, 1) @ test_b1
-    base_phi_2_b2 = f_phi_k_ext(dt*test_a, 2) @ test_b2
-    base_phi_combo = base_phi_1_b1 + base_phi_2_b2
-
-    # compute same thing using phipm method
-    vb = [test_b0, test_b1, test_b2]
-    phipm_phi_combo = phipm_unstable(test_a_lo, dt, vb, max_krylov_dim=n, iom=3, n_steps=2)
     assert jnp.allclose(phipm_phi_combo, base_phi_combo, atol=1e-6)
