@@ -7,9 +7,8 @@ import jax
 import jax.numpy as jnp
 
 from ormatex_py.ode_sys import JaxMatrixLinop
-
+from ormatex_py.matexp_krylov import phi_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k, f_phi_k_ext, f_phi_k_appl
-from ormatex_py.matexp_krylov import phi_linop
 
 jax.config.update("jax_enable_x64", True)
 
@@ -161,3 +160,36 @@ def test_phi_linop_1():
     jax_phi_1_b = phi_linop(
         d_z_lo, 1.0, b, k=1, max_krylov_dim=ref_z.shape[0], iom=100)
     assert jnp.allclose(jax_phi_1_b, ref_phi[1,:])
+
+def test_kiops_fixedstep():
+    """
+    Test that the KIOPS method correctly computes
+    linear combinations of phi-vector products:
+
+    kiops_w = phi_0(dt*A)*0 + phi_1*(dt*A)*(dt)*b1 + phi_2*(dt*A)*(dt)*b2
+    """
+    # === small bateman test case for phipm
+    n = 3
+    np_test_a = np.array([
+        [-1e-3, 1.e-1, 0.0],
+        [   0.,-1.e-1, 1e1],
+        [   0.,    0.,-1e1],
+        ])
+    test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
+    test_a_lo = JaxMatrixLinop(test_a)
+
+    # arbitrary small vectors with vastly different magnitudes
+    test_b0 = jnp.asarray(np.zeros(n))
+    test_b1 = jnp.asarray(np.linspace(0.2, 3.4, n) * 1e-1)
+    test_b2 = jnp.asarray(np.linspace(0.8, 4.0, n) * 1e-4)
+    dt = 2.5
+
+    base_phi_1_b1 = f_phi_k_ext(dt*test_a, 1) @ test_b1
+    base_phi_2_b2 = f_phi_k_ext(dt*test_a, 2) @ test_b2
+    base_phi_combo = base_phi_1_b1 + base_phi_2_b2
+
+    # compute same thing using phipm method
+    vb = [test_b0, test_b1, test_b2]
+    p = 2
+    phipm_phi_combo = kiops_fixedsteps(test_a_lo, dt, vb, p, max_krylov_dim=10, iom=10, n_steps=1)
+    assert jnp.allclose(phipm_phi_combo, base_phi_combo, atol=1e-6)

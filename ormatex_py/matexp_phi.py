@@ -5,6 +5,7 @@ from functools import partial
 import numpy as np
 import jax
 from jax import numpy as jnp
+import equinox as eqx
 
 import warnings
 
