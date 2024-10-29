@@ -19,6 +19,24 @@ jax.config.update("jax_enable_x64", True)
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_epirk import EpirkIntegrator
 
+# diffusion coeff
+nu = 5e-12
+
+# Specify velocity
+vel = 0.5
+
+def src_f(x, **kwargs):
+    """
+    Custom source term, could depend on solution y
+    """
+    return 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
+
+
+def vel_f(x, **kwargs):
+    """
+    Custom velocity field
+    """
+    return 0.0*x + vel
 
 @fem.BilinearForm
 def adv_diff(u, v, w):
@@ -29,21 +47,21 @@ def adv_diff(u, v, w):
         w: is a dict of skfem.element.DiscreteField
             w.x (dof locs)
     """
-    return w.nu * dot(grad(u), grad(v)) + dot(w.vel_f, grad(u)) * v
+    return w.nu * dot(grad(u), grad(v)) + dot(vel_f(w.x), grad(u)) * v
 
 @fem.BilinearForm
 def adv_diff_cons(u, v, w):
     """
     Combo Adv Diff kernel conservative form
     """
-    return w.nu * dot(grad(u), grad(v)) - dot(w.vel_f * u, grad(v))
+    return w.nu * dot(grad(u), grad(v)) - dot(vel_f(w.x) * u, grad(v))
 
 @fem.BilinearForm
 def adv_cons(u, v, w):
     """
     Adv kernel, conservative form
     """
-    return - dot(w.vel_f * u, grad(v))
+    return - dot(vel_f(w.x) * u, grad(v))
 
 @fem.BilinearForm
 def diff(u, v, w):
@@ -59,14 +77,14 @@ def robin(u, v, w):
         w: is a dict of skfem.element.DiscreteField (or user types)
             w.n (face normals)
     """
-    return dot(w.vel_f, w.n) * u * v
+    return dot(vel_f(w.x), w.n) * u * v
 
 @fem.LinearForm
 def rhs(v, w):
     """
     Source term
     """
-    return w.src_f * v
+    return src_f(w.x) * v
 
 @fem.BilinearForm
 def mass(u, v, _):
@@ -184,20 +202,6 @@ class AffineLinearSEM(OdeSys):
         return self.jac_lop
 
 
-def src_f(x, **kwargs):
-    """
-    Custom source term, could depend on solution y
-    """
-    return 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
-
-
-def vel_f(x, **kwargs):
-    """
-    Custom velocity field
-    """
-    return 0.0*x + kwargs.get("vel", 1.0)
-
-
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
@@ -207,6 +211,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
+    parser.add_argument("-p", help="basis order", type=int, default=2)
     args = parser.parse_args()
 
     # create the mesh
@@ -218,26 +223,16 @@ if __name__ == "__main__":
     nrefs=args.mr
     mesh = mesh0.refined(nrefs)
 
-    # diffusion coeff
-    nu = 1e-12
-
-    # Specify velocity fn(x)
-    vel = 0.5
-
-    # Specify src tem fn(x)
-    # src_f = lambda x: 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
-
-    field_fns = {"vel_f": vel_f, "src_f": src_f}
     param_dict = {"nu": nu}
 
     # init the system
-    sem = AdDiffSEM(mesh, p=1, field_fns=field_fns, params=param_dict)
+    sem = AdDiffSEM(mesh, p=args.p, params=param_dict)
     # ode_sys = sem.ode_sys(vel=vel)
     ode_sys = AffineLinearSEM(sem, vel=vel)
     t = 0.0
 
     # mesh mask for initial conditions
-    x = sem.mesh.doflocs
+    x = sem.basis.doflocs
     sx = np.asarray(x.flatten())
 
     if args.ic == "square":
@@ -265,8 +260,8 @@ if __name__ == "__main__":
     t_res = [0,]
     y_res = [y0,]
     y_exact_res = [g_prof_exact(0.0, sx),]
-    dt = .1
-    nsteps = 10
+    dt = .01
+    nsteps = 100
     for i in range(nsteps):
         res = sys_int.step(dt)
         # log the results for plotting
@@ -287,7 +282,7 @@ if __name__ == "__main__":
     sx = sx[si]
     plt.figure()
     for i in range(nsteps):
-        if i % 2 == 0 or i == 0:
+        if i % 10 == 0 or i == 0:
             t = t_res[i]
             y = y_res[i][si]
             y_exact = y_exact_res[i][si]
