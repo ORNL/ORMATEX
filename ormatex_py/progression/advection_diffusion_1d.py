@@ -168,7 +168,6 @@ class AffineLinearSEM(OdeSys):
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         self.sys_assembler = sys_assembler
         self.A, self.Ml, self.b = self.sys_assembler.assemble(**kwargs)
-        self.jac_lop = JaxMatrixLinop(-self.A / self.Ml)
         super().__init__()
 
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
@@ -176,6 +175,10 @@ class AffineLinearSEM(OdeSys):
         # self.A, self.Ml, self.b = self.sys_assembler.assemble(t=t, u=u, **kwargs)
         # here to rebuild the system given the current system state, u
         return (self.b - self.A @ u) / self.Ml
+
+    @property
+    def jac_lop(self):
+        return JaxMatrixLinop(-self.A / self.Ml)
 
     def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         return self.jac_lop
