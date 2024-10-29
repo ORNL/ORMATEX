@@ -180,7 +180,7 @@ class AffineLinearSEM(OdeSys):
     A: jax.Array
     Ml: jax.Array
     b: jax.Array
-    jac_lop: Callable
+    # jac_lop: Callable
     sys_assembler: AdDiffSEM
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
@@ -194,12 +194,12 @@ class AffineLinearSEM(OdeSys):
         # here to rebuild the system given the current system state, u
         return (self.b - self.A @ u) / self.Ml
 
-    @property
-    def jac_lop(self):
-        return JaxMatrixLinop(-self.A / self.Ml)
-
-    def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-        return self.jac_lop
+#     @property
+#     def jac_lop(self):
+#         return JaxMatrixLinop(-self.A / self.Ml)
+# 
+#     def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+#         return self.jac_lop
 
 
 if __name__ == "__main__":
@@ -259,8 +259,8 @@ if __name__ == "__main__":
     t_res = [0,]
     y_res = [y0,]
     y_exact_res = [g_prof_exact(0.0, sx),]
-    dt = .01
-    nsteps = 100
+    dt = .1
+    nsteps = 10
     for i in range(nsteps):
         res = sys_int.step(dt)
         # log the results for plotting
@@ -281,7 +281,7 @@ if __name__ == "__main__":
     sx = sx[si]
     plt.figure()
     for i in range(nsteps):
-        if i % 10 == 0 or i == 0:
+        if i % 2 == 0 or i == 0:
             t = t_res[i]
             y = y_res[i][si]
             y_exact = y_exact_res[i][si]
