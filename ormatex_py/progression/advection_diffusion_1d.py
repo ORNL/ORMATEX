@@ -131,32 +131,28 @@ class AdDiffSEM:
         conservative = True
         if conservative:
             # remark: w_dict must contain only scalars and skfem.element.DiscreteField
-            self.A_pre = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs)) \
+            A_pre = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs)) \
                     + robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
         else:
-            self.A_pre = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+            A_pre = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
-        self.b_pre = rhs.assemble(self.basis, **self.w_ext(self.basis, reshape=False, **kwargs))
-        self.M_pre = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+        b_pre = rhs.assemble(self.basis, **self.w_ext(self.basis, reshape=False, **kwargs))
+        M_pre = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
         # Dirichlet boundary conditions
-        self.A, self.b = fem.enforce(self.A_pre, self.b_pre, D=self.mesh.boundaries['left'].flatten())
-        self.M = fem.enforce(self.M_pre, D=self.mesh.boundaries['left'].flatten())
+        A, b = fem.enforce(A_pre, b_pre, D=self.mesh.boundaries['left'].flatten())
+        M = fem.enforce(M_pre, D=self.mesh.boundaries['left'].flatten())
 
-        self.Ml = (self.M @ np.ones([self.M.shape[1], 1])).reshape(-1)
+        Ml = (M @ np.ones([M.shape[1], 1])).reshape(-1)
 
         # provide jax arrays
-        self.jMl = jnp.asarray(self.Ml)
-        self.jA = jsp.BCOO.from_scipy_sparse(self.A)
-        self.jb = jnp.asarray(self.b)
-
-    def get_initial(self):
-        # return jnp.zeros(self.jb.shape)
-        return jnp.ones(self.jb.shape)
+        jMl = jnp.asarray(Ml)
+        jA = jsp.BCOO.from_scipy_sparse(A)
+        jb = jnp.asarray(b)
+        return jA, jMl, jb
 
     def ode_sys(self, **kwargs):
-        self.assemble(**kwargs)
-        return AffineLinearSEM(self.jA, self.jMl, self.jb)
+        return AffineLinearSEM(*self.assemble(**kwargs))
 
 
 class AffineLinearSEM(OdeSys):
