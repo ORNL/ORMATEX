@@ -103,21 +103,18 @@ class AdDiffSEM:
         self.basis = fem.Basis(self.mesh, self.element, quadrature=quad)
         self.basis_f = fem.FacetBasis(self.mesh, self.element)
 
-        # assemble the problem
-        self.assemble()
-
     def validate_add_field_fn(self, field_name: str, f: Callable):
         assert callable(f)
         self.field_fns[field_name] = f
 
-    def w_ext(self, basis, reshape=True):
+    def w_ext(self, basis, reshape=True, **kwargs):
         """
         Extra kwargs passed with the `w` dict to kernels
         """
         fields = {}
         basis_shape = basis.global_coordinates().shape
         for field_name, field_f in self.field_fns.items():
-            vals = field_f(basis.doflocs).flatten()
+            vals = field_f(basis.doflocs, **kwargs).flatten()
             # NOTE: reshape is needed here
             # when using these fields in the kernels.
             # is this an issue in skfem??
@@ -127,17 +124,20 @@ class AdDiffSEM:
             fields[field_name] = fv
         return {**self.params, **fields}
 
-    def assemble(self):
+    def assemble(self, **kwargs):
+        """
+        kwargs: extra args passed to user defined field functions
+        """
         conservative = True
         if conservative:
             # remark: w_dict must contain only scalars and skfem.element.DiscreteField
-            self.A_pre = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis)) \
-                    + robin.assemble(self.basis_f, **self.w_ext(self.basis_f))
+            self.A_pre = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs)) \
+                    + robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
         else:
-            self.A_pre = adv_diff.assemble(self.basis, **self.w_ext(self.basis))
+            self.A_pre = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
-        self.b_pre = rhs.assemble(self.basis, **self.w_ext(self.basis, reshape=False))
-        self.M_pre = mass.assemble(self.basis, **self.w_ext(self.basis))
+        self.b_pre = rhs.assemble(self.basis, **self.w_ext(self.basis, reshape=False, **kwargs))
+        self.M_pre = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
         # Dirichlet boundary conditions
         self.A, self.b = fem.enforce(self.A_pre, self.b_pre, D=self.mesh.boundaries['left'].flatten())
@@ -154,7 +154,8 @@ class AdDiffSEM:
         # return jnp.zeros(self.jb.shape)
         return jnp.ones(self.jb.shape)
 
-    def ode_sys(self):
+    def ode_sys(self, **kwargs):
+        self.assemble(**kwargs)
         return AffineLinearSEM(self.jA, self.jMl, self.jb)
 
 
@@ -180,6 +181,14 @@ class AffineLinearSEM(OdeSys):
     def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         return self.jac_lop
 
+def src_f(x, **kwargs):
+    """
+    Custom source term, could depend on solution y
+    """
+    return 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
+
+def vel_f(x, **kwargs):
+    return 0.0*x + kwargs.get("vel", 1.0)
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
@@ -197,26 +206,24 @@ if __name__ == "__main__":
         'right': lambda x: np.isclose(x[0], 1.)
     })
     # mesh refinement
-    nrefs=5
+    nrefs=6
     mesh = mesh0.refined(nrefs)
 
     # diffusion coeff
-    nu = 5e-3
+    nu = 5e-5
 
     # Specify velocity fn(x)
-    vel = 1.0
-    vel_f = lambda x: (x+1.)/(x+1.)
+    vel = 0.5
 
     # Specify src tem fn(x)
-    src_f = lambda x: 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
-
+    # src_f = lambda x: 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
 
     field_fns = {"vel_f": vel_f, "src_f": src_f}
     param_dict = {"nu": nu}
 
     # init the system
     sem = AdDiffSEM(mesh, p=1, field_fns=field_fns, params=param_dict)
-    ode_sys = sem.ode_sys()
+    ode_sys = sem.ode_sys(vel=vel)
     t = 0.0
 
     # mesh mask for initial conditions
