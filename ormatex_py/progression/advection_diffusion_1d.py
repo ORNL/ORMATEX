@@ -19,9 +19,6 @@ jax.config.update("jax_enable_x64", True)
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_epirk import EpirkIntegrator
 
-# diffusion coeff
-nu = 1e-12
-
 # Specify velocity
 vel = 0.5
 
@@ -119,7 +116,7 @@ class AdDiffSEM:
 
         quad = el_nodal.GLL_quad()(self.p + 1)
         self.basis = fem.Basis(self.mesh, self.element, quadrature=quad)
-        if mesh.boundaries:
+        if self.mesh.boundaries:
             # if the mesh has boundaries, get a basis for BC
             self.basis_f = fem.FacetBasis(self.mesh, self.element)
 
@@ -152,7 +149,7 @@ class AdDiffSEM:
         if conservative:
             # remark: w_dict must contain only scalars and skfem.element.DiscreteField
             A = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
-            if mesh.boundaries:
+            if self.mesh.boundaries:
                 # if not periodic, add boundary term
                 A += robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
         else:
@@ -161,7 +158,7 @@ class AdDiffSEM:
         b = rhs.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
         M = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
-        if mesh.boundaries:
+        if self.mesh.boundaries:
             # Dirichlet boundary conditions
             fem.enforce(A, b, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
             fem.enforce(M, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
@@ -245,7 +242,8 @@ if __name__ == "__main__":
             mesh.boundaries['left'],
         )
 
-    param_dict = {"nu": nu}
+    # diffusion coefficient
+    param_dict = {"nu": 0.0}
 
     # init the system
     sem = AdDiffSEM(mesh, p=args.p, params=param_dict)
