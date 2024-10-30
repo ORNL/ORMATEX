@@ -222,8 +222,11 @@ def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
             "implicit_esdirk3": diffrax.Kvaerno3,
             "implicit_esdirk4": diffrax.Kvaerno4,
            }
-    root_finder=diffrax.VeryChord(rtol=1e-8, atol=1e-8, norm=optimistix.max_norm)
-    solver = method_dict[method](root_finder=root_finder)
+    try:
+        root_finder=diffrax.VeryChord(rtol=1e-8, atol=1e-8, norm=optimistix.max_norm)
+        solver = method_dict[method](root_finder=root_finder)
+    except:
+        solver = method_dict[method]()
     t0 = 0.0
     tf = dt * nsteps
     step_ctrl = diffrax.ConstantStepSize()
@@ -269,7 +272,7 @@ if __name__ == "__main__":
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
-    parser.add_argument("-mode", help="0: use ormatex, 1: use diffrax", type=str, default=0)
+    parser.add_argument("-mode", help="0: use ormatex, 1: use diffrax", type=int, default=0)
     args = parser.parse_args()
 
     # create the mesh
