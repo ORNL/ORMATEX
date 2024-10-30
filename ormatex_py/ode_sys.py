@@ -232,6 +232,12 @@ class OdeSys(eqx.Module):
         # default implementation
         return lambda x: x
 
+    def __call__(self, t: float, u: jax.Array, *args, **kwargs) -> jax.Array:
+        """
+        Alias to _frhs for diffrax compatibility.
+        """
+        return self._frhs(t, u, **kwargs)
+
 
 @dataclass
 class StepResult:
