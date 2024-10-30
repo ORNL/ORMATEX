@@ -119,7 +119,9 @@ class AdDiffSEM:
 
         quad = el_nodal.GLL_quad()(self.p + 1)
         self.basis = fem.Basis(self.mesh, self.element, quadrature=quad)
-        self.basis_f = fem.FacetBasis(self.mesh, self.element)
+        if mesh.boundaries:
+            # if the mesh has boundaries, get a basis for BC
+            self.basis_f = fem.FacetBasis(self.mesh, self.element)
 
     def validate_add_field_fn(self, field_name: str, f: Callable):
         assert callable(f)
@@ -149,17 +151,24 @@ class AdDiffSEM:
         conservative = True
         if conservative:
             # remark: w_dict must contain only scalars and skfem.element.DiscreteField
-            A_pre = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs)) \
-                    + robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
+            A = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+            if mesh.boundaries:
+                # if not periodic, add boundary term
+                A += robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
         else:
-            A_pre = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+            A = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
-        b_pre = rhs.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
-        M_pre = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+        b = rhs.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+        M = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
-        # Dirichlet boundary conditions
-        A, b = fem.enforce(A_pre, b_pre, D=self.mesh.boundaries['left'].flatten())
-        M = fem.enforce(M_pre, D=self.mesh.boundaries['left'].flatten())
+        if mesh.boundaries:
+            # Dirichlet boundary conditions
+            fem.enforce(A, b, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+            fem.enforce(M, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+        else:
+            # periodic boundary conditions
+            fem.enforce(A, b, D=self.basis.get_dofs().flatten(), overwrite=True)
+            fem.enforce(M, D=self.basis.get_dofs().flatten(), overwrite=True)
 
         Ml = M @ np.ones((M.shape[1],))
 
@@ -277,6 +286,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-mode", help="0: use ormatex, 1: use diffrax", type=int, default=0)
+    parser.add_argument("-per", help="impose periodic BC", action='store_true') 
     args = parser.parse_args()
 
     # create the mesh
@@ -287,6 +297,14 @@ if __name__ == "__main__":
     # mesh refinement
     nrefs = args.mr
     mesh = mesh0.refined(nrefs)
+
+    periodic = args.per
+    if periodic: 
+        mesh = fem.MeshLine1DG.periodic(
+            mesh,
+            mesh.boundaries['right'],
+            mesh.boundaries['left'],
+        )
 
     param_dict = {"nu": nu}
 
