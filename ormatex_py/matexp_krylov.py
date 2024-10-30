@@ -38,8 +38,8 @@ def phi_linop(a_lo: Callable, dt: float, v0: jax.Array, k: int, max_krylov_dim: 
 
 def kiops_fixedsteps(a_lo: Callable, dt: float, vb: list[jax.Array], max_krylov_dim: int, iom: int=2, n_steps: int=1):
     r"""
-    Mehtod based roughly on simplified KIOPS with fixes stepsize
-    and not krylov adaptivity.  TODO: add adaptivity routines.
+    Method based roughly on simplified KIOPS with fixes stepsize
+    and not Krylov adaptivity.  TODO: add adaptivity routines.
     This avoids the substepping procedure in phipm by computing
     the phi-vection products as:
 
@@ -47,7 +47,7 @@ def kiops_fixedsteps(a_lo: Callable, dt: float, vb: list[jax.Array], max_krylov_
 
         w(\tau) = \sum_{j=0}^p \tau^j \varphi_j(\tau A) b_j
 
-        w(\tau) = matrm{exp}(\tau \tilde A)v
+        w(\tau) = \exp(\tau \tilde A)v
 
     with :math:` v = [b_0, e_1]^T `
     and
