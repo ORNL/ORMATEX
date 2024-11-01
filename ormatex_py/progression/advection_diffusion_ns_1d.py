@@ -1,0 +1,304 @@
+"""
+Multiple species 1D advection diffusion case.
+
+- Supports N numbers of coupled species.
+- Each species can have unique, space, time, and concentration
+dependant non-linear sources and sinks.
+
+Similar to the single species case (advection_diffusion_1d.py);
+however, internally the species vector, `u` is now a 2D tensor,
+with each column representing a new species.
+
+All species are assumed to be advected according to the same
+velocity field.  All species share the same bulk diffusion coefficient.
+
+We can write:
+    U_t = L*u + v*\nabla U - D \nabla^2 U + S(U)
+
+where
+
+    U = {u_0, u_1, ..., u_N}
+
+    or in matrix form
+
+U = [
+     [u_{0,0}, ... u_{N,0},],
+     [u_{0,1},     u_{N,1} ],
+     [...      ...         ],
+     [u_{0,X}  ... u_{N,X} ],
+]
+"""
+import numpy as np
+import scipy as sp
+from collections.abc import Callable
+
+import jax
+import jax.numpy as jnp
+from jax.experimental import sparse as jsp
+import equinox as eqx
+
+import skfem as fem
+from skfem.helpers import dot, grad
+from ormatex_py.progression import element_line_pp_nodal as el_nodal
+
+from ormatex_py.ode_sys import OdeSys
+from ormatex_py.ode_epirk import EpirkIntegrator
+from ormatex_py.progression.advection_diffusion_1d import robin, mass
+
+# Specify velocity
+vel = 0.5
+
+def src_f(x, **kwargs):
+    """
+    Custom source term, could depend on solution y
+    """
+    return 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
+
+
+def vel_f(x, **kwargs):
+    """
+    Custom velocity field
+    """
+    return 0.0*x + vel
+
+@fem.BilinearForm
+def adv_diff(u, v, w):
+    """
+    Combo Adv Diff kernel
+
+    Args:
+        w: is a dict of skfem.element.DiscreteField
+            w.x (dof locs)
+    """
+    return w.nu * dot(grad(u), grad(v)) + dot(vel_f(w.x), grad(u)) * v
+
+@fem.BilinearForm
+def adv_diff_cons(u, v, w):
+    """
+    Combo Adv Diff kernel conservative form
+    """
+    return w.nu * dot(grad(u), grad(v)) - dot(vel_f(w.x) * u, grad(v))
+
+@fem.LinearForm
+def rhs(v, w):
+    """
+    Source term
+    """
+    return src_f(w.x) * v
+
+
+class AdDiffSEM:
+    """
+    Assemble matrices for spectral finite element discretization
+    of an advection diffusion eqaution
+
+    p: polynomial order
+    nu: diffusion coeff
+    """
+    def __init__(self, mesh, p=1, n_species=1, field_fns={}, params={}, **kwargs):
+        # diffusion coeff
+        self.params = {"nu": params.get("nu", 5e-3)}
+        self.p = p
+        self.mesh = mesh
+        self.n_species = n_species
+
+        # register custom field functions
+        self.field_fns = {}
+        for k, v in field_fns.items():
+            self.validate_add_field_fn(k, v)
+
+        if self.p < 2:
+            self.element = fem.ElementLineP1()
+        elif self.p == 2:
+            self.element = fem.ElementLineP2()
+        elif self.p >= 3:
+            self.element = el_nodal.ElementLinePp_nodal(self.p)
+
+        quad = el_nodal.GLL_quad()(self.p + 1)
+        self.basis = fem.Basis(self.mesh, self.element, quadrature=quad)
+        if self.mesh.boundaries:
+            # if the mesh has boundaries, get a basis for BC
+            self.basis_f = fem.FacetBasis(self.mesh, self.element)
+
+    def validate_add_field_fn(self, field_name: str, f: Callable):
+        assert callable(f)
+        self.field_fns[field_name] = f
+
+    def w_ext(self, basis, reshape=True, **kwargs):
+        """
+        Extra kwargs passed with the `w` dict to kernels
+        """
+        species_id = {"species_id": kwargs.get("species_id", -1)}
+        fields = {}
+        basis_shape = basis.global_coordinates().shape
+        for field_name, field_f in self.field_fns.items():
+            vals = field_f(basis.doflocs, **kwargs).flatten()
+            # NOTE: reshape is needed here
+            # when using these fields in the kernels.
+            # is this an issue in skfem??
+            fv = basis.interpolate(vals)
+            if reshape:
+                fv = np.reshape(fv, basis_shape)
+            fields[field_name] = fv
+        full_w_dict = {**self.params, **fields, **species_id}
+        return full_w_dict
+
+    def assemble(self, **kwargs):
+        """
+        kwargs: extra args passed to user defined field functions
+        """
+        conservative = True
+        if conservative:
+            # remark: w_dict must contain only scalars and skfem.element.DiscreteField
+            A = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+            if self.mesh.boundaries:
+                # if not periodic, add boundary term
+                A += robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
+        else:
+            A = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+
+        b = []
+        for n in range(self.n_species):
+            # unique rhs for each species
+            bn = rhs.assemble(self.basis, **self.w_ext(self.basis, species_id=n, **kwargs))
+            b.append(bn)
+        M = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+
+        if self.mesh.boundaries:
+            # Dirichlet boundary conditions
+            for bn in b:
+                fem.enforce(A, bn, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+            fem.enforce(M, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+        else:
+            # periodic boundary conditions
+            for bn in b:
+                fem.enforce(A, bn, D=self.basis.get_dofs().flatten(), overwrite=True)
+            fem.enforce(M, D=self.basis.get_dofs().flatten(), overwrite=True)
+
+        Ml = M @ np.ones((M.shape[1],))
+
+        # provide jax arrays
+        jMl = jnp.asarray(Ml)
+        jA = jsp.BCOO.from_scipy_sparse(A)
+        # columns index in b represents each species id
+        jb = jnp.asarray(b).transpose()
+
+        return jA, jMl, jb
+
+    def xs(self):
+        return self.basis.doflocs[0]
+
+    def ode_sys(self, **kwargs):
+        return AffineLinearSEM(self, **kwargs)
+
+@eqx.filter_jit
+def stack_u(u: jax.Array, n: int):
+    return u.reshape((-1, n), order='F')
+
+@eqx.filter_jit
+def flatten_u(u: jax.Array):
+    # use column major ordering
+    return u.flatten(order='F')
+
+class AffineLinearSEM(OdeSys):
+    """
+    Define ODE System associated to affine linear sparse Jacobian problem
+    """
+    A: jsp.JAXSparse
+    Ml: jax.Array
+    b: jax.Array
+    sys_assembler: AdDiffSEM
+
+    def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
+        self.sys_assembler = sys_assembler
+        self.A, self.Ml, self.b = self.sys_assembler.assemble(**kwargs)
+        super().__init__()
+
+    def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        n = self.sys_assembler.n_species
+        un = stack_u(u, n)
+        udot = (self.b - self.A @ un) / self.Ml.reshape((-1, 1))
+        # integrators currently expect a flat U
+        return flatten_u(udot)
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    import argparse
+    jax.config.update('jax_platform_name', 'cpu')
+    print(f"Running on {jax.devices()}.")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
+    parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
+    parser.add_argument("-p", help="basis order", type=int, default=2)
+    parser.add_argument("-per", help="impose periodic BC", action='store_true')
+    args = parser.parse_args()
+
+    # create the mesh
+    mesh0 = fem.MeshLine1().with_boundaries({
+        'left': lambda x: np.isclose(x[0], 0.),
+        'right': lambda x: np.isclose(x[0], 1.)
+    })
+    # mesh refinement
+    nrefs = args.mr
+    mesh = mesh0.refined(nrefs)
+
+    periodic = args.per
+    if periodic:
+        mesh = fem.MeshLine1DG.periodic(
+            mesh,
+            mesh.boundaries['right'],
+            mesh.boundaries['left'],
+        )
+
+    # diffusion coefficient
+    param_dict = {"nu": 0.0}
+
+    # init the system
+    n_species = 2
+    sem = AdDiffSEM(mesh, p=args.p, n_species=n_species, params=param_dict)
+    ode_sys = AffineLinearSEM(sem)
+    t = 0.0
+
+    # mesh mask for initial conditions
+    xs = np.asarray(sem.basis.doflocs.flatten())
+
+    # initial profiles for each species
+    wc, ww = 0.3, 0.05
+    g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
+    g_prof2 = lambda x: 0.2*np.exp(-((x-wc)/(2*ww))**2.0)
+    y0_profile = [g_prof(xs), g_prof2(xs)]
+    y0 = flatten_u(jnp.asarray(y0_profile).transpose())
+
+    sys_int = EpirkIntegrator(ode_sys, t, y0, method="epirk3", max_krylov_dim=20, iom=2)
+    t_res = [0,]
+    y_res = [y0,]
+    dt = .1
+    nsteps = 10
+    for i in range(nsteps):
+        res = sys_int.step(dt)
+        # log the results for plotting
+        t_res.append(res.t)
+        y_res.append(res.y)
+        sys_int.accept_step(res)
+
+    si = xs.argsort()
+    sx = xs[si]
+    plt.figure()
+    for i in range(nsteps):
+        if i % 2 == 0 or i == 0:
+            t = t_res[i]
+            yf = y_res[i]
+            uf = stack_u(yf, n_species)
+            for n in range(n_species):
+                us = uf[:, n]
+                line_style = None
+                if (n+1) % 2 == 0:
+                    line_style = '--'
+                plt.plot(sx, us[si], ls=line_style, label='t=%0.4f, species=%s' % (t, str(n)))
+    plt.legend()
+    plt.grid(ls='--')
+    plt.ylabel('u')
+    plt.xlabel('x')
+    plt.savefig('adv_diff_ns_1d.png')
+    plt.close()
