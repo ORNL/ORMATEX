@@ -218,7 +218,7 @@ class OdeSys(eqx.Module):
 
     @abstractmethod
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-        # the user must ovrride this
+        # the user must override this
         raise NotImplementedError
 
     def frhs_aug(self, t: float, u: jax.Array, aug: jax.Array, aug_scale: float, **kwargs) -> jax.Array:

@@ -19,21 +19,28 @@ jax.config.update("jax_enable_x64", True)
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_epirk import EpirkIntegrator
 
-# Specify velocity
-vel = 0.5
-
 def src_f(x, **kwargs):
     """
     Custom source term, could depend on solution y
+
+    Args:
+        x: Array of shape [1,N1,N2,...] (the first dim is the spatial dim=1)
+
+    returns: Array of shape [N1,N2,...]
     """
-    return 0.0 * np.exp(- np.sum((x - 0.2) / 0.1**2, axis=0)**2 / 2)
+    return 0.0 * x.sum(axis=0)
 
-
-def vel_f(x, **kwargs):
+def vel_f(x, vel, **kwargs):
     """
     Custom velocity field
+
+    Args:
+        x: Array of shape [1,N1,N2,...] (the first dim is the spatial dim=1)
+        vel: velocity coefficient
+
+    returns: Array of shape x.shape
     """
-    return 0.0*x + vel
+    return 0.0 * x + vel
 
 @fem.BilinearForm
 def adv_diff(u, v, w):
@@ -42,30 +49,20 @@ def adv_diff(u, v, w):
 
     Args:
         w: is a dict of skfem.element.DiscreteField
-            w.x (dof locs)
+            w.x (quadrature points)
     """
-    return w.nu * dot(grad(u), grad(v)) + dot(vel_f(w.x), grad(u)) * v
+    return w['nu'] * dot(grad(u), grad(v)) + dot(vel_f(**w), grad(u)) * v
 
 @fem.BilinearForm
 def adv_diff_cons(u, v, w):
     """
     Combo Adv Diff kernel conservative form
-    """
-    return w.nu * dot(grad(u), grad(v)) - dot(vel_f(w.x) * u, grad(v))
 
-@fem.BilinearForm
-def adv_cons(u, v, w):
+    Args:
+        w: is a dict of skfem.element.DiscreteField
+            w.x (quadrature points)
     """
-    Adv kernel, conservative form
-    """
-    return - dot(vel_f(w.x) * u, grad(v))
-
-@fem.BilinearForm
-def diff(u, v, w):
-    """
-    Diffusion kernel
-    """
-    return w.nu * dot(grad(u), grad(v))
+    return w['nu'] * dot(grad(u), grad(v)) - dot(vel_f(**w) * u, grad(v))
 
 @fem.BilinearForm
 def robin(u, v, w):
@@ -74,14 +71,14 @@ def robin(u, v, w):
         w: is a dict of skfem.element.DiscreteField (or user types)
             w.n (face normals)
     """
-    return dot(vel_f(w.x), w.n) * u * v
+    return dot(vel_f(**w), w.n) * u * v
 
 @fem.LinearForm
 def rhs(v, w):
     """
     Source term
     """
-    return src_f(w.x) * v
+    return src_f(**w) * v
 
 @fem.BilinearForm
 def mass(u, v, _):
@@ -98,7 +95,7 @@ class AdDiffSEM:
     """
     def __init__(self, mesh, p=1, field_fns={}, params={}, **kwargs):
         # diffusion coeff
-        self.params = {"nu": params.get("nu", 5e-3)}
+        self.params = {"nu": params.get("nu", 5e-3), "vel": params.get("vel", 1.)}
         self.p = p
         self.mesh = mesh
 
@@ -124,20 +121,19 @@ class AdDiffSEM:
         assert callable(f)
         self.field_fns[field_name] = f
 
-    def w_ext(self, basis, reshape=True, **kwargs):
+    def w_ext(self, basis, **kwargs):
         """
         Extra kwargs passed with the `w` dict to kernels
         """
         fields = {}
-        basis_shape = basis.global_coordinates().shape
         for field_name, field_f in self.field_fns.items():
-            vals = field_f(basis.doflocs, **kwargs).flatten()
-            # NOTE: reshape is needed here
-            # when using these fields in the kernels.
-            # is this an issue in skfem??
-            fv = basis.interpolate(vals)
-            if reshape:
-                fv = np.reshape(fv, basis_shape)
+            # nodal field values
+            fx = field_f(x=basis.doflocs, **self.params, **kwargs)
+
+            # turn vector fields into scalar fields for interpolate (flatten in 1D)
+            # basis is the basis for a scalar field and can not handle vector fields
+            fv = basis.interpolate(fx.flatten())
+
             fields[field_name] = fv
         return {**self.params, **fields}
 
@@ -198,7 +194,7 @@ class AffineLinearSEM(OdeSys):
         self.A, self.Ml, self.b = self.sys_assembler.assemble(**kwargs)
         super().__init__()
 
-    def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+    def _frhs(self, t: float, u: jax.Array) -> jax.Array:
         # NOTE: in principle one could do:
         # self.A, self.Ml, self.b = self.sys_assembler.assemble(t=t, u=u, **kwargs)
         # here to rebuild the system given the current system state, u
@@ -208,8 +204,11 @@ class AffineLinearSEM(OdeSys):
     def jac_lop(self):
         return JaxMatrixLinop(-self.A / self.Ml[:,None])
 
-    def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+    def _fjac(self, t: float, u: jax.Array, **kwargs):
         return self.jac_lop
+
+    def _fm(self, t: float, u: jax.Array, **kwargs):
+        return lambda x: self.Ml * x
 
 
 def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
@@ -283,7 +282,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-mode", help="0: use ormatex, 1: use diffrax", type=int, default=0)
-    parser.add_argument("-per", help="impose periodic BC", action='store_true') 
+    parser.add_argument("-per", help="impose periodic BC", action='store_true')
     args = parser.parse_args()
 
     # create the mesh
@@ -296,18 +295,23 @@ if __name__ == "__main__":
     mesh = mesh0.refined(nrefs)
 
     periodic = args.per
-    if periodic: 
+    if periodic:
         mesh = fem.MeshLine1DG.periodic(
             mesh,
             mesh.boundaries['right'],
             mesh.boundaries['left'],
         )
 
-    # diffusion coefficient
-    param_dict = {"nu": 0.0}
+    # overall velocity vel
+    vel = 0.5
+    # diffusion coefficient nu
+    nu = 0.0
+    ##nu = 0.05 * vel / (args.p * 2**nrefs) #stabilization by diffusion
+    param_dict = {"nu": nu, "vel": vel}
+    field_dict = {} #{"vel_f": vel_f, "src_f": src_f}
 
     # init the system
-    sem = AdDiffSEM(mesh, p=args.p, params=param_dict)
+    sem = AdDiffSEM(mesh, p=args.p, params=param_dict, field_fns=field_dict)
     ode_sys = AffineLinearSEM(sem)
     t = 0.0
 
