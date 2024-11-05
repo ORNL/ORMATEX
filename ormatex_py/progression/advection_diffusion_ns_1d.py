@@ -39,14 +39,23 @@ import equinox as eqx
 
 import skfem as fem
 from skfem.helpers import dot, grad
+from ormatex_py.progression.bateman_sys import gen_bateman_matrix
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
 
+from ormatex_py.ode_sys import JaxMatrixLinop
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_epirk import EpirkIntegrator
 from ormatex_py.progression.advection_diffusion_1d import robin, mass
 
 # Specify velocity
 vel = 0.5
+
+# decay lib
+decay_lib = {
+    'u_0':  ('u_1', 3.0e-1),
+    'u_1':  ('none', 0.3e-1),
+}
+
 
 def src_f(x, **kwargs):
     """
@@ -60,6 +69,15 @@ def vel_f(x, **kwargs):
     Custom velocity field
     """
     return 0.0*x + vel
+
+@eqx.filter_jit
+def stack_u(u: jax.Array, n: int):
+    return u.reshape((-1, n), order='F')
+
+@eqx.filter_jit
+def flatten_u(u: jax.Array):
+    # use column major ordering
+    return u.flatten(order='F')
 
 @fem.BilinearForm
 def adv_diff(u, v, w):
@@ -84,7 +102,7 @@ def rhs(v, w):
     """
     Source term
     """
-    return src_f(w.x) * v
+    return src_f(w.x, w=w) * v
 
 
 class AdDiffSEM:
@@ -128,9 +146,17 @@ class AdDiffSEM:
         """
         Extra kwargs passed with the `w` dict to kernels
         """
-        species_id = {"species_id": kwargs.get("species_id", -1)}
+        species_id = {"species_id": kwargs.get("species_id", -1),
+                      "n_species": self.n_species}
         fields = {}
         basis_shape = basis.global_coordinates().shape
+        # for nonlinear source and sink terms
+        u = kwargs.get("u", None)
+        if u is not None and species_id["species_id"] >= 0:
+            for n in range(self.n_species):
+                ub = basis.interpolate(u[:, n])
+                fields["u_%d"%n] = ub
+        # other aux fields
         for field_name, field_f in self.field_fns.items():
             vals = field_f(basis.doflocs, **kwargs).flatten()
             # NOTE: reshape is needed here
@@ -150,12 +176,12 @@ class AdDiffSEM:
         conservative = True
         if conservative:
             # remark: w_dict must contain only scalars and skfem.element.DiscreteField
-            A = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+            self.A = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
             if self.mesh.boundaries:
                 # if not periodic, add boundary term
-                A += robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
+                self.A += robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
         else:
-            A = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+            self.A = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
         b = []
         for n in range(self.n_species):
@@ -167,23 +193,45 @@ class AdDiffSEM:
         if self.mesh.boundaries:
             # Dirichlet boundary conditions
             for bn in b:
-                fem.enforce(A, bn, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+                fem.enforce(self.A, bn, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
             fem.enforce(M, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
         else:
             # periodic boundary conditions
             for bn in b:
-                fem.enforce(A, bn, D=self.basis.get_dofs().flatten(), overwrite=True)
+                fem.enforce(self.A, bn, D=self.basis.get_dofs().flatten(), overwrite=True)
             fem.enforce(M, D=self.basis.get_dofs().flatten(), overwrite=True)
 
         Ml = M @ np.ones((M.shape[1],))
 
         # provide jax arrays
         jMl = jnp.asarray(Ml)
-        jA = jsp.BCOO.from_scipy_sparse(A)
+        jA = jsp.BCOO.from_scipy_sparse(self.A)
         # columns index in b represents each species id
         jb = jnp.asarray(b).transpose()
 
         return jA, jMl, jb
+
+    def assemble_rhs(self, **kwargs):
+        """
+        Handle nonlinear source term.  Call if the solution updates
+        and the rhs depends on u.
+        """
+        assert hasattr(self, 'A')
+        b = []
+        for n in range(self.n_species):
+            # unique rhs for each species
+            bn = rhs.assemble(self.basis, **self.w_ext(self.basis, species_id=n, **kwargs))
+            b.append(bn)
+        if self.mesh.boundaries:
+            # Dirichlet boundary conditions
+            for bn in b:
+                fem.enforce(self.A, bn, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+        else:
+            # periodic boundary conditions
+            for bn in b:
+                fem.enforce(self.A, bn, D=self.basis.get_dofs().flatten(), overwrite=True)
+        jb = jnp.asarray(b).transpose()
+        return jb
 
     def xs(self):
         return self.basis.doflocs[0]
@@ -191,19 +239,11 @@ class AdDiffSEM:
     def ode_sys(self, **kwargs):
         return AffineLinearSEM(self, **kwargs)
 
-@eqx.filter_jit
-def stack_u(u: jax.Array, n: int):
-    return u.reshape((-1, n), order='F')
-
-@eqx.filter_jit
-def flatten_u(u: jax.Array):
-    # use column major ordering
-    return u.flatten(order='F')
-
 class AffineLinearSEM(OdeSys):
     """
     Define ODE System associated to affine linear sparse Jacobian problem
     """
+    bat_mat: jax.Array
     A: jsp.JAXSparse
     Ml: jax.Array
     b: jax.Array
@@ -212,14 +252,20 @@ class AffineLinearSEM(OdeSys):
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         self.sys_assembler = sys_assembler
         self.A, self.Ml, self.b = self.sys_assembler.assemble(**kwargs)
+        self.bat_mat = gen_bateman_matrix(['u_0', 'u_1'], decay_lib)
         super().__init__()
 
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         n = self.sys_assembler.n_species
         un = stack_u(u, n)
-        udot = (self.b - self.A @ un) / self.Ml.reshape((-1, 1))
+        # A and Ml do not depend on u
+        b = self.sys_assembler.assemble_rhs(u=un)
+        # add bateman, only works for p1 elements. TODO: fix
+        lub = (self.bat_mat @ un.transpose()).transpose()
+        udot = (b - self.A @ un) / self.Ml.reshape((-1, 1)) + lub
         # integrators currently expect a flat U
         return flatten_u(udot)
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
@@ -230,7 +276,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
-    parser.add_argument("-p", help="basis order", type=int, default=2)
+    parser.add_argument("-p", help="basis order", type=int, default=1)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     args = parser.parse_args()
 
@@ -252,7 +298,7 @@ if __name__ == "__main__":
         )
 
     # diffusion coefficient
-    param_dict = {"nu": 0.0}
+    param_dict = {"nu": 1e-8}
 
     # init the system
     n_species = 2
