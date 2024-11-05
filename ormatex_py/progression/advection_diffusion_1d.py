@@ -197,9 +197,69 @@ class AffineLinearSEM(OdeSys):
 #     @property
 #     def jac_lop(self):
 #         return JaxMatrixLinop(-self.A / self.Ml)
-# 
+#
 #     def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
 #         return self.jac_lop
+
+
+def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
+    """
+    Uses diffrax integrators to step adv diff system forward
+    """
+    import diffrax
+    import optimistix
+    # thin wrapper around ode_sys for diffrax compat
+    diffrax_ode_sys = diffrax.ODETerm(ode_sys)
+    method_dict = {
+            # explicit
+            "euler": diffrax.Euler,
+            "heun": diffrax.Heun,
+            "midpoint": diffrax.Midpoint,
+            "bosh3": diffrax.Bosh3,
+            "dopri5": diffrax.Dopri5,
+            # implicit
+            "implicit_euler": diffrax.ImplicitEuler,
+            "implicit_esdirk3": diffrax.Kvaerno3,
+            "implicit_esdirk4": diffrax.Kvaerno4,
+           }
+    try:
+        root_finder=diffrax.VeryChord(rtol=1e-8, atol=1e-8, norm=optimistix.max_norm)
+        solver = method_dict[method](root_finder=root_finder)
+    except:
+        solver = method_dict[method]()
+    t0 = 0.0
+    tf = dt * nsteps
+    step_ctrl = diffrax.ConstantStepSize()
+    res = diffrax.diffeqsolve(
+            diffrax_ode_sys,
+            solver,
+            t0, tf, dt, y0,
+            saveat=diffrax.SaveAt(steps=True),
+            stepsize_controller=step_ctrl,
+            max_steps=nsteps,
+            )
+    return res.ts, res.ys
+
+
+def integrate_ormatex(ode_sys, y0, dt, nsteps, method="epirk3", max_krylov_dim=20, iom=2):
+    """
+    Uses ormatex exponential integrators to step adv diff system forward
+    """
+    # init the time integrator
+    sys_int = EpirkIntegrator(
+            ode_sys, t, y0, method=method,
+            max_krylov_dim=max_krylov_dim, iom=iom
+            )
+    t_res, y_res = [0,], [y0,]
+    for i in range(nsteps):
+        res = sys_int.step(dt)
+        # log the results for plotting
+        t_res.append(res.t)
+        y_res.append(res.y)
+        # this would be where you could reject a step, if the
+        # estimated err was too large
+        sys_int.accept_step(res)
+    return t_res, y_res
 
 
 if __name__ == "__main__":
@@ -212,6 +272,7 @@ if __name__ == "__main__":
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
+    parser.add_argument("-mode", help="0: use ormatex, 1: use diffrax", type=int, default=0)
     args = parser.parse_args()
 
     # create the mesh
@@ -249,27 +310,23 @@ if __name__ == "__main__":
         g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
         y0_profile = g_prof(sx)
         y0 = jnp.asarray(y0_profile)
-
-        # expected solution
         g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))/(2*ww))**2.0)
 
-    # init the time integrator
-    sys_int = EpirkIntegrator(ode_sys, t, y0, method="epirk3", max_krylov_dim=20, iom=2)
-
-    t_res = [0,]
-    y_res = [y0,]
-    y_exact_res = [g_prof_exact(0.0, sx),]
+    # integrate the system
     dt = .1
     nsteps = 10
-    for i in range(nsteps):
-        res = sys_int.step(dt)
-        # log the results for plotting
-        t_res.append(res.t)
-        y_res.append(res.y)
-        y_exact_res.append(g_prof_exact(res.t, sx))
-        # this would be where you could reject a step, if the
-        # estimated err was too large
-        sys_int.accept_step(res)
+    if args.mode == 0:
+        method = "epirk3"
+        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method)
+    else:
+        method = "implicit_esdirk3"
+        t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
+
+    # compute expected solution
+    # y_exact_res = [g_prof_exact(0.0, sx),]
+    y_exact_res = []
+    for t in t_res:
+        y_exact_res.append(g_prof_exact(t, sx))
 
     # print(np.asarray(y_res))
     # plot the result at a few time steps
@@ -279,6 +336,8 @@ if __name__ == "__main__":
     sx = np.asarray(x.flatten())
     si = sx.argsort()
     sx = sx[si]
+    mesh_spacing = (sx[1] - sx[0])
+    cfl = dt * vel / mesh_spacing
     plt.figure()
     for i in range(nsteps):
         if i % 2 == 0 or i == 0:
@@ -291,18 +350,14 @@ if __name__ == "__main__":
     plt.grid(ls='--')
     plt.ylabel('u')
     plt.xlabel('x')
+    plt.title(r"Method=%s, $C$=%0.2e, $\Delta$ t=%0.2e, $\Delta$ x=%0.2e" % (method, cfl, dt, mesh_spacing))
     plt.savefig('adv_diff_1d.png')
     plt.close()
 
-    # CFL
-    mesh_spacing = (sx[1] - sx[0])
-    cfl = dt * vel / mesh_spacing
+    # Print results summary to table
     print("CFL: %0.4f" % cfl)
-
     l2 = np.linalg.norm(y_exact - y)
     l1 = np.linalg.norm(y_exact - y, 1)
     linf = np.linalg.norm(y_exact - y, np.inf)
     print("mesh_spacing, cfl, l1, l2, linf")
     print("%0.4e, %0.4f, %0.4e, %0.4e, %0.4e" % (mesh_spacing, cfl, l1, l2, linf))
-
-
