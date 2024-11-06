@@ -154,20 +154,24 @@ class AdDiffSEM:
         else:
             A_pre = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
-        b_pre = rhs.assemble(self.basis, **self.w_ext(self.basis, reshape=False, **kwargs))
+        b_pre = rhs.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
         M_pre = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
         # Dirichlet boundary conditions
         A, b = fem.enforce(A_pre, b_pre, D=self.mesh.boundaries['left'].flatten())
         M = fem.enforce(M_pre, D=self.mesh.boundaries['left'].flatten())
 
-        Ml = (M @ np.ones([M.shape[1], 1])).reshape(-1)
+        Ml = M @ np.ones((M.shape[1],))
 
         # provide jax arrays
         jMl = jnp.asarray(Ml)
         jA = jsp.BCOO.from_scipy_sparse(A)
         jb = jnp.asarray(b)
+
         return jA, jMl, jb
+
+    def xs(self):
+        return self.basis.doflocs[0]
 
     def ode_sys(self, **kwargs):
         return AffineLinearSEM(self, **kwargs)
@@ -177,10 +181,10 @@ class AffineLinearSEM(OdeSys):
     """
     Define ODE System associated to affine linear sparse Jacobian problem
     """
-    A: jax.Array
+    A: jsp.JAXSparse
     Ml: jax.Array
     b: jax.Array
-    # jac_lop: Callable
+    jac_lop: Callable
     sys_assembler: AdDiffSEM
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
@@ -194,12 +198,12 @@ class AffineLinearSEM(OdeSys):
         # here to rebuild the system given the current system state, u
         return (self.b - self.A @ u) / self.Ml
 
-#     @property
-#     def jac_lop(self):
-#         return JaxMatrixLinop(-self.A / self.Ml)
-#
-#     def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-#         return self.jac_lop
+    @property
+    def jac_lop(self):
+        return JaxMatrixLinop(-self.A / self.Ml[:,None])
+
+    def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        return self.jac_lop
 
 
 def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
@@ -281,7 +285,7 @@ if __name__ == "__main__":
         'right': lambda x: np.isclose(x[0], 1.)
     })
     # mesh refinement
-    nrefs=args.mr
+    nrefs = args.mr
     mesh = mesh0.refined(nrefs)
 
     param_dict = {"nu": nu}
@@ -292,13 +296,12 @@ if __name__ == "__main__":
     t = 0.0
 
     # mesh mask for initial conditions
-    x = sem.basis.doflocs
-    sx = np.asarray(x.flatten())
+    xs = np.asarray(sem.basis.doflocs.flatten())
 
     if args.ic == "square":
         # square wave
         startx, endx = 0.1, 0.4
-        ic_points = np.where((sx > startx) & (sx < endx))
+        ic_points = np.where((xs > startx) & (xs < endx))
         y0_profile = np.zeros(ode_sys.b.shape) + 1e-9
         y0_profile[ic_points] = 1.0
         y0 = jnp.asarray(y0_profile)
@@ -308,7 +311,7 @@ if __name__ == "__main__":
         # gaussian profile
         wc, ww = 0.3, 0.05
         g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
-        y0_profile = g_prof(sx)
+        y0_profile = g_prof(xs)
         y0 = jnp.asarray(y0_profile)
         g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))/(2*ww))**2.0)
 
@@ -326,16 +329,13 @@ if __name__ == "__main__":
     # y_exact_res = [g_prof_exact(0.0, sx),]
     y_exact_res = []
     for t in t_res:
-        y_exact_res.append(g_prof_exact(t, sx))
+        y_exact_res.append(g_prof_exact(t, xs))
 
-    # print(np.asarray(y_res))
     # plot the result at a few time steps
-    outdir = './advection_diffusion_1d_out/'
+    #outdir = './advection_diffusion_1d_out/'
     # sorted x
-    x = sem.mesh.doflocs
-    sx = np.asarray(x.flatten())
-    si = sx.argsort()
-    sx = sx[si]
+    si = xs.argsort()
+    sx = xs[si]
     mesh_spacing = (sx[1] - sx[0])
     cfl = dt * vel / mesh_spacing
     plt.figure()
@@ -356,8 +356,9 @@ if __name__ == "__main__":
 
     # Print results summary to table
     print("CFL: %0.4f" % cfl)
-    l2 = np.linalg.norm(y_exact - y)
-    l1 = np.linalg.norm(y_exact - y, 1)
-    linf = np.linalg.norm(y_exact - y, np.inf)
-    print("mesh_spacing, cfl, l1, l2, linf")
-    print("%0.4e, %0.4f, %0.4e, %0.4e, %0.4e" % (mesh_spacing, cfl, l1, l2, linf))
+
+    err = y_exact - y
+    l2 = np.sqrt(np.sum(err**2 * ode_sys.Ml))
+    l1 = np.linalg.norm(err * ode_sys.Ml, 1)
+    linf = np.linalg.norm(err, np.inf)
+    print("mesh_spacing: %0.4e, CFL=%0.4f, L1=%0.4e, L2=%0.4e, Linf=%0.4e" % (mesh_spacing, cfl, l1, l2, linf))
