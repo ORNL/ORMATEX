@@ -20,6 +20,7 @@ from functools import partial
 from collections import deque
 import jax
 import jax.numpy as jnp
+from jax.experimental import sparse as jsp
 import equinox as eqx
 from dataclasses import dataclass
 
@@ -29,20 +30,20 @@ class JaxMatrixLinop(eqx.Module):
     Helper class to wrap a jax.Array as a linop
     similar to scipy.sparse.linalg.aslinearoperator()
     """
-    a: jax.Array
+    a: jax.Array | jsp.JAXSparse
 
     def __init__(self, a):
         assert len(a.shape) == 2
         assert a.shape[0] == a.shape[1]
         self.a = a
 
-    def __call__(self, b):
+    def __call__(self, b: jax.Array):
         return self.a @ b
 
-    def _matvec(self, b):
+    def _matvec(self, b: jax.Array):
         return self(b)
 
-    def matvec(self, b):
+    def matvec(self, b: jax.Array):
         return self._matvec(b)
 
 
@@ -217,7 +218,7 @@ class OdeSys(eqx.Module):
 
     @abstractmethod
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-        # the user must ovrride this
+        # the user must override this
         raise NotImplementedError
 
     def frhs_aug(self, t: float, u: jax.Array, aug: jax.Array, aug_scale: float, **kwargs) -> jax.Array:
