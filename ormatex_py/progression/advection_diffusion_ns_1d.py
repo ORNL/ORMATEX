@@ -183,44 +183,35 @@ class AdDiffSEM:
         else:
             self.A = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
-        b = []
-        for n in range(self.n_species):
-            # unique rhs for each species
-            bn = rhs.assemble(self.basis, **self.w_ext(self.basis, species_id=n, **kwargs))
-            b.append(bn)
         M = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
         if self.mesh.boundaries:
             # Dirichlet boundary conditions
-            for bn in b:
-                fem.enforce(self.A, bn, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
             fem.enforce(M, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+            fem.enforce(self.A, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
         else:
             # periodic boundary conditions
-            for bn in b:
-                fem.enforce(self.A, bn, D=self.basis.get_dofs().flatten(), overwrite=True)
             fem.enforce(M, D=self.basis.get_dofs().flatten(), overwrite=True)
+            fem.enforce(self.A, D=self.basis.get_dofs().flatten(), overwrite=True)
 
         Ml = M @ np.ones((M.shape[1],))
 
         # provide jax arrays
         jMl = jnp.asarray(Ml)
         jA = jsp.BCOO.from_scipy_sparse(self.A)
-        # columns index in b represents each species id
-        jb = jnp.asarray(b).transpose()
+        return jA, jMl
 
-        return jA, jMl, jb
-
-    def assemble_rhs(self, **kwargs):
+    def assemble_rhs(self, u=None, **kwargs):
         """
         Handle nonlinear source term.  Call if the solution updates
         and the rhs depends on u.
         """
         assert hasattr(self, 'A')
+        wkwargs = {**kwargs, **{'u': u}}
         b = []
         for n in range(self.n_species):
             # unique rhs for each species
-            bn = rhs.assemble(self.basis, **self.w_ext(self.basis, species_id=n, **kwargs))
+            bn = rhs.assemble(self.basis, **self.w_ext(self.basis, species_id=n, **wkwargs))
             b.append(bn)
         if self.mesh.boundaries:
             # Dirichlet boundary conditions
@@ -230,6 +221,7 @@ class AdDiffSEM:
             # periodic boundary conditions
             for bn in b:
                 fem.enforce(self.A, bn, D=self.basis.get_dofs().flatten(), overwrite=True)
+        # columns index in b represents each species id
         jb = jnp.asarray(b).transpose()
         return jb
 
@@ -239,6 +231,7 @@ class AdDiffSEM:
     def ode_sys(self, **kwargs):
         return AffineLinearSEM(self, **kwargs)
 
+
 class AffineLinearSEM(OdeSys):
     """
     Define ODE System associated to affine linear sparse Jacobian problem
@@ -246,12 +239,11 @@ class AffineLinearSEM(OdeSys):
     bat_mat: jax.Array
     A: jsp.JAXSparse
     Ml: jax.Array
-    b: jax.Array
     sys_assembler: AdDiffSEM
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         self.sys_assembler = sys_assembler
-        self.A, self.Ml, self.b = self.sys_assembler.assemble(**kwargs)
+        self.A, self.Ml = self.sys_assembler.assemble(**kwargs)
         self.bat_mat = gen_bateman_matrix(['u_0', 'u_1'], decay_lib)
         super().__init__()
 
@@ -260,7 +252,7 @@ class AffineLinearSEM(OdeSys):
         un = stack_u(u, n)
         # A and Ml do not depend on u
         b = self.sys_assembler.assemble_rhs(u=un)
-        # add bateman, only works for p1 elements. TODO: fix
+        # add bateman
         lub = (self.bat_mat @ un.transpose()).transpose()
         udot = (b - self.A @ un) / self.Ml.reshape((-1, 1)) + lub
         # integrators currently expect a flat U

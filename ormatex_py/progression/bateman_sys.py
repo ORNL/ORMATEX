@@ -51,6 +51,29 @@ def gen_bateman_matrix(keymap: list, bateman_lib: dict) -> jax.Array:
     return jnp.asarray(bat_mat)
 
 
+def gen_transmute_matrix(keymap: list, trans_lib: dict, phi: float=1.0) -> jax.Array:
+    r"""
+    Represents transmutation reactions of the form:
+
+    .. math::
+
+        T_{i,j} = \Sigma_{i,j}
+
+    .. math::
+
+        u_t = \phi T u
+
+    Where $`\phi`$ is the neutron scalar flux and $`\Sigma_{i,j}`$ is the
+    macroscopic cross section of reaction that transmutes species i to j.
+    This yeilds a matrix of similar form to the Bateman decay matrix.
+
+    This is purely a convinience function and to denote that the
+    transmuation lib is not equal to the bateman lib since
+    the transmutation lib contains $`\Sigma_{i,j}`$ values.
+    """
+    return -phi * gen_bateman_matrix(keymap, trans_lib)
+
+
 class TestBatemanSysFdJac(OdeSys):
     """
     Test fallback to finite diff based Jacobian Linop
