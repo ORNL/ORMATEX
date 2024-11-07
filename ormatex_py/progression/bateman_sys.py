@@ -51,7 +51,7 @@ def gen_bateman_matrix(keymap: list, bateman_lib: dict) -> jax.Array:
     return jnp.asarray(bat_mat)
 
 
-class TestBatemanSysFdJac(OdeSys):
+class TestBatemanSysJac(OdeSys):
     """
     Test fallback to finite diff based Jacobian Linop
     """
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     print(bmat)
 
     # test simple exp integrator
-    test_ode_sys = TestBatemanSysFdJac()
+    test_ode_sys = TestBatemanSysJac()
     t = 0.0
     y0 = jnp.array([0.001, 0.1, 1.0])
     sys_int = EpirkIntegrator(test_ode_sys, t, y0, method="epirk3", max_krylov_dim=10, iom=2)

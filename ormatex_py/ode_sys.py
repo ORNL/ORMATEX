@@ -15,7 +15,6 @@ from abc import ABCMeta
 from abc import abstractmethod, abstractproperty
 from collections.abc import Callable
 import numpy as np
-from scipy.sparse.linalg import LinearOperator
 from functools import partial
 from collections import deque
 import jax
@@ -25,29 +24,55 @@ import equinox as eqx
 from dataclasses import dataclass
 
 
-class JaxMatrixLinop(eqx.Module):
+class LinOp(eqx.Module):
+
+    @abstractmethod
+    def _matvec(self, v):
+        raise NotImplementedError
+
+    def __call__(self, v):
+        return self._matvec(v)
+
+    def matvec(self, v: jax.Array) -> jax.Array:
+        return self._matvec(v)
+
+    @abstractmethod
+    def _dense(self):
+        raise NotImplementedError
+
+    def dense(self) -> jax.Array:
+        return self._dense()
+
+
+class JaxMatrixLinop(LinOp):
     """
-    Helper class to wrap a jax.Array as a linop
+    Helper class to wrap a jax.Array as a LinOp
     similar to scipy.sparse.linalg.aslinearoperator()
     """
     a: jax.Array | jsp.JAXSparse
+    a_dense: jax.Array
 
     def __init__(self, a):
         assert len(a.shape) == 2
         assert a.shape[0] == a.shape[1]
         self.a = a
+        self.a_dense = None
 
-    def __call__(self, b: jax.Array):
+    def _matvec(self, b: jax.Array) -> jax.Array:
         return self.a @ b
 
-    def _matvec(self, b: jax.Array):
-        return self(b)
+    def _dense(self) -> jax.Array:
+        ## TODO: I do not know why this class is frozen, and what the consequences of super().__setattr__ are
+        # without this, I get: FrozenInstanceError: cannot assign to field 'a_dense'
+        if self.a_dense is None:
+            try:
+                super().__setattr__('a_dense', self.a.todense())
+            except AttributeError:
+                super().__setattr__('a_dense', self.a)
+        return self.a_dense
 
-    def matvec(self, b: jax.Array):
-        return self._matvec(b)
 
-
-class AugMatrixLinop(eqx.Module):
+class AugMatrixLinop(LinOp):
     """
     Helper class to create a larger linear operator
     out of a block matrix comprised of components:
@@ -76,7 +101,7 @@ class AugMatrixLinop(eqx.Module):
         assert self.p == self.K.shape[0]
         assert self.p == self.K.shape[1]
 
-    def __call__(self, v):
+    def _matvec(self, v):
         """
         Computes a_lo_aug @ v
         """
@@ -86,14 +111,41 @@ class AugMatrixLinop(eqx.Module):
         res = jnp.concat((ab_v, k_v))
         return res
 
-    def _matvec(self, v):
-        return self(v)
-
-    def matvec(self, v):
-        return self._matvec(v)
+    def _dense(self):
+        raise NotImplementedError
 
 
-class FdJacLinOp(eqx.Module):
+class JacLinOp(LinOp):
+    t: float
+    u: jax.Array
+    frhs: eqx.Module
+    # storage for rhs evaluated at u, computed in linerize call
+    # TODO: figure out how to eliminate this redundant computation
+    frhs_u: jax.Array
+    frhs_kwargs: dict
+    fjac_u: Callable
+
+    def __init__(self, t, u, frhs: eqx.Module, frhs_kwargs: dict, **kwargs):
+        self.t = t
+        self.u = u
+        self.frhs = frhs
+        self.frhs_kwargs = frhs_kwargs
+        self.frhs_u, self.fjac_u = jax.linearize(partial(frhs, self.t, **self.frhs_kwargs), self.u)
+
+    def _matvec(self, v: jax.Array) -> jax.Array:
+        """
+        Define the action of the jacobian of frhs on a vector v.
+
+        Args:
+            v: target vector to apply linop to
+        """
+        return self.fjac_u(v)
+
+    def _dense(self):
+        raise NotImplementedError
+
+
+class FdJacLinOp(LinOp):
     t: float
     u: jax.Array
     frhs: Callable
@@ -128,6 +180,7 @@ class FdJacLinOp(eqx.Module):
     def set_op_u(self, t: float, u: jax.Array):
         """
         Set state at which to linearize the system
+        TODO: not used, do we need it?
         """
         self.t = t
         self.u = u
@@ -136,23 +189,14 @@ class FdJacLinOp(eqx.Module):
     def set_scale(self, scale: float, gamma: float):
         """
         For optional scaling and shifting of the Jv product
+        TODO: scale, gamma and this method are not used, do we need it?
         """
         self.scale = scale
         self.gamma = gamma
 
-    def __call__(self, v: jax.Array) -> jax.Array:
-        """
-        Alias to linop-vector product
-        """
-        return self._matvec(v)
-
     def _matvec(self, v: jax.Array) -> jax.Array:
         """
         Define action of linop on a vector.
-        NOTE:
-        https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.linalg.LinearOperator.html
-        This defines the @ operator for this class
-
         Args:
             v: target vector to apply linop to
         """
@@ -169,9 +213,12 @@ class FdJacLinOp(eqx.Module):
         j_v += self.gamma * v
         return j_v
 
+    def _dense(self):
+        raise NotImplementedError
+
 
 # NOTE:  https://docs.kidger.site/equinox/api/module/module/
-# every eqx.Module is an abstarct base class by default
+# every eqx.Module is an abstract base class by default
 class OdeSys(eqx.Module):
     def __init__(self, *args, **kwargs):
         pass
@@ -192,7 +239,13 @@ class OdeSys(eqx.Module):
         """
         return self._frhs(t, u, **kwargs)
 
-    def fjac(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
+    def __call__(self, t: float, u: jax.Array, *args, **kwargs) -> jax.Array:
+        """
+        Alias to _frhs for diffrax compatibility.
+        """
+        return self._frhs(t, u, **kwargs)
+
+    def fjac(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         """
         Define the Jacobian of the system as a linear operator
 
@@ -210,7 +263,7 @@ class OdeSys(eqx.Module):
         """
         return self._fjac(t, u, **kwargs)
 
-    def fm(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
+    def fm(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         """
         Method that returns the mass matrix lin op
         """
@@ -221,23 +274,15 @@ class OdeSys(eqx.Module):
         # the user must override this
         raise NotImplementedError
 
-    def frhs_aug(self, t: float, u: jax.Array, aug: jax.Array, aug_scale: float, **kwargs) -> jax.Array:
-        return aug_scale * self.frhs(t, u, **kwargs) + aug
-
-    # @partial(jax.jit(static_argnums=(0,)))
-    def _fjac(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
+    #@partial(jax.jit(static_argnums=(0,)))
+    def _fjac(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         # default implementation
-        return FdJacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
+        #return FdJacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
+        return JacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
 
-    def _fm(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
+    def _fm(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         # default implementation
         return lambda x: x
-
-    def __call__(self, t: float, u: jax.Array, *args, **kwargs) -> jax.Array:
-        """
-        Alias to _frhs for diffrax compatibility.
-        """
-        return self._frhs(t, u, **kwargs)
 
 
 @dataclass

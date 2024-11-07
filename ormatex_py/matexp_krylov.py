@@ -2,26 +2,25 @@
 Krylov methods to calculate exp(A*dt)*v and
 phi_k(A*dt)*v with sparse A
 """
-from collections.abc import Callable
 import jax
 import numpy as np
 from jax import numpy as jnp
 import equinox as eqx
 
 # internal imports
-from ormatex_py.ode_sys import AugMatrixLinop
+from ormatex_py.ode_sys import LinOp, AugMatrixLinop
 from ormatex_py.arnoldi_jax import arnoldi_lop
 from ormatex_py.matexp_phi import f_phi_k_appl
 
 
-def matexp_linop(a_lo: Callable, dt: float, v0: jax.Array, max_krylov_dim: int, iom: int=2) -> jax.Array:
+def matexp_linop(a_lo: LinOp, dt: float, v0: jax.Array, max_krylov_dim: int, iom: int=2) -> jax.Array:
     """
     Computes exp(A*dt)*v where A is a sparse linop
     """
     return phi_linop(a_lo, dt, v0, k=0, max_krylov_dim=max_krylov_dim, iom=iom)
 
 
-def phi_linop(a_lo: Callable, dt: float, v0: jax.Array, k: int, max_krylov_dim: int, iom: int=2):
+def phi_linop(a_lo: LinOp, dt: float, v0: jax.Array, k: int, max_krylov_dim: int, iom: int=2):
     """
     Computes phi_k(A*dt)*v where A is a sparse linop
     """
@@ -36,7 +35,7 @@ def phi_linop(a_lo: Callable, dt: float, v0: jax.Array, k: int, max_krylov_dim: 
     return beta * (q @ phi_k_e1)
 
 
-def kiops_fixedsteps(a_lo: Callable, dt: float, vb: list[jax.Array], max_krylov_dim: int, iom: int=2, n_steps: int=1):
+def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim: int, iom: int=2, n_steps: int=1):
     r"""
     Method based roughly on simplified KIOPS with fixes stepsize
     and not Krylov adaptivity.  TODO: add adaptivity routines.

@@ -2,17 +2,16 @@
 Arnoldi impl
 TODO: The linear operator, a_lo, needs to be jit-able
 """
-from scipy.sparse.linalg import LinearOperator
-from collections.abc import Callable
 from functools import partial
 import jax
 from jax import numpy as jnp
 
+from ormatex_py.ode_sys import LinOp
 
 # inner ortho procedure, modifies hs and qs in-place
 # TODO: jit this
-# @partial(jax.jit, static_argnums=(4,5,6,))
-def arnoldi_mgs_lop(a_lo: Callable, hs: jax.Array, qs: jax.Array,
+#@partial(jax.jit, static_argnums=(4,5,6,))
+def arnoldi_mgs_lop(a_lo: LinOp, hs: jax.Array, qs: jax.Array,
              a_scale: float, k: int, n: int, iom: int) -> bool:
     """
     TODO: The linear operator, a_lo, must be jit-able!
@@ -58,7 +57,7 @@ def arnoldi_mgs_lop(a_lo: Callable, hs: jax.Array, qs: jax.Array,
 
 
 # @partial(jax.jit, static_argnums=(3,4,))
-def arnoldi_lop(a_lo: Callable, a_scale: float, b: jax.Array, m: int, iom: int) -> (jax.Array, jax.Array, int):
+def arnoldi_lop(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int) -> (jax.Array, jax.Array, int):
     b_nrows = b.shape[0]
     m = min(b_nrows, m)
     hs = jax.numpy.zeros((m,m))
