@@ -258,8 +258,9 @@ def integrate_ormatex(ode_sys, y0, dt, nsteps, method="epirk3", max_krylov_dim=4
     Uses ormatex exponential integrators to step adv diff system forward
     """
     # init the time integrator
+    t0 = 0.0
     sys_int = EpirkIntegrator(
-            ode_sys, t, y0, method=method,
+            ode_sys, t0, y0, method=method,
             max_krylov_dim=max_krylov_dim, iom=iom
             )
     t_res, y_res = [0,], [y0,]

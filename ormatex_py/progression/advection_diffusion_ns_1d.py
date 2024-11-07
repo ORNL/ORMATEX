@@ -46,6 +46,7 @@ from ormatex_py.ode_sys import JaxMatrixLinop
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_epirk import EpirkIntegrator
 from ormatex_py.progression.advection_diffusion_1d import mass
+from ormatex_py.progression.advection_diffusion_1d import integrate_diffrax, integrate_ormatex
 
 # Specify velocity
 vel = 0.5
@@ -163,7 +164,7 @@ class AdDiffSEM:
         u = kwargs.get("u", None)
         if u is not None and species_id["species_id"] >= 0:
             for n in range(self.n_species):
-                ub = basis.interpolate(u[:, n])
+                ub = basis.interpolate(u.at[:, n].get())
                 fields["u_%d"%n] = ub
         # other aux fields
         for field_name, field_f in self.field_fns.items():
@@ -260,7 +261,8 @@ class AffineLinearSEM(OdeSys):
         n = self.sys_assembler.n_species
         un = stack_u(u, n)
         # A and Ml do not depend on u
-        b = self.sys_assembler.assemble_rhs(u=un)
+        # b = self.sys_assembler.assemble_rhs(u=un)
+        b = self.sys_assembler.assemble_rhs()
         # add bateman
         lub = (self.bat_mat @ un.transpose()).transpose()
         udot = (b - self.A @ un) / self.Ml.reshape((-1, 1)) + lub
@@ -279,6 +281,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=1)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
+    parser.add_argument("-method", help="time step method", type=str, default="epirk3")
     args = parser.parse_args()
 
     # create the mesh
@@ -317,17 +320,15 @@ if __name__ == "__main__":
     y0_profile = [g_prof(xs), g_prof2(xs)]
     y0 = flatten_u(jnp.asarray(y0_profile).transpose())
 
-    sys_int = EpirkIntegrator(ode_sys, t, y0, method="epirk3", max_krylov_dim=20, iom=2)
-    t_res = [0,]
-    y_res = [y0,]
+    # integrate the system
     dt = .1
-    nsteps = 10
-    for i in range(nsteps):
-        res = sys_int.step(dt)
-        # log the results for plotting
-        t_res.append(res.t)
-        y_res.append(res.y)
-        sys_int.accept_step(res)
+    nsteps = 20
+    method = args.method
+    diffrax_methods = ["euler", "heun", "midpoint", "bosh3", "dopri5", "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
+    if method in diffrax_methods:
+        t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
+    else:
+        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method)
 
     si = xs.argsort()
     sx = xs[si]
@@ -347,5 +348,6 @@ if __name__ == "__main__":
     plt.grid(ls='--')
     plt.ylabel('u')
     plt.xlabel('x')
+    plt.title(r"method: %s" % (method))
     plt.savefig('adv_diff_ns_1d.png')
     plt.close()
