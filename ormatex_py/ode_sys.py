@@ -218,7 +218,7 @@ class OdeSys(eqx.Module):
 
     @abstractmethod
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-        # the user must ovrride this
+        # the user must override this
         raise NotImplementedError
 
     def frhs_aug(self, t: float, u: jax.Array, aug: jax.Array, aug_scale: float, **kwargs) -> jax.Array:
@@ -232,6 +232,12 @@ class OdeSys(eqx.Module):
     def _fm(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
         # default implementation
         return lambda x: x
+
+    def __call__(self, t: float, u: jax.Array, *args, **kwargs) -> jax.Array:
+        """
+        Alias to _frhs for diffrax compatibility.
+        """
+        return self._frhs(t, u, **kwargs)
 
 
 @dataclass

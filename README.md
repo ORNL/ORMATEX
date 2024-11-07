@@ -34,7 +34,7 @@ Classic integrators:
 Exponential integrators:
 
 - [x] EPIRK2
-- [ ] EPIRK3
+- [x] EPIRK3
 - [ ] EPIRK4
 - [ ] EXPROS4
 - [ ] EXPROS2
