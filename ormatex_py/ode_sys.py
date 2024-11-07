@@ -125,7 +125,7 @@ class JacLinOp(LinOp):
     frhs_kwargs: dict
     fjac_u: Callable
 
-    def __init__(self, t, u, frhs: eqx.Module, frhs_kwargs: dict, **kwargs):
+    def __init__(self, t, u, frhs: eqx.Module, frhs_kwargs: dict={}, **kwargs):
         self.t = t
         self.u = u
         self.frhs = frhs
@@ -142,9 +142,13 @@ class JacLinOp(LinOp):
         return self.fjac_u(v)
 
     def _dense(self):
-        raise NotImplementedError
+        """
+        Define the (dense) jacobian of frhs.
+        """
+        return jax.vmap(self.fjac_u, in_axes=(1), out_axes=1)(jnp.eye(self.u.shape[0]))
 
 
+## TODO: this class is only needed for testing going forward?
 class FdJacLinOp(LinOp):
     t: float
     u: jax.Array
@@ -157,7 +161,7 @@ class FdJacLinOp(LinOp):
     gamma: float
     eps: float
 
-    def __init__(self, t, u, frhs: Callable, frhs_kwargs: dict,
+    def __init__(self, t, u, frhs: Callable, frhs_kwargs: dict={},
                  scale: float=1.0,  gamma: float=0.0, *args, **kwargs):
         self.t = t
         self.u = u
