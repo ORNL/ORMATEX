@@ -45,7 +45,7 @@ from ormatex_py.progression import element_line_pp_nodal as el_nodal
 from ormatex_py.ode_sys import JaxMatrixLinop
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_epirk import EpirkIntegrator
-from ormatex_py.progression.advection_diffusion_1d import robin, mass
+from ormatex_py.progression.advection_diffusion_1d import mass
 
 # Specify velocity
 vel = 0.5
@@ -103,6 +103,15 @@ def rhs(v, w):
     Source term
     """
     return src_f(w.x, w=w) * v
+
+@fem.BilinearForm
+def robin(u, v, w):
+    """
+    Args:
+        w: is a dict of skfem.element.DiscreteField (or user types)
+            w.n (face normals)
+    """
+    return dot(vel_f(**w), w.n) * u * v
 
 
 class AdDiffSEM:
@@ -290,7 +299,7 @@ if __name__ == "__main__":
         )
 
     # diffusion coefficient
-    param_dict = {"nu": 1e-8}
+    param_dict = {"nu": 1e-8, "vel": vel}
 
     # init the system
     n_species = 2
