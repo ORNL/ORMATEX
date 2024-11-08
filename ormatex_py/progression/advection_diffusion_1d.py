@@ -1,6 +1,9 @@
 import numpy as np
 import scipy as sp
 
+from functools import partial
+import time
+
 import jax
 import jax.numpy as jnp
 from jax.experimental import sparse as jsp
@@ -12,7 +15,7 @@ from skfem.helpers import dot, grad
 import warnings
 
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
-from ormatex_py.ode_sys import MatrixLinOp, DiagLinOp
+from ormatex_py.ode_sys import LinOp, MatrixLinOp, DiagLinOp
 
 jax.config.update("jax_enable_x64", True)
 
@@ -186,26 +189,18 @@ class AffineLinearSEM(OdeSys):
     A: jsp.JAXSparse
     Ml: jax.Array
     b: jax.Array
-    jac_lop: Callable
-    sys_assembler: AdDiffSEM
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
-        self.sys_assembler = sys_assembler
-        self.A, self.Ml, self.b = self.sys_assembler.assemble(**kwargs)
+        self.A, self.Ml, self.b = sys_assembler.assemble(**kwargs)
         super().__init__()
 
+    @jax.jit
     def _frhs(self, t: float, u: jax.Array) -> jax.Array:
-        # NOTE: in principle one could do:
-        # self.A, self.Ml, self.b = self.sys_assembler.assemble(t=t, u=u, **kwargs)
-        # here to rebuild the system given the current system state, u
         return (self.b - self.A @ u) / self.Ml
 
-    @property
-    def jac_lop(self):
-        return MatrixLinOp(-self.A / self.Ml[:,None])
-
+    @jax.jit
     def _fjac(self, t: float, u: jax.Array, **kwargs):
-        return self.jac_lop
+        return MatrixLinOp(-self.A / self.Ml[:,None])
 
     def _fm(self, t: float, u: jax.Array, **kwargs):
         return DiagLinOp(self.Ml)
@@ -335,15 +330,22 @@ if __name__ == "__main__":
         y0 = jnp.asarray(y0_profile)
         g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))/(2*ww))**2.0)
 
+    tic = time.perf_counter()
+
     # integrate the system
     dt = .1
     nsteps = 10
     if args.mode == 0:
         method = "epirk3"
-        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method)
+        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method, max_krylov_dim=200)
     else:
         method = "implicit_esdirk3"
         t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
+
+    toc = time.perf_counter()
+
+    print(f"Integrated system in {toc - tic:0.4f} seconds")
+
 
     # compute expected solution
     # y_exact_res = [g_prof_exact(0.0, sx),]

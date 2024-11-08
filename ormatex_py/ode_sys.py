@@ -54,6 +54,7 @@ class EyeLinOp(LinOp):
     def __init__(self, n: int):
         self.n = n
 
+    @jax.jit
     def _matvec(self, v):
         return v
 
@@ -71,6 +72,7 @@ class DiagLinOp(LinOp):
     def __init__(self, d: jax.Array):
         self.d = d
 
+    @jax.jit
     def _matvec(self, v):
         return self.d * v
 
@@ -90,6 +92,7 @@ class MatrixLinOp(LinOp):
         assert a.shape[0] == a.shape[1]
         self.a = a
 
+    @jax.jit
     def _matvec(self, b: jax.Array) -> jax.Array:
         return self.a @ b
 
@@ -106,37 +109,36 @@ class AugMatrixLinOp(LinOp):
     Helper class to create a larger linear operator
     out of a block matrix comprised of components:
     a_lo_aug =
-        [[A,  B],
-         [0,  K]]
+        [[dt*A,  B],
+         [0,     K]]
     where A is the original NxN linop
+    dt is a scalar factor applied to A
     b is a Nxp dense matrix
     K is a pxp sparse matrix
     """
-    a_lo: Callable
-    # scalar factor applied to a_lo
+    a_lo: LinOp
     dt: float
     B: jax.Array
     K: jax.Array
-    n: int
-    p: int
 
     def __init__(self, a_lo, dt, B, K):
         self.a_lo = a_lo
         self.dt = dt
         self.B = B
         self.K = K
-        self.n = self.B.shape[0]
-        self.p = self.B.shape[1]
-        assert self.p == self.K.shape[0]
-        assert self.p == self.K.shape[1]
+        assert self.B.shape[1] == self.K.shape[0]
+        assert self.B.shape[1] == self.K.shape[1]
 
+    @jax.jit
     def _matvec(self, v):
         """
         Computes a_lo_aug @ v
         """
-        assert v.shape[0] == self.n + self.p
-        ab_v = self.dt*self.a_lo(v[0:self.n]) + self.B @ v[-self.p:]
-        k_v = self.K @ v[-self.p:]
+        n = self.B.shape[0]
+        p = self.B.shape[1]
+        assert v.shape[0] == n + p
+        ab_v = self.dt*self.a_lo(v[0:n]) + self.B @ v[-p:]
+        k_v = self.K @ v[-p:]
         res = jnp.concat((ab_v, k_v))
         return res
 
@@ -161,9 +163,10 @@ class JacLinOp(LinOp):
         self.frhs_kwargs = frhs_kwargs
         self.frhs_u, self.fjac_u = jax.linearize(partial(frhs, self.t, **self.frhs_kwargs), self.u)
 
+    @jax.jit
     def _matvec(self, v: jax.Array) -> jax.Array:
         """
-        Define the action of the jacobian of frhs on a vector v.
+        Define the action of the Jacobian of frhs on a vector v.
 
         Args:
             v: target vector to apply linop to
@@ -227,6 +230,7 @@ class FdJacLinOp(LinOp):
         self.scale = scale
         self.gamma = gamma
 
+    @jax.jit
     def _matvec(self, v: jax.Array) -> jax.Array:
         """
         Define action of linop on a vector.
@@ -238,7 +242,7 @@ class FdJacLinOp(LinOp):
         ieps = self.scale / scaled_eps
         u_pert = self.u + scaled_eps*v
 
-        # compute the ushifited jac-vec product.
+        # compute the unshifted jac-vec product.
         diff = self.frhs(self.t, u_pert, **self.frhs_kwargs) - self.frhs_u
         j_v = (diff)*ieps
 
@@ -263,7 +267,7 @@ class OdeSys(eqx.Module):
 
         Ex: Could look like:
         F(t, U) = M^-1 [AU + BU + S]
-        where M=const, A=A(U,t), B=B(U,t) are matricies
+        where M=const, A, B are matricies
         and S=S(u,t) is a vec.
 
         Args:
@@ -283,12 +287,10 @@ class OdeSys(eqx.Module):
         Define the Jacobian of the system as a linear operator
 
         Ex: Could look like:
-        dF(t, U)/dU|_(t,u) = M^-1 d[AU + BU + S]/dU |_(t,u)
+        dF(t, U)/dU|_(t,u) = M^-1 (A + B + dS/dU|_(t,u))
         where M, A, B are matricies and S is a vec. and M is const.
 
-        The default implementation uses a finite diff approx
-        to construct this linear operator, but is highly inefficient.
-        NOTE: Recommend to override this method.
+        The default implementation uses jax.linearize.
 
         Args:
             t:  current time
@@ -298,7 +300,7 @@ class OdeSys(eqx.Module):
 
     def fm(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         """
-        Method that returns the mass matrix lin op
+        Method that returns the mass matrix LinOp
         """
         return self._fm(t, u, **kwargs)
 
@@ -307,15 +309,58 @@ class OdeSys(eqx.Module):
         # the user must override this
         raise NotImplementedError
 
-    #@partial(jax.jit(static_argnums=(0,)))
+    @jax.jit
     def _fjac(self, t: float, u: jax.Array, **kwargs) -> LinOp:
-        # default implementation
-        #return FdJacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
+        # default implementation (autodiff Jacobian)
         return JacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
 
     def _fm(self, t: float, u: jax.Array, **kwargs) -> LinOp:
-        # default implementation
+        # default implementation (identity operator)
         return EyeLinOp(u.shape[0])
+
+
+class OdeSysSplit(OdeSys):
+    """
+    Define a split ODE system.
+      dU/dt = F(t, U) = L(t, U) @ U + R(t, U),
+    where L(t, U) is a (potentially time and state dependent) LinOp, different from the Jacobian.
+    """
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def fl(self, t: float, u: jax.Array, **kwargs) -> LinOp:
+        """
+        Define the LinOp L(t,u) of the system.
+        Args:
+            t:  current time
+            u:  current system state.
+        """
+        return self._fl(t, u, **kwargs)
+
+    @abstractmethod
+    def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        """
+        Define the RHS of the split system
+          dU/dt = F(t, U) = L(t, U) @ U + R(t, U).
+
+        Since we need residual quantities
+          R_0 = F(t, U) - F(t_0, U_0) - L(t_0,U_0) @ (U - U0)
+        which is not the same as R(t, U) - R(t_0, U_0), it is easier to
+        specify F(t, U) and L(t, U), which implicitly defines
+          R(t, U) = F(t, U) - L(t, U) @ U,
+        which however is not explicitly needed by the integrators.
+
+        Args:
+            t:  current time
+            u:  current system state.
+        """
+        # the user must override this
+        raise NotImplementedError
+
+    @abstractmethod
+    def _fl(self, t: float, u: jax.Array, **kwargs) -> LinOp:
+        # the user must override this
+        raise NotImplementedError
 
 
 @dataclass
