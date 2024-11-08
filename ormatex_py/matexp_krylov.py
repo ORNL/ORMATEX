@@ -24,12 +24,12 @@ def phi_linop(a_lo: LinOp, dt: float, v0: jax.Array, k: int, max_krylov_dim: int
     """
     Computes phi_k(A*dt)*v where A is a sparse linop
     """
-    (q, h, _) = arnoldi_lop(a_lo, 1.0, v0, max_krylov_dim, iom)
+    (q, h, _) = arnoldi_lop(a_lo, dt, v0, max_krylov_dim, iom)
 
     unit_vec = jnp.zeros((h.shape[0],))
     unit_vec = unit_vec.at[0].set(1.0)
 
-    phi_k_e1 = f_phi_k_appl(dt*h, unit_vec, k)
+    phi_k_e1 = f_phi_k_appl(h, unit_vec, k)
     beta = jnp.linalg.norm(v0, 2)
 
     return beta * (q @ phi_k_e1)
@@ -77,6 +77,6 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
     unit_vec[-1] = 1.0
     v = jnp.concat((vb[0], jnp.asarray(unit_vec)))
 
-    w = matexp_linop(a_tilde_lo, tau_i * 1.0, v,
+    w = matexp_linop(a_tilde_lo, tau_i, v,
               max_krylov_dim=max_krylov_dim, iom=iom)
     return w[0:n]

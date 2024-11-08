@@ -51,9 +51,7 @@ def arnoldi_mgs_lop(a_lo: LinOp, hs: jax.Array, qs: jax.Array,
         qv *= 1./norm_v
         qs = qs.at[:, k+1].set(qv)
 
-    if norm_v <= breakdown_tol:
-        return hs, qs, True
-    return hs, qs, False
+    return hs, qs, (norm_v <= breakdown_tol)
 
 
 # @partial(jax.jit, static_argnums=(3,4,))

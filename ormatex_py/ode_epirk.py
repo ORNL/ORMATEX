@@ -7,6 +7,14 @@ from collections.abc import Callable
 from ormatex_py.ode_sys import IntegrateSys, OdeSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 
+##TODO:
+# - These methods are multistep and thus not RK methods
+#   Should be renamed to Epi2==EpiRK2==ExpRos2 and Epi3
+#   see: doi:10.1016/j.jcp.2005.08.032
+# - methods are only second and third order for f(t,y) = f(y) non-autonomous systems
+#   time dependent problems require a correction involving f'(t,y)
+#   see: https://doi.org/10.1137/080717717
+
 
 class EpirkIntegrator(IntegrateSys):
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epirk2", *args, **kwargs):
