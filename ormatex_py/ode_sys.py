@@ -84,26 +84,21 @@ class MatrixLinOp(LinOp):
     similar to scipy.sparse.linalg.aslinearoperator()
     """
     a: jax.Array | jsp.JAXSparse
-    a_dense: jax.Array
 
     def __init__(self, a):
         assert len(a.shape) == 2
         assert a.shape[0] == a.shape[1]
         self.a = a
-        self.a_dense = None
 
     def _matvec(self, b: jax.Array) -> jax.Array:
         return self.a @ b
 
     def _dense(self) -> jax.Array:
-        ## TODO: I do not know why this class is frozen, and what the consequences of super().__setattr__ are
-        # without this, I get: FrozenInstanceError: cannot assign to field 'a_dense'
-        if self.a_dense is None:
-            try:
-                super().__setattr__('a_dense', self.a.todense())
-            except AttributeError:
-                super().__setattr__('a_dense', self.a)
-        return self.a_dense
+        if isinstance(self.a, jax.Array):
+            return self.a
+        else:
+            #convert sparse array to dense
+            return self.a.todense()
 
 
 class AugMatrixLinOp(LinOp):
