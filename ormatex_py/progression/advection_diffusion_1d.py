@@ -12,7 +12,7 @@ from skfem.helpers import dot, grad
 import warnings
 
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
-from ormatex_py.ode_sys import JaxMatrixLinop
+from ormatex_py.ode_sys import MatrixLinOp, DiagLinOp
 
 jax.config.update("jax_enable_x64", True)
 
@@ -202,13 +202,13 @@ class AffineLinearSEM(OdeSys):
 
     @property
     def jac_lop(self):
-        return JaxMatrixLinop(-self.A / self.Ml[:,None])
+        return MatrixLinOp(-self.A / self.Ml[:,None])
 
     def _fjac(self, t: float, u: jax.Array, **kwargs):
         return self.jac_lop
 
     def _fm(self, t: float, u: jax.Array, **kwargs):
-        return lambda x: self.Ml * x
+        return DiagLinOp(self.Ml)
 
 
 def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):

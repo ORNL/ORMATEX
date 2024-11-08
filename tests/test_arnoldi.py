@@ -6,7 +6,7 @@ import scipy as sp
 import jax
 import jax.numpy as jnp
 from ormatex_py.arnoldi_jax import arnoldi_lop
-from ormatex_py.ode_sys import JaxMatrixLinop
+from ormatex_py.ode_sys import MatrixLinOp
 jax.config.update("jax_enable_x64", True)
 
 
@@ -17,7 +17,7 @@ def test_arnoldi_ortho():
         test_a = jnp.asarray(np.random.randn(10, 10), dtype=jnp.float64)
         b = jnp.linspace(1, 10, 10, dtype=jnp.float64)
         # convert matrix to linear operator
-        test_a_lop = JaxMatrixLinop(test_a)
+        test_a_lop = MatrixLinOp(test_a)
         # call arnoldi iters for m iters
         m = 100
         # turn off incomplete ortho (use large ortho depth)

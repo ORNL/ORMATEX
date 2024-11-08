@@ -6,7 +6,7 @@ import scipy as sp
 import jax
 import jax.numpy as jnp
 
-from ormatex_py.ode_sys import JaxMatrixLinop
+from ormatex_py.ode_sys import MatrixLinOp
 from ormatex_py.matexp_krylov import phi_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k, f_phi_k_ext, f_phi_k_appl
 
@@ -126,7 +126,7 @@ def test_phi_linop_0():
 
     # test a diagonal matrix with reference values
     d_z = np.diag(ref_z)
-    d_z_lo = JaxMatrixLinop(jnp.asarray(d_z))
+    d_z_lo = MatrixLinOp(jnp.asarray(d_z))
     b = jnp.ones((ref_z.shape[0],))
     jax_phi_0_b = phi_linop(
         d_z_lo, 1.0, b, k=0, max_krylov_dim=ref_z.shape[0], iom=100)
@@ -140,7 +140,7 @@ def test_phi_linop_0():
         b = jnp.ones((dim,))
         # test against the scipy expm
         np_phi_0 = jnp.asarray(sp.linalg.expm(np_test_a))
-        test_a_lo = JaxMatrixLinop(test_a)
+        test_a_lo = MatrixLinOp(test_a)
         # do not use iom in this test
         jax_phi_0_b = phi_linop(
                 test_a_lo, 1.0, b, k=0, max_krylov_dim=dim, iom=100)
@@ -155,7 +155,7 @@ def test_phi_linop_1():
 
     # test a diagonal matrix with reference values
     d_z = np.diag(ref_z)
-    d_z_lo = JaxMatrixLinop(jnp.asarray(d_z))
+    d_z_lo = MatrixLinOp(jnp.asarray(d_z))
     b = jnp.ones((ref_z.shape[0],))
     jax_phi_1_b = phi_linop(
         d_z_lo, 1.0, b, k=1, max_krylov_dim=ref_z.shape[0], iom=100)
@@ -176,7 +176,7 @@ def test_kiops_fixedstep():
         [   0.,    0.,-1e1],
         ])
     test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
-    test_a_lo = JaxMatrixLinop(test_a)
+    test_a_lo = MatrixLinOp(test_a)
 
     # arbitrary small vectors with vastly different magnitudes
     test_b0 = jnp.asarray(np.zeros(n))

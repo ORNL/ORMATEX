@@ -44,7 +44,41 @@ class LinOp(eqx.Module):
         return self._dense()
 
 
-class JaxMatrixLinop(LinOp):
+class EyeLinOp(LinOp):
+    """
+    Identity LinOp
+    """
+
+    n: int
+
+    def __init__(self, n: int):
+        self.n = n
+
+    def _matvec(self, v):
+        return v
+
+    def _dense(self):
+        return jnp.eye(n)
+
+
+class DiagLinOp(LinOp):
+    """
+    Diagonal linear operator with diagonal d
+    """
+
+    d: jax.Array
+
+    def __init__(self, d: jax.Array):
+        self.d = d
+
+    def _matvec(self, v):
+        return self.d * v
+
+    def _dense(self):
+        return jnp.diag(self.d)
+
+
+class MatrixLinOp(LinOp):
     """
     Helper class to wrap a jax.Array as a LinOp
     similar to scipy.sparse.linalg.aslinearoperator()
@@ -72,7 +106,7 @@ class JaxMatrixLinop(LinOp):
         return self.a_dense
 
 
-class AugMatrixLinop(LinOp):
+class AugMatrixLinOp(LinOp):
     """
     Helper class to create a larger linear operator
     out of a block matrix comprised of components:
@@ -177,7 +211,7 @@ class FdJacLinOp(LinOp):
     @property
     def shape(self) -> (int, int):
         """
-        Linop shape
+        LinOp shape
         """
         return (self.u.size, self.u.size)
 
@@ -286,7 +320,7 @@ class OdeSys(eqx.Module):
 
     def _fm(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         # default implementation
-        return lambda x: x
+        return EyeLinOp(u.shape[0])
 
 
 @dataclass

@@ -8,7 +8,7 @@ from jax import numpy as jnp
 import equinox as eqx
 
 # internal imports
-from ormatex_py.ode_sys import LinOp, AugMatrixLinop
+from ormatex_py.ode_sys import LinOp, AugMatrixLinOp
 from ormatex_py.arnoldi_jax import arnoldi_lop
 from ormatex_py.matexp_phi import f_phi_k_appl
 
@@ -71,7 +71,7 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
     k = np.zeros((p,p))
     k[0:p-1, 1:] = np.eye(p-1)
     k = jnp.asarray(k)
-    a_tilde_lo = AugMatrixLinop(a_lo, dt, b, k)
+    a_tilde_lo = AugMatrixLinOp(a_lo, dt, b, k)
 
     unit_vec = np.zeros(p)
     unit_vec[-1] = 1.0
