@@ -19,9 +19,6 @@ jax.config.update("jax_enable_x64", True)
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_epirk import EpirkIntegrator
 
-# Specify velocity
-vel = 0.5
-
 def src_f(x, **kwargs):
     """
     Custom source term, could depend on solution y
@@ -235,7 +232,7 @@ def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
             "implicit_esdirk4": diffrax.Kvaerno4,
            }
     try:
-        root_finder=diffrax.VeryChord(rtol=1e-12, atol=1e-12, norm=optimistix.max_norm)
+        root_finder=diffrax.VeryChord(rtol=1e-8, atol=1e-8, norm=optimistix.max_norm)
         solver = method_dict[method](root_finder=root_finder)
     except:
         solver = method_dict[method]()
