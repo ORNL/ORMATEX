@@ -260,11 +260,10 @@ class AffineLinearSEM(OdeSys):
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         n = self.sys_assembler.n_species
         un = stack_u(u, n)
-        # A and Ml do not depend on u
-        # b = self.sys_assembler.assemble_rhs(u=un)
-        b = self.sys_assembler.assemble_rhs()
+        # nonlin rhs
+        b = self.sys_assembler.assemble_rhs(u=un)
         # add bateman
-        lub = (self.bat_mat @ un.transpose()).transpose()
+        lub = un @ self.bat_mat.transpose()
         udot = (b - self.A @ un) / self.Ml.reshape((-1, 1)) + lub
         # integrators currently expect a flat U
         return flatten_u(udot)
@@ -279,7 +278,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
-    parser.add_argument("-p", help="basis order", type=int, default=1)
+    parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epirk3")
     args = parser.parse_args()
