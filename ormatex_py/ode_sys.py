@@ -299,7 +299,7 @@ class OdeSys(eqx.Module):
         return EyeLinOp(u.shape[0])
 
 
-class OdeSysSplit(OdeSys):
+class OdeSplitSys(OdeSys):
     """
     Define a split ODE system.
       dU/dt = F(t, U) = L(t, U) @ U + R(t, U),

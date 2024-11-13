@@ -20,7 +20,7 @@ def matexp_linop(a_lo: LinOp, dt: float, v0: jax.Array, max_krylov_dim: int, iom
     return phi_linop(a_lo, dt, v0, k=0, max_krylov_dim=max_krylov_dim, iom=iom)
 
 
-def phi_linop(a_lo: LinOp, dt: float, v0: jax.Array, k: int, max_krylov_dim: int, iom: int=2):
+def phi_linop(a_lo: LinOp, dt: float, v0: jax.Array, k: int, max_krylov_dim: int, iom: int=2) -> jax.Array:
     """
     Computes phi_k(A*dt)*v where A is a sparse linop
     """
@@ -35,7 +35,7 @@ def phi_linop(a_lo: LinOp, dt: float, v0: jax.Array, k: int, max_krylov_dim: int
     return beta * (q @ phi_k_e1)
 
 
-def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim: int, iom: int=2, n_steps: int=1):
+def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim: int, iom: int=2, n_steps: int=1) -> jax.Array:
     r"""
     Method based roughly on simplified KIOPS with fixes stepsize
     and not Krylov adaptivity.  TODO: add adaptivity routines.
@@ -54,7 +54,7 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
 
         \tilde A = [[A, B],[0, K]]
 
-    where A=a_lo is NxN,
+    where A = a_lo is NxN,
     B = vb[:0:-1] is Nxp,
     K = [[0, I_{p-1}],[0, 0]] is pxp,
     :math:` \tilde A ` is N+p x N+p
@@ -66,7 +66,6 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
 
     # build B
     b = jnp.vstack(vb[:0:-1]).T  # [:0:-1] reverse view from -1 down to 1
-    print(b)
 
     # build \tilde A
     k = np.zeros((p,p))

@@ -3,7 +3,7 @@ Exponential time integration methods
 """
 import jax
 import jax.numpy as jnp
-from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSysSplit, StepResult
+from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 
 ##TODO:
@@ -125,7 +125,7 @@ class ExpRBIntegrator(IntegrateSys):
 
 
 class ExpSplitIntegrator(IntegrateSys):
-    def __init__(self, sys: OdeSysSplit, t0: float, y0: jax.Array, method="exp3", *args, **kwargs):
+    def __init__(self, sys: OdeSplitSys, t0: float, y0: jax.Array, method="exp3", *args, **kwargs):
         valid_methods = {"exp1": 1, "exp2": 2, "exp3": 3}
         self.method = method
         assert self.method in list(valid_methods.keys())
@@ -232,17 +232,12 @@ class ExpSplitIntegrator(IntegrateSys):
 
 
     def step(self, dt: float) -> StepResult:
-        if self.method == "exprb2":
-            return self._step_exprb2(dt)
-        elif self.method == "exprb3":
-            return self._step_exprb3(dt)
-        elif self.method == "epi2":
-            return self._step_epi2(dt)
-        elif self.method == "epi3":
-            if len(self.y_hist) >= 2:
-                return self._step_epi3(dt)
-            else:
-                return self._step_epi2(dt)
+        if self.method == "exp1":
+            return self._step_exp1(dt)
+        elif self.method == "exp2":
+            return self._step_exp2(dt)
+        elif self.method == "exp3":
+            return self._step_exp3(dt)
         else:
             raise NotImplementedError
 
