@@ -3,11 +3,9 @@ Defines an interface for coupled systems of ODEs.
 This interface is compatible with all time integration
 methods in this ormatex_py package.
 
-TODO: Needs updates for jax compatibility.
 jax allows user defined types as PyTrees:
 See: https://jax.readthedocs.io/en/latest/pytrees.html
-
-NOTE: this equinox package may make jax compatibility
+NOTE: we use equinox to make jax compatibility
 simpler by removing boilerplate to register objects as pytrees.
 from discussion here:  https://github.com/jax-ml/jax/discussions/10598
 """
@@ -180,7 +178,6 @@ class JacLinOp(LinOp):
         return jax.vmap(self.fjac_u, in_axes=(1), out_axes=1)(jnp.eye(self.u.shape[0]))
 
 
-## TODO: this class is only needed for testing going forward?
 class FdJacLinOp(LinOp):
     t: float
     u: jax.Array
@@ -212,23 +209,6 @@ class FdJacLinOp(LinOp):
         LinOp shape
         """
         return (self.u.size, self.u.size)
-
-    def set_op_u(self, t: float, u: jax.Array):
-        """
-        Set state at which to linearize the system
-        TODO: not used, do we need it?
-        """
-        self.t = t
-        self.u = u
-        self.frhs_u = self.frhs(t, u, **self.frhs_kwargs)
-
-    def set_scale(self, scale: float, gamma: float):
-        """
-        For optional scaling and shifting of the Jv product
-        TODO: scale, gamma and this method are not used, do we need it?
-        """
-        self.scale = scale
-        self.gamma = gamma
 
     @jax.jit
     def _matvec(self, v: jax.Array) -> jax.Array:

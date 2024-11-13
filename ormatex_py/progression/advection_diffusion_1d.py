@@ -20,7 +20,7 @@ from ormatex_py.ode_sys import LinOp, MatrixLinOp, DiagLinOp
 jax.config.update("jax_enable_x64", True)
 
 from ormatex_py.ode_sys import OdeSys
-from ormatex_py.ode_epirk import EpirkIntegrator
+from ormatex_py.ode_exp import ExpRBIntegrator
 
 def src_f(x, **kwargs):
     """
@@ -245,12 +245,12 @@ def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
     return res.ts, res.ys
 
 
-def integrate_ormatex(ode_sys, y0, dt, nsteps, method="epirk3", max_krylov_dim=20, iom=2):
+def integrate_ormatex(ode_sys, y0, dt, nsteps, method="exprb2", max_krylov_dim=20, iom=2):
     """
     Uses ormatex exponential integrators to step adv diff system forward
     """
     # init the time integrator
-    sys_int = EpirkIntegrator(
+    sys_int = ExpIntegrator(
             ode_sys, t, y0, method=method,
             max_krylov_dim=max_krylov_dim, iom=iom
             )
@@ -336,7 +336,7 @@ if __name__ == "__main__":
     dt = .1
     nsteps = 10
     if args.mode == 0:
-        method = "epirk3"
+        method = "epi3"
         t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method, max_krylov_dim=200)
     else:
         method = "implicit_esdirk3"

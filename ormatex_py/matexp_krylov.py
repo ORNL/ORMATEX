@@ -55,7 +55,7 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
         \tilde A = [[A, B],[0, K]]
 
     where A=a_lo is NxN,
-    B = vb[::-1] is Nxp,
+    B = vb[:0:-1] is Nxp,
     K = [[0, I_{p-1}],[0, 0]] is pxp,
     :math:` \tilde A ` is N+p x N+p
     """
@@ -65,7 +65,8 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
     n = vb[0].shape[0]
 
     # build B
-    b = jnp.vstack(vb[::-1][:-1]).T  # [::-1] reverse view
+    b = jnp.vstack(vb[:0:-1]).T  # [:0:-1] reverse view from -1 down to 1
+    print(b)
 
     # build \tilde A
     k = np.zeros((p,p))
