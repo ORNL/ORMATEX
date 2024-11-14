@@ -16,8 +16,8 @@ Exponential integrators:
 - [x] EPIRK2  (exponential propagation iterative Runga-Kutta)
 - [x] EPIRK3
 - [ ] EPIRK4
-- [ ] EXPROS4  (exponential rosenbrock order 4)
-- [ ] EXPROS2
+- [x] EXPRB2
+- [ ] EXPRB4  (exponential rosenbrock order 4)
 
 Classic integrators:
 
@@ -33,20 +33,26 @@ Classic integrators:
 
 Exponential integrators:
 
-- [x] EPIRK2
-- [x] EPIRK3
+Jacobian based:
+
+- [x] EPI2 = EXPRB2 = EPIRK2
+- [x] EPI3
+- [ ] EPI4
 - [ ] EPIRK4
-- [ ] EXPROS4
-- [ ] EXPROS2
+- [x] EXPRB3
+- [ ] EXPRB4
+
+Splitting linear operator based:
+
+- [x] EXP1
+- [x] EXP2
+- [x] EXP3
+- [ ] EXP4
 
 Classic integrators:
 
-- [ ] RK1,RK2,RK3,RK4
-- [ ] Backward Euler
-- [ ] BDF2
-- [ ] Crank-Nicolson
-- [ ] DIRK
-- [ ] SDIRK
+- [x] all explicit and implicit integrators supported by diffrax
+      (through interface with diffrax)
 
 
 # Python Setup
@@ -59,8 +65,10 @@ Classic integrators:
 - pytest
 - python3.8+
 - equinox
+
 - matplotlib
 - scikit-fem
+- diffrax
 
 ### Install
 
