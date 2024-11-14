@@ -7,7 +7,7 @@ from jax import numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
 from ormatex_py.ode_sys import OdeSys, MatrixLinOp
-from ormatex_py.ode_epirk import EpirkIntegrator
+from ormatex_py.ode_exp import ExpRBIntegrator
 
 
 decay_lib_0 = {
@@ -27,8 +27,8 @@ decay_lib_1 = {
     'c_0':  ('none', 3.0),
     'c_1':  ('none', 0.3),
     'c_2':  ('none', 0.03),
-    'te_135': ('i_135', jnp.log(2)/19.0),
-    'i_135':  ('xe_135', jnp.log(2)/(6.57*3600) ),
+    'te_135': ('i_135', jnp.log(2) / 19.0),
+    'i_135':  ('xe_135', jnp.log(2) / (6.57*3600) ),
     'xe_135': ('cs_135', jnp.log(2) / (9.14*3600) ),
     'cs_135': ('none', jnp.log(2) / (1.33e6*365*24*3600) ),
 }
@@ -50,12 +50,33 @@ def gen_bateman_matrix(keymap: list, bateman_lib: dict) -> jax.Array:
         bat_mat[i,i] -= decay_const
     return jnp.asarray(bat_mat)
 
+def gen_transmute_matrix(keymap: list, trans_lib: dict, phi: float=1.0) -> jax.Array:
+    r"""
+    Represents transmutation reactions of the form:
+
+    .. math::
+
+        T_{i,j} = \Sigma_{i,j}
+
+    .. math::
+
+        u_t = \phi T u
+
+    Where $`\phi`$ is the neutron scalar flux and $`\Sigma_{i,j}`$ is the
+    macroscopic cross section of reaction that transmutes species i to j.
+    This yeilds a matrix of similar form to the Bateman decay matrix.
+
+    This is purely a convinience function and to denote that the
+    transmuation lib is not equal to the bateman lib since
+    the transmutation lib contains $`\Sigma_{i,j}`$ values.
+    """
+    return -phi * gen_bateman_matrix(keymap, trans_lib)
+
 
 class TestBatemanSysJac(OdeSys):
     """
     Test fallback to finite diff based Jacobian LinOp
     """
-    keymap: list
     bat_mat: jax.Array
 
     def __init__(self, *args, **kwargs):
@@ -63,7 +84,6 @@ class TestBatemanSysJac(OdeSys):
         bmat = gen_bateman_matrix(keymap, decay_lib_test)
         print("Bateman test system to solve:")
         print(bmat)
-        self.keymap = keymap
         self.bat_mat = bmat
         super().__init__()
 
@@ -71,6 +91,7 @@ class TestBatemanSysJac(OdeSys):
         res = self.bat_mat @ u
         return res
 
+    # define the Jacobian LinOp (comment out to use autograd)
     def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         return MatrixLinOp(self.bat_mat)
 
@@ -93,7 +114,7 @@ if __name__ == "__main__":
     test_ode_sys = TestBatemanSysJac()
     t = 0.0
     y0 = jnp.array([0.001, 0.1, 1.0])
-    sys_int = EpirkIntegrator(test_ode_sys, t, y0, method="epirk3", max_krylov_dim=10, iom=2)
+    sys_int = ExpRBIntegrator(test_ode_sys, t, y0, method="epi3", max_krylov_dim=10, iom=2)
 
     t_res = []
     y_res = []

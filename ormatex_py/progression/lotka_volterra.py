@@ -51,7 +51,7 @@ class LotkaVolterra(OdeSplitSys):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("-method", type=str, default="exprb2")
+    parser.add_argument("-method", type=str, default="epi2")
     args = parser.parse_args()
     method = args.method
 
@@ -119,6 +119,7 @@ if __name__ == "__main__":
         ax2 = ax1.twinx()
         ax2.plot(t_res, diff, c='k', ls='--')
         ax2.set_ylabel("prey diff")
+        plt.tight_layout()
         plt.savefig("lotka_volterra_%s_dt_%s.png" % (str(method), str(dt)))
         plt.close()
 
@@ -147,5 +148,6 @@ if __name__ == "__main__":
     plt.ylabel(r"|diff|")
     plt.grid(ls='--')
     plt.title("method: %s" % str(method))
+    plt.tight_layout()
     plt.savefig("lotka_volterra_%s_conv.png" % (str(method)))
     plt.close()

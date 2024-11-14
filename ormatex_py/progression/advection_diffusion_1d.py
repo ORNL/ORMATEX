@@ -245,15 +245,13 @@ def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
     return res.ts, res.ys
 
 
-def integrate_ormatex(ode_sys, y0, dt, nsteps, method="exprb2", max_krylov_dim=20, iom=2):
+def integrate_ormatex(ode_sys, y0, dt, nsteps, method="exprb2", **kwargs):
     """
     Uses ormatex exponential integrators to step adv diff system forward
     """
+    t0 = 0.0
     # init the time integrator
-    sys_int = ExpIntegrator(
-            ode_sys, t, y0, method=method,
-            max_krylov_dim=max_krylov_dim, iom=iom
-            )
+    sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, **kwargs)
     t_res, y_res = [0,], [y0,]
     for i in range(nsteps):
         res = sys_int.step(dt)
@@ -276,7 +274,7 @@ if __name__ == "__main__":
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
-    parser.add_argument("-mode", help="0: use ormatex, 1: use diffrax", type=int, default=0)
+    parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     args = parser.parse_args()
 
@@ -328,19 +326,20 @@ if __name__ == "__main__":
         g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
         y0_profile = g_prof(xs)
         y0 = jnp.asarray(y0_profile)
-        g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))/(2*ww))**2.0)
+        g_prof_exact = lambda t, x: np.exp(-( ( (x - (wc+t*vel)%1 ) ) /(2*ww))**2.0)
 
     tic = time.perf_counter()
 
     # integrate the system
     dt = .1
     nsteps = 10
-    if args.mode == 0:
-        method = "epi3"
-        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method, max_krylov_dim=200)
-    else:
-        method = "implicit_esdirk3"
+    method = args.method
+    diffrax_methods = ["euler", "heun", "midpoint", "bosh3", "dopri5", "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
+    if method in diffrax_methods:
         t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
+    else:
+        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method,
+                                         max_krylov_dim=100)
 
     toc = time.perf_counter()
 
