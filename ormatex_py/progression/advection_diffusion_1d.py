@@ -204,7 +204,7 @@ class AffineLinearSEM(OdeSys):
     def jac_lop(self):
         return JaxMatrixLinop(-self.A / self.Ml[:,None])
 
-    def _fjac(self, t: float, u: jax.Array, **kwargs):
+    def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         return self.jac_lop
 
     def _fm(self, t: float, u: jax.Array, **kwargs):
@@ -250,13 +250,14 @@ def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
     return res.ts, res.ys
 
 
-def integrate_ormatex(ode_sys, y0, dt, nsteps, method="epirk3", max_krylov_dim=20, iom=2):
+def integrate_ormatex(ode_sys, y0, dt, nsteps, method="epirk3", max_krylov_dim=40, iom=2):
     """
     Uses ormatex exponential integrators to step adv diff system forward
     """
     # init the time integrator
+    t0 = 0.0
     sys_int = EpirkIntegrator(
-            ode_sys, t, y0, method=method,
+            ode_sys, t0, y0, method=method,
             max_krylov_dim=max_krylov_dim, iom=iom
             )
     t_res, y_res = [0,], [y0,]
@@ -281,7 +282,7 @@ if __name__ == "__main__":
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
-    parser.add_argument("-mode", help="0: use ormatex, 1: use diffrax", type=int, default=0)
+    parser.add_argument("-method", help="time step method", type=str, default="epirk3")
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     args = parser.parse_args()
 
@@ -333,17 +334,17 @@ if __name__ == "__main__":
         g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
         y0_profile = g_prof(xs)
         y0 = jnp.asarray(y0_profile)
-        g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))/(2*ww))**2.0)
+        g_prof_exact = lambda t, x: np.exp(-( ( (x - (wc+t*vel)%1 ) ) /(2*ww))**2.0)
 
     # integrate the system
     dt = .1
     nsteps = 10
-    if args.mode == 0:
-        method = "epirk3"
-        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method)
-    else:
-        method = "implicit_esdirk3"
+    method = args.method
+    diffrax_methods = ["euler", "heun", "midpoint", "bosh3", "dopri5", "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
+    if method in diffrax_methods:
         t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
+    else:
+        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method)
 
     # compute expected solution
     # y_exact_res = [g_prof_exact(0.0, sx),]
