@@ -3,8 +3,10 @@ Exponential time integration methods
 """
 import jax
 import jax.numpy as jnp
+
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
+from ormatex_py.matexp_phi import f_phi_k_ext
 
 ##TODO:
 # - RB methods are only second and third order for f(t,y) = f(y) non-autonomous systems
@@ -14,39 +16,42 @@ class ExpRBIntegrator(IntegrateSys):
 
     _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3}
 
-    def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", *args, **kwargs):
+    def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
         self.method = method
         if not self.method in self._valid_methods.keys():
-            raise AttributeError
+            raise AttributeError(f"{self.method} not in {self._valid_methods}")
         order = self._valid_methods[self.method]
-        super().__init__(sys, t0, y0, order, method, *args, **kwargs)
+        super().__init__(sys, t0, y0, order, method, **kwargs)
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
         self.iom = kwargs.get("iom", 2)
 
+    def reset_ic(self, t0: float, y0: jax.Array):
+        super().reset_ic(t0, y0)
+
     def _remf(self, tr: float, yr: jax.Array,
-              frhs_y0: jax.Array, sys_jac_lop_y0: LinOp):
+              frhs_yt: jax.Array, sys_jac_lop_yt: LinOp):
         """
-        Computes remainder R(yr) = frhs(yr) - frhs(y0) - J_y0*(yr-y0)
+        Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt)
         """
-        y0 = self.y_hist[0]
+        yt = self.y_hist[0]
         frhs_yr = self.sys.frhs(tr, yr)
-        jac_yd = sys_jac_lop_y0(yr - y0)
-        return frhs_yr - frhs_y0 - jac_yd
+        jac_yd = sys_jac_lop_yt(yr - yt)
+        return frhs_yr - frhs_yt - jac_yd
 
     def _step_exprb2(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
-        u_{t+1} = u_t + dt*\varphi_1(dt*J_t)F(t, u_t)
+        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)
 
-        origin:
+        doi:
         """
         t = self.t
-        y0 = self.y_hist[0]
-        sys_jac_lop = self.sys.fjac(t, y0)
-        fy0 = self.sys.frhs(t, y0)
-        fy0_dt = fy0 * dt
-        y_new = y0 + phi_linop(
-                sys_jac_lop, dt, fy0_dt, 1, self.max_krylov_dim, self.iom)
+        yt = self.y_hist[0]
+        sys_jac_lop = self.sys.fjac(t, yt)
+        fyt = self.sys.frhs(t, yt)
+        fyt_dt = fyt * dt
+        y_new = yt + phi_linop(
+                sys_jac_lop, dt, fyt_dt, 1, self.max_krylov_dim, self.iom)
         # no error est. avail
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
@@ -57,25 +62,27 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_epi3(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
-        u_{t+1} = u_t + dt*\varphi_1(dt*J_t)F(t, u_t) +
-            (2/3)*dt*\varphi_2(dt*J_t)R(t, u_t, u_{t-1})
+        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+            (2/3)*dt*\varphi_2(dt*J_t)R(t, y_t, y_{t-1})
+
+        doi:
         """
         t = self.t
-        y0 = self.y_hist[0] # y_t
+        yt = self.y_hist[0] # y_t
         yp = self.y_hist[1] # y_{t-1}
         tp = self.t_hist[1]
 
-        sys_jac_lop = self.sys.fjac(t, y0)
-        fy0 = self.sys.frhs(t, y0)
-        fy0_dt = fy0 * dt
-        rn_dt = self._remf(tp, yp, fy0, sys_jac_lop) * dt
+        sys_jac_lop = self.sys.fjac(t, yt)
+        fyt = self.sys.frhs(t, yt)
+        fyt_dt = fyt * dt
+        rn_dt = self._remf(tp, yp, fyt, sys_jac_lop) * dt
 
         # use kiops to save 1 call to arnoldi. almost 2x speedup
-        vb0 = jnp.zeros(y0.shape)
+        vb0 = jnp.zeros(yt.shape)
         y_update = kiops_fixedsteps(
-            sys_jac_lop, dt, [vb0, fy0_dt, (2./3.)*rn_dt],
+            sys_jac_lop, dt, [vb0, fyt_dt, (2./3.)*rn_dt],
             max_krylov_dim=self.max_krylov_dim, iom=self.iom)
-        y_new = y0 + y_update
+        y_new = yt + y_update
         y_err = -1.0
 
         return StepResult(t+dt, dt, y_new, y_err)
@@ -83,20 +90,22 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb3(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
-        u_{t+1} = u_t + dt*\varphi_1(dt*J_t)F(t, u_t) +
+        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
             2*dt*\varphi_3(dt*J_t)R_2
+
+        doi:
         """
         t = self.t
-        y0 = self.y_hist[0] # y_t
+        yt = self.y_hist[0] # y_t
 
-        sys_jac_lop = self.sys.fjac(t, y0)
-        fy0 = self.sys.frhs(t, y0)
+        sys_jac_lop = self.sys.fjac(t, yt)
+        fyt = self.sys.frhs(t, yt)
 
         # 2nd stage
         t_2 = t + dt
-        y_2 = y0 + dt*phi_linop(sys_jac_lop, dt, fy0, 1,
+        y_2 = yt + dt*phi_linop(sys_jac_lop, dt, fyt, 1,
                                 self.max_krylov_dim, self.iom)
-        r_2 = self._remf(t_2, y_2, fy0, sys_jac_lop)
+        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop)
 
         # compute final update
         y_new = y_2 + 2.*dt*phi_linop(sys_jac_lop, dt, r_2, 3,
@@ -131,40 +140,49 @@ class ExpRBIntegrator(IntegrateSys):
 
 class ExpSplitIntegrator(IntegrateSys):
 
-    _valid_methods = {"exp1": 1, "exp2": 2, "exp3": 3}
+    _valid_methods = {"exp1": 1, "exp2": 2, "exp3": 3,
+                      "exp1_dense": 1, "exp2_dense": 2, "exp3_dense": 3}
 
-    def __init__(self, sys: OdeSplitSys, t0: float, y0: jax.Array, method="exp3", *args, **kwargs):
+    def __init__(self, sys: OdeSplitSys, t0: float, y0: jax.Array, method="exp3", **kwargs):
         self.method = method
         if not self.method in self._valid_methods.keys():
             raise AttributeError
         order = self._valid_methods[self.method]
-        super().__init__(sys, t0, y0, order, method, *args, **kwargs)
+        super().__init__(sys, t0, y0, order, method, **kwargs)
+
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
         self.iom = kwargs.get("iom", 2)
 
+        #TODO: used to check if dense phiL matrices need updating
+        self._cached_dt = None
+
+    def reset_ic(self, t0: float, y0: jax.Array):
+        super().reset_ic(t0, y0)
+        self._cached_dt = None
+
     def _remf(self, tr: float, yr: jax.Array,
-              frhs_y0: jax.Array, sys_lop_y0: LinOp):
+              frhs_yt: jax.Array, sys_lop: LinOp):
         """
-        Computes remainder R(yr) = frhs(yr) - frhs(y0) - L_y0*(yr-y0)
+        Computes remainder R(yr) = frhs(yr) - frhs(yt) - L*(yr-y0)
         """
-        y0 = self.y_hist[0]
+        yt = self.y_hist[0]
         frhs_yr = self.sys.frhs(tr, yr)
-        L_yd = sys_lop_y0(yr - y0)
-        return frhs_yr - frhs_y0 - L_yd
+        L_yd = sys_lop(yr - yt)
+        return frhs_yr - frhs_yt - L_yd
 
     def _step_exp1(self, dt: float) -> StepResult:
         """
         Exponential Euler,
         computes the solution update by:
-        u_{t+1} = u_t + dt*\varphi_1(dt*L_t)F(t, u_t)
+        y_{t+1} = y_t + dt*\varphi_1(dt*L_t)F(t, u_t)
         """
         t = self.t
-        y0 = self.y_hist[0]
-        sys_lop = self.sys.fl(t, y0)
-        fy0 = self.sys.frhs(t, y0)
-        fy0_dt = fy0 * dt
-        y_new = y0 + phi_linop(
-                sys_lop, dt, fy0_dt, 1, self.max_krylov_dim, self.iom)
+        yt = self.y_hist[0]
+        sys_lop = self.sys.fl(t, yt)
+        fyt = self.sys.frhs(t, yt)
+        fyt_dt = fyt * dt
+        y_new = yt + phi_linop(
+                sys_lop, dt, fyt_dt, 1, self.max_krylov_dim, self.iom)
         # no error est. avail
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
@@ -172,23 +190,23 @@ class ExpSplitIntegrator(IntegrateSys):
     def _step_exp2(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
-        u_2 = u_t + c2*dt*\varphi_1(c2*dt*L_t)F(t, u_t)
-        u_{t+1} = u_t + dt*\varphi_1(dt*L_t)F(t, u_t)
+        y_2 = y_t + c2*dt*\varphi_1(c2*dt*L_t)F(t, y_t)
+        y_{t+1} = y_t + dt*\varphi_1(dt*L_t)F(t, y_t)
                       + dt/c2*\varphi_2(dt*L_t)R_2
         """
         t = self.t
-        y0 = self.y_hist[0] # y_t
+        yt = self.y_hist[0]
 
-        sys_lop = self.sys.fl(t, y0)
-        fy0 = self.sys.frhs(t, y0)
+        sys_lop = self.sys.fl(t, yt)
+        fyt = self.sys.frhs(t, yt)
 
         c2 = 1. #constant between 0 and 1
 
         # 2nd stage
         t_2 = t + c2*dt
-        y_2 = y0 + phi_linop(sys_lop, c2*dt, c2*dt*fy0, 1,
+        y_2 = yt + phi_linop(sys_lop, c2*dt, c2*dt*fyt, 1,
                              self.max_krylov_dim, self.iom)
-        r_2 = self._remf(t_2, y_2, fy0, sys_lop)
+        r_2 = self._remf(t_2, y_2, fyt, sys_lop)
 
         # compute final update
         ## TODO: only valid for c2=1., otherwise reuse Krylov, or use KIOPS
@@ -203,34 +221,34 @@ class ExpSplitIntegrator(IntegrateSys):
     def _step_exp3(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
-        u_2 = u_t + c2*dt*\varphi_1(c2*dt*L_t)F(t, u_t)
-        u_3 = u_t + (2/3)*dt*\varphi_1((2/3)*dt*L_t)F(t, u_t) + (4./9./c2)*dt*\varphi_2((2/3)*dt*L_t)R_2
-        u_{t+1} = u_t + dt*\varphi_1(dt*L_t)F(t, u_t) + 3/2*dt*\varphi_2(dt*L_t)R_3
+        y_2 = y_t + c2*dt*\varphi_1(c2*dt*L_t)F(t, y_t)
+        y_3 = y_t + (2/3)*dt*\varphi_1((2/3)*dt*L_t)F(t, y_t) + (4./9./c2)*dt*\varphi_2((2/3)*dt*L_t)R_2
+        y_{t+1} = y_t + dt*\varphi_1(dt*L_t)F(t, y_t) + 3/2*dt*\varphi_2(dt*L_t)R_3
         """
         t = self.t
-        y0 = self.y_hist[0] # y_t
+        yt = self.y_hist[0]
 
-        sys_lop = self.sys.fl(t, y0)
-        fy0 = self.sys.frhs(t, y0)
+        sys_lop = self.sys.fl(t, yt)
+        fyt = self.sys.frhs(t, yt)
 
         c2 = 2./3. #constant between 0 and 1
 
         # 2nd stage
         t_2 = t + c2*dt
-        y_2 = y0 + phi_linop(sys_lop, dt*c2, fy0*dt*c2, 1,
+        y_2 = yt + phi_linop(sys_lop, dt*c2, fyt*dt*c2, 1,
                              self.max_krylov_dim, self.iom)
-        r_2 = self._remf(t_2, y_2, fy0, sys_lop)
+        r_2 = self._remf(t_2, y_2, fyt, sys_lop)
 
         # 3rd stage
         ## TODO: only valid for c2=2/3, otherwise reuse Krylov, or use KIOPS
         t_3 = t + (2./3.)*dt
         y_3 = y_2 + phi_linop(sys_lop, dt*(2./3.), r_2 * dt*(4./9./c2), 2,
                               self.max_krylov_dim, self.iom)
-        r_3 = self._remf(t_3, y_3, fy0, sys_lop)
+        r_3 = self._remf(t_3, y_3, fyt, sys_lop)
 
         # compute final update
-        y_new = y0 \
-              + phi_linop(sys_lop, dt, fy0*dt, 1, self.max_krylov_dim, self.iom) \
+        y_new = yt \
+              + phi_linop(sys_lop, dt, fyt*dt, 1, self.max_krylov_dim, self.iom) \
               + phi_linop(sys_lop, dt, r_3*dt*(3./2.), 2, self.max_krylov_dim, self.iom)
 
         # TODO: embedded error estimate?
@@ -239,6 +257,107 @@ class ExpSplitIntegrator(IntegrateSys):
         return StepResult(t+dt, dt, y_new, y_err)
 
 
+    def _update_dense_phiLs(self, dt: float, cks: list[tuple[float,list[int]]]):
+        if not (self._cached_dt and self._cached_dt == dt):
+            # TODO: L is only evaluated the first step (t0, yt) or if dt changes
+            #   for some examples, want to update L once t or y changes substantially
+            self._cached_sys_lop = self.sys.fl(self.t, self.y_hist[0])
+            L = self._cached_sys_lop.dense()
+
+            self._cached_phiLs = dict()
+            for c, ks in cks:
+                phikLs = f_phi_k_ext(dt*c*L, max(ks), return_all=True)
+                for k in ks:
+                    self._cached_phiLs[(c,k)] = phikLs[k]
+            self._cached_dt = dt
+
+        return self._cached_phiLs
+
+    def _step_exp1_dense(self, dt: float) -> StepResult:
+        """
+        Exponential Euler,
+        computes the solution update by:
+        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t)
+        """
+        t = self.t
+        yt = self.y_hist[0]
+
+        cks = [(1.,[1])]
+        phiLs = self._update_dense_phiLs(dt, cks)
+
+        fyt = self.sys.frhs(t, yt)
+        y_new = yt + dt * phiLs[(1.,1)] @ fyt
+        # no error est. avail
+        y_err = -1.
+        return StepResult(t+dt, dt, y_new, y_err)
+
+    def _step_exp2_dense(self, dt: float) -> StepResult:
+        """
+        Computes the solution update by:
+        y_2 = y_t + c2*dt*\varphi_1(c2*dt*L)F(t, y_t)
+        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t)
+                      + dt/c2*\varphi_2(dt*L)R_2
+        """
+        t = self.t
+        yt = self.y_hist[0]
+
+        c2 = 2./3. #constant between 0 and 1
+        cks = [(c2, [1]),
+               (1., [1, 2])]
+        phiLs = self._update_dense_phiLs(dt, cks)
+
+        fyt = self.sys.frhs(t, yt)
+
+        # 2nd stage
+        t_2 = t + c2*dt
+        y_2 = yt + c2*dt*phiLs[(c2,1)] @ fyt
+        r_2 = self._remf(t_2, y_2, fyt, self._cached_sys_lop)
+
+        # compute final update
+        y_new = yt + dt * (phiLs[(1.,1)] @ fyt + (1/c2) * phiLs[(1.,2)] @ r_2)
+
+        # TODO: error estimate by comparing y_2 and y_new?
+        y_err = -1.0
+
+        return StepResult(t+dt, dt, y_new, y_err)
+
+    def _step_exp3_dense(self, dt: float) -> StepResult:
+        """
+        Computes the solution update by:
+        y_2 = y_t + c2*dt*\varphi_1(c2*dt*L)F(t, y_t)
+        y_3 = y_t + (2/3)*dt*\varphi_1((2/3)*dt*L)F(t, y_t) + (4./9./c2)*dt*\varphi_2((2/3)*dt*L)R_2
+        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t) + 3/2*dt*\varphi_2(dt*L)R_3
+        """
+        t = self.t
+        yt = self.y_hist[0]
+
+        c2 = 2./3. # constant between 0 and 1
+        c3 = 2./3. # == 2./3.
+        cks = [(c2, [1]),
+               (c3, [1, 2]),
+               (1., [1, 2])]
+        phiLs = self._update_dense_phiLs(dt, cks)
+
+        fyt = self.sys.frhs(t, yt)
+
+        # 2nd stage
+        t_2 = t + c2*dt
+        y_2 = yt + c2*dt * phiLs[(c2,1)] @ fyt
+        r_2 = self._remf(t_2, y_2, fyt, self._cached_sys_lop)
+
+        # 3rd stage
+        t_3 = t + c3*dt
+        y_3 = yt + c3*dt * (phiLs[(c3,1)] @ fyt + (2./3./c2) * phiLs[(c3,2)] @ r_2)
+        r_3 = self._remf(t_3, y_3, fyt, self._cached_sys_lop)
+
+        # compute final update
+        y_new = yt + dt * (phiLs[(1.,1)] @ fyt + (3./2.) * phiLs[(1.,2)] @ r_3)
+
+        # TODO: embedded error estimate?
+        y_err = -1.0
+
+        return StepResult(t+dt, dt, y_new, y_err)
+
     def step(self, dt: float) -> StepResult:
         if self.method == "exp1":
             return self._step_exp1(dt)
@@ -246,6 +365,12 @@ class ExpSplitIntegrator(IntegrateSys):
             return self._step_exp2(dt)
         elif self.method == "exp3":
             return self._step_exp3(dt)
+        elif self.method == "exp1_dense":
+            return self._step_exp1_dense(dt)
+        elif self.method == "exp2_dense":
+            return self._step_exp2_dense(dt)
+        elif self.method == "exp3_dense":
+            return self._step_exp3_dense(dt)
         else:
             raise NotImplementedError
 

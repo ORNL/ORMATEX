@@ -71,7 +71,8 @@ def f_phi_k_ext(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
     phi_ks = jax.scipy.linalg.expm(z_ext)
 
     if return_all:
-        phi_k = phi_ks[:N,:]
+        phi_k = phi_ks[:N,:].reshape((N,k+1,N))
+        phi_k = phi_k.swapaxes(0, 1) # swap the k index to first axes
     else:
         phi_k = phi_ks[:N,-N:]
     return phi_k

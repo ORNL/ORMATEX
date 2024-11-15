@@ -91,7 +91,7 @@ if __name__ == "__main__":
         t0 = 0.0
         try:
             sys_int = ExpRBIntegrator(lv_sys, t0, y0, method=method, max_krylov_dim=10, iom=5)
-        except AssertionError:
+        except AttributeError:
             sys_int = ExpSplitIntegrator(lv_sys, t0, y0, method=method, max_krylov_dim=10, iom=5)
 
         nsteps = int(t_end/dt)

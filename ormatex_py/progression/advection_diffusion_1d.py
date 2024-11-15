@@ -17,7 +17,7 @@ from ormatex_py.ode_sys import LinOp, MatrixLinOp, DiagLinOp
 
 jax.config.update("jax_enable_x64", True)
 
-from ormatex_py.ode_sys import OdeSys
+from ormatex_py.ode_sys import OdeSys, OdeSplitSys
 from ormatex_py.ode_exp import ExpRBIntegrator
 
 from ormatex_py.progression import integrate_wrapper
@@ -182,9 +182,13 @@ class AdDiffSEM:
         return AffineLinearSEM(self, **kwargs)
 
 
-class AffineLinearSEM(OdeSys):
+class AffineLinearSEM(OdeSplitSys):
     """
     Define ODE System associated to affine linear sparse Jacobian problem
+
+    The system is affine linear and the Jacobian is constant in t an u.
+    Implement a linear operator L equal to Jacobian to test non-Rosenbrock schemes.
+    All schemes should be exact (up to Krylov error) since the residual term vanishes.
     """
     A: jsp.JAXSparse
     Ml: jax.Array
@@ -199,7 +203,7 @@ class AffineLinearSEM(OdeSys):
         return (self.b - self.A @ u) / self.Ml
 
     @jax.jit
-    def _fjac(self, t: float, u: jax.Array, **kwargs):
+    def _fl(self, t: float, u: jax.Array, **kwargs):
         return MatrixLinOp(-self.A / self.Ml[:,None])
 
     def _fm(self, t: float, u: jax.Array, **kwargs):
