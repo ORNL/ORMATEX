@@ -42,7 +42,7 @@ from skfem.helpers import dot, grad
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
 
-from ormatex_py.ode_sys import OdeSys
+from ormatex_py.ode_sys import OdeSys, FdJacLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator
 
 from ormatex_py.progression.advection_diffusion_1d import mass
@@ -249,10 +249,10 @@ class AffineLinearSEM(OdeSys):
     bat_mat: jax.Array
     A: jsp.JAXSparse
     Ml: jax.Array
-    #sys_assembler: AdDiffSEM
+    sys_assembler: AdDiffSEM
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
-        #self.sys_assembler = sys_assembler
+        self.sys_assembler = sys_assembler
         self.A, self.Ml = sys_assembler.assemble(**kwargs)
         self.bat_mat = gen_bateman_matrix(['u_0', 'u_1'], decay_lib)
         super().__init__()
@@ -261,12 +261,18 @@ class AffineLinearSEM(OdeSys):
         n = self.bat_mat.shape[0] #self.sys_assembler.n_species
         un = stack_u(u, n)
         # nonlin rhs
-        #b = self.sys_assembler.assemble_rhs(u=un)
+        b = self.sys_assembler.assemble_rhs(u=un)
         # add bateman
         lub = un @ self.bat_mat.transpose()
-        udot = ( - self.A @ un) / self.Ml.reshape((-1, 1)) + lub
+        udot = (b - self.A @ un) / self.Ml.reshape((-1, 1)) + lub
         # integrators currently expect a flat U
         return flatten_u(udot)
+
+    def _fjac(self, t: float, u: jax.Array, **kwargs):
+        # finite difference Jacobian
+        # automatic Jacobian is not supported due to the non-autodifferentiable assemble call
+        # remove @jit from some methods in ODESys to make this work
+        return FdJacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
 
 
 if __name__ == "__main__":
@@ -280,7 +286,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
-    parser.add_argument("-method", help="time step method", type=str, default="epirk3")
+    parser.add_argument("-method", help="time step method", type=str, default="epi3")
     args = parser.parse_args()
 
     # create the mesh

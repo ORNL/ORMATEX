@@ -175,8 +175,8 @@ class AdDiffSEM:
 
         return jA, jMl, jb
 
-    def xs(self):
-        return self.basis.doflocs[0]
+    def collocation_points(self):
+        return jnp.asarray(self.basis.doflocs[0])
 
     def ode_sys(self, **kwargs):
         return AffineLinearSEM(self, **kwargs)
@@ -309,7 +309,7 @@ if __name__ == "__main__":
     t = 0.0
 
     # mesh mask for initial conditions
-    xs = np.asarray(sem.basis.doflocs.flatten())
+    xs = np.asarray(sem.collocation_points())
 
     if args.ic == "square":
         # square wave
