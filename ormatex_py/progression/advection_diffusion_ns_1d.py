@@ -39,14 +39,13 @@ import equinox as eqx
 
 import skfem as fem
 from skfem.helpers import dot, grad
-from ormatex_py.progression.bateman_sys import gen_bateman_matrix
-from ormatex_py.progression import element_line_pp_nodal as el_nodal
 
 from ormatex_py.ode_sys import OdeSys, FdJacLinOp
-from ormatex_py.ode_exp import ExpRBIntegrator
 
+from ormatex_py.progression.bateman_sys import gen_bateman_matrix
+from ormatex_py.progression import element_line_pp_nodal as el_nodal
 from ormatex_py.progression.advection_diffusion_1d import mass
-from ormatex_py.progression.advection_diffusion_1d import integrate_diffrax, integrate_ormatex
+from ormatex_py.progression import integrate_wrapper
 
 # Specify velocity
 vel = 0.5
@@ -245,6 +244,9 @@ class AdDiffSEM:
 class AffineLinearSEM(OdeSys):
     """
     Define ODE System associated to affine linear sparse Jacobian problem
+
+    due to the non-autodifferentiable, non-jitable assemble call
+    use jax_disable_jit to use this class
     """
     bat_mat: jax.Array
     A: jsp.JAXSparse
@@ -270,8 +272,7 @@ class AffineLinearSEM(OdeSys):
 
     def _fjac(self, t: float, u: jax.Array, **kwargs):
         # finite difference Jacobian
-        # automatic Jacobian is not supported due to the non-autodifferentiable assemble call
-        # remove @jit from some methods in ODESys to make this work
+        # automatic Jacobian is not supported
         return FdJacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
 
 
@@ -279,6 +280,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
     jax.config.update('jax_platform_name', 'cpu')
+    jax.config.update("jax_disable_jit", True)
     print(f"Running on {jax.devices()}.")
 
     parser = argparse.ArgumentParser()
@@ -326,14 +328,11 @@ if __name__ == "__main__":
     y0 = flatten_u(jnp.asarray(y0_profile).transpose())
 
     # integrate the system
+    t0 = 0.
     dt = .1
     nsteps = 20
     method = args.method
-    diffrax_methods = ["euler", "heun", "midpoint", "bosh3", "dopri5", "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
-    if method in diffrax_methods:
-        t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
-    else:
-        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method)
+    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=100)
 
     si = xs.argsort()
     sx = xs[si]

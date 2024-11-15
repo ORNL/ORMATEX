@@ -7,12 +7,10 @@ import time
 import jax
 import jax.numpy as jnp
 from jax.experimental import sparse as jsp
-import equinox as eqx
 from collections.abc import Callable
 
 import skfem as fem
 from skfem.helpers import dot, grad
-import warnings
 
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
 from ormatex_py.ode_sys import LinOp, MatrixLinOp, DiagLinOp
@@ -21,6 +19,8 @@ jax.config.update("jax_enable_x64", True)
 
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_exp import ExpRBIntegrator
+
+from ormatex_py.progression import integrate_wrapper
 
 def src_f(x, **kwargs):
     """
@@ -206,64 +206,6 @@ class AffineLinearSEM(OdeSys):
         return DiagLinOp(self.Ml)
 
 
-def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
-    """
-    Uses diffrax integrators to step adv diff system forward
-    """
-    import diffrax
-    import optimistix
-    # thin wrapper around ode_sys for diffrax compat
-    diffrax_ode_sys = diffrax.ODETerm(ode_sys)
-    method_dict = {
-            # explicit
-            "euler": diffrax.Euler,
-            "heun": diffrax.Heun,
-            "midpoint": diffrax.Midpoint,
-            "bosh3": diffrax.Bosh3,
-            "dopri5": diffrax.Dopri5,
-            # implicit
-            "implicit_euler": diffrax.ImplicitEuler,
-            "implicit_esdirk3": diffrax.Kvaerno3,
-            "implicit_esdirk4": diffrax.Kvaerno4,
-           }
-    try:
-        root_finder=diffrax.VeryChord(rtol=1e-8, atol=1e-8, norm=optimistix.max_norm)
-        solver = method_dict[method](root_finder=root_finder)
-    except:
-        solver = method_dict[method]()
-    t0 = 0.0
-    tf = dt * nsteps
-    step_ctrl = diffrax.ConstantStepSize()
-    res = diffrax.diffeqsolve(
-            diffrax_ode_sys,
-            solver,
-            t0, tf, dt, y0,
-            saveat=diffrax.SaveAt(steps=True),
-            stepsize_controller=step_ctrl,
-            max_steps=nsteps,
-            )
-    return res.ts, res.ys
-
-
-def integrate_ormatex(ode_sys, y0, dt, nsteps, method="exprb2", **kwargs):
-    """
-    Uses ormatex exponential integrators to step adv diff system forward
-    """
-    t0 = 0.0
-    # init the time integrator
-    sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, **kwargs)
-    t_res, y_res = [0,], [y0,]
-    for i in range(nsteps):
-        res = sys_int.step(dt)
-        # log the results for plotting
-        t_res.append(res.t)
-        y_res.append(res.y)
-        # this would be where you could reject a step, if the
-        # estimated err was too large
-        sys_int.accept_step(res)
-    return t_res, y_res
-
-
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
@@ -328,23 +270,12 @@ if __name__ == "__main__":
         y0 = jnp.asarray(y0_profile)
         g_prof_exact = lambda t, x: np.exp(-( ( (x - (wc+t*vel)%1 ) ) /(2*ww))**2.0)
 
-    tic = time.perf_counter()
-
     # integrate the system
+    t0 = 0.
     dt = .1
     nsteps = 10
     method = args.method
-    diffrax_methods = ["euler", "heun", "midpoint", "bosh3", "dopri5", "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
-    if method in diffrax_methods:
-        t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
-    else:
-        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method,
-                                         max_krylov_dim=100)
-
-    toc = time.perf_counter()
-
-    print(f"Integrated system in {toc - tic:0.4f} seconds")
-
+    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=100)
 
     # compute expected solution
     # y_exact_res = [g_prof_exact(0.0, sx),]

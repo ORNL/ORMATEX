@@ -11,11 +11,14 @@ from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 #   time dependent problems require a correction involving f'(t,y)
 #   see: https://doi.org/10.1137/080717717
 class ExpRBIntegrator(IntegrateSys):
+
+    _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3}
+
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", *args, **kwargs):
-        valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3}
         self.method = method
-        assert self.method in list(valid_methods.keys())
-        order = valid_methods[self.method]
+        if not self.method in self._valid_methods.keys():
+            raise AttributeError
+        order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, *args, **kwargs)
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
         self.iom = kwargs.get("iom", 2)
@@ -34,6 +37,8 @@ class ExpRBIntegrator(IntegrateSys):
         """
         Computes the solution update by:
         u_{t+1} = u_t + dt*\varphi_1(dt*J_t)F(t, u_t)
+
+        origin:
         """
         t = self.t
         y0 = self.y_hist[0]
@@ -125,11 +130,14 @@ class ExpRBIntegrator(IntegrateSys):
 
 
 class ExpSplitIntegrator(IntegrateSys):
+
+    _valid_methods = {"exp1": 1, "exp2": 2, "exp3": 3}
+
     def __init__(self, sys: OdeSplitSys, t0: float, y0: jax.Array, method="exp3", *args, **kwargs):
-        valid_methods = {"exp1": 1, "exp2": 2, "exp3": 3}
         self.method = method
-        assert self.method in list(valid_methods.keys())
-        order = valid_methods[self.method]
+        if not self.method in self._valid_methods.keys():
+            raise AttributeError
+        order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, *args, **kwargs)
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
         self.iom = kwargs.get("iom", 2)

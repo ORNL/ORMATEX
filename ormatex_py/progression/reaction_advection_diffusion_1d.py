@@ -3,7 +3,7 @@ Multiple species 1D reaction advection diffusion case.
 
 - Supports N numbers of coupled species.
 - Each species can have unique, space, time, and concentration
-dependant non-linear sources and sinks.
+  dependant non-linear sources and sinks.
 
 Similar to the single species case (advection_diffusion_1d.py);
 however, internally the species vector, `u` is now a 2D tensor,
@@ -38,18 +38,17 @@ import equinox as eqx
 
 import skfem as fem
 
-from ormatex_py.progression.bateman_sys import gen_bateman_matrix
-
-from ormatex_py.ode_sys import OdeSys, FdJacLinOp
-from ormatex_py.ode_exp import ExpRBIntegrator
+from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
 
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
-from ormatex_py.progression.advection_diffusion_1d import integrate_diffrax, integrate_ormatex
+from ormatex_py.progression.bateman_sys import gen_bateman_matrix
+from ormatex_py.progression import integrate_wrapper
 
 # decay lib
 decay_lib = {
-    'u_0':  ('u_1', 3.0e-1),
-    'u_1':  ('none', 0.3e-1),
+    # more stiff:'u_0':  ('u_1', 3e1),
+    'u_0':  ('u_1', 3.e-1),
+    'u_1':  ('none', .3e-1),
 }
 
 def stack_u(u: jax.Array, n: int):
@@ -59,9 +58,9 @@ def flatten_u(u: jax.Array):
     # use column major ordering
     return u.reshape((-1, ), order='F')
 
-class RAD_SEM(OdeSys):
+class RAD_SEM(OdeSplitSys):
     """
-    Define ODE System associated to affine linear sparse Jacobian problem
+    Define ODE System associated to RAD problem
     """
     bat_mat: jax.Array
     A: jsp.JAXSparse
@@ -81,7 +80,7 @@ class RAD_SEM(OdeSys):
         #n = un.shape[1]
         s = jnp.zeros(un.shape)
         # implement a nonlinear transfer from last to first species
-        transfer = 10. * un.at[:,-1].get()**5
+        transfer = 10. * un[:,-1]**5
         s = s.at[:,0].add(transfer)
         s = s.at[:,1].add(- transfer)
         #TODO implement more reasonable / interesting nonlinear source
@@ -95,9 +94,24 @@ class RAD_SEM(OdeSys):
         s = self._source(un)
         # add bateman
         lub = un @ self.bat_mat.transpose()
-        udot = lub + s - (self.A @ un) / self.Ml.reshape((-1, 1)) 
+        udot = lub + s - (self.A @ un) / self.Ml.reshape((-1, 1))
         # integrators currently expect a flat U
         return flatten_u(udot)
+
+    @jax.jit
+    def _fl(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        """
+        define a linear operator (for testing purposes)
+        # TODO: uses dense Kronecker product, should be a BlockDiagLinOp (not implemented yet)
+        """
+        n = self.bat_mat.shape[0]
+        Ndof = self.Ml.shape[0]
+        # only use Bateman terms for L
+        #L = jnp.kron(self.bat_mat, jnp.eye(Ndof))
+        # only use adv-diff terms for L
+        L = jnp.kron(jnp.eye(n), (- self.A / self.Ml.reshape((-1, 1))).todense())
+        #print(L)
+        return MatrixLinOp(L)
 
 
 if __name__ == "__main__":
@@ -152,14 +166,11 @@ if __name__ == "__main__":
     y0 = flatten_u(jnp.asarray(y0_profile).transpose())
 
     # integrate the system
+    t0 = 0
     dt = .1
     nsteps = 20
     method = args.method
-    diffrax_methods = ["euler", "heun", "midpoint", "bosh3", "dopri5", "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
-    if method in diffrax_methods:
-        t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
-    else:
-        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method)
+    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=100)
 
     si = xs.argsort()
     sx = xs[si]

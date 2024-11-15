@@ -191,7 +191,7 @@ class FdJacLinOp(LinOp):
     eps: float
 
     def __init__(self, t, u, frhs: Callable, frhs_kwargs: dict={},
-                 scale: float=1.0,  gamma: float=0.0, *args, **kwargs):
+                 scale: float=1.0, gamma: float=0.0, **kwargs):
         self.t = t
         self.u = u
         self.frhs = frhs
@@ -359,6 +359,10 @@ class IntegrateSys(metaclass=ABCMeta):
     """
     Defines interface to time integrators
     """
+
+    # list of valid methods
+    _valid_methods = {}
+
     # defines the rhs of the system of odes
     sys: OdeSys
     # current time

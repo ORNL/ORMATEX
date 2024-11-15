@@ -26,12 +26,14 @@ class LotkaVolterra(OdeSplitSys):
         self.delta = kwargs.get("delta", 1.0)
         self.gamma = kwargs.get("gamma", 1.0)
 
+    @jax.jit
     def _frhs(self, t, x, **kwargs):
         prey_t = self.alpha * x[0] - self.beta * x[0] * x[1]
         pred_t = self.delta * x[0] * x[1] - self.gamma * x[1]
         return jnp.array([prey_t, pred_t])
 
     # define the Jacobian LinOp (comment out to use autograd)
+    @jax.jit
     def _fjac(self, t, x, **kwargs):
         jac = jnp.array([
             [self.alpha - self.beta * x[1], - self.beta*x[0]],
@@ -40,6 +42,7 @@ class LotkaVolterra(OdeSplitSys):
         return MatrixLinOp(jac)
 
     # define a linear operator for testing
+    @jax.jit
     def _fl(self, t, x, **kwargs):
         lop = jnp.array([
             [self.alpha - self.beta*2, 0.],
@@ -51,7 +54,7 @@ class LotkaVolterra(OdeSplitSys):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("-method", type=str, default="epi2")
+    parser.add_argument("-method", type=str, default="epi3")
     args = parser.parse_args()
     method = args.method
 
@@ -85,11 +88,11 @@ if __name__ == "__main__":
     y_list = []
     for dt in dt_list:
         print("dt = %0.2e" % dt)
-        t = 0.0
+        t0 = 0.0
         try:
-            sys_int = ExpRBIntegrator(lv_sys, t, y0, method=method, max_krylov_dim=10, iom=5)
+            sys_int = ExpRBIntegrator(lv_sys, t0, y0, method=method, max_krylov_dim=10, iom=5)
         except AssertionError:
-            sys_int = ExpSplitIntegrator(lv_sys, t, y0, method=method, max_krylov_dim=10, iom=5)
+            sys_int = ExpSplitIntegrator(lv_sys, t0, y0, method=method, max_krylov_dim=10, iom=5)
 
         nsteps = int(t_end/dt)
         t_res, y_res = [], []
