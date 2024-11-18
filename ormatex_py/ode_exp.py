@@ -4,6 +4,8 @@ Exponential time integration methods
 import jax
 import jax.numpy as jnp
 
+from functools import partial
+
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k_ext
@@ -273,6 +275,15 @@ class ExpSplitIntegrator(IntegrateSys):
 
         return self._cached_phiLs
 
+    @jax.jit
+    def _step_exp1_jit(t, yt, dt, sys, phiLs):
+        print("jit-compiling exp1 kernel")
+        fyt = sys.frhs(t, yt)
+        y_new = yt + dt * phiLs[(1.,1)] @ fyt
+        # no error est. avail
+        y_err = -1.
+        return y_new, y_err
+
     def _step_exp1_dense(self, dt: float) -> StepResult:
         """
         Exponential Euler,
@@ -285,11 +296,25 @@ class ExpSplitIntegrator(IntegrateSys):
         cks = [(1.,[1])]
         phiLs = self._update_dense_phiLs(dt, cks)
 
-        fyt = self.sys.frhs(t, yt)
-        y_new = yt + dt * phiLs[(1.,1)] @ fyt
-        # no error est. avail
-        y_err = -1.
+        y_new, y_err = ExpSplitIntegrator._step_exp1_jit(t, yt, dt, self.sys, phiLs)
+
         return StepResult(t+dt, dt, y_new, y_err)
+
+    @partial(jax.jit, static_argnames=('c2', ))
+    def _step_exp2_jit(t, yt, dt, sys, sys_lop, phiLs, c2):
+        print("jit-compiling exp2 kernel")
+        fyt = sys.frhs(t, yt)
+        # 2nd stage
+        t_2 = t + c2*dt
+        y_2 = yt + c2*dt*phiLs[(c2,1)] @ fyt
+        r_2 = sys.frhs(t_2, y_2) - fyt - sys_lop(y_2 - yt)
+
+        # compute final update
+        y_new = yt + dt * (phiLs[(1.,1)] @ fyt + (1/c2) * phiLs[(1.,2)] @ r_2)
+
+        # TODO: error estimate by comparing y_2 and y_new?
+        y_err = -1.0
+        return y_new, y_err
 
     def _step_exp2_dense(self, dt: float) -> StepResult:
         """
@@ -306,20 +331,33 @@ class ExpSplitIntegrator(IntegrateSys):
                (1., [1, 2])]
         phiLs = self._update_dense_phiLs(dt, cks)
 
-        fyt = self.sys.frhs(t, yt)
+        y_new, y_err = ExpSplitIntegrator._step_exp2_jit(t, yt, dt, self.sys, self._cached_sys_lop, phiLs, c2)
+
+        return StepResult(t+dt, dt, y_new, y_err)
+
+    @partial(jax.jit, static_argnames=('c2', 'c3'))
+    def _step_exp3_jit(t, yt, dt, sys, sys_lop, phiLs, c2, c3):
+        print("jit-compiling exp3 kernel")
+
+        fyt = sys.frhs(t, yt)
 
         # 2nd stage
         t_2 = t + c2*dt
-        y_2 = yt + c2*dt*phiLs[(c2,1)] @ fyt
-        r_2 = self._remf(t_2, y_2, fyt, self._cached_sys_lop)
+        y_2 = yt + c2*dt * phiLs[(c2,1)] @ fyt
+        r_2 = sys.frhs(t_2, y_2) - fyt - sys_lop(y_2 - yt)
+
+        # 3rd stage
+        t_3 = t + c3*dt
+        y_3 = yt + c3*dt * (phiLs[(c3,1)] @ fyt + (2./3./c2) * phiLs[(c3,2)] @ r_2)
+        r_3 = sys.frhs(t_3, y_3) - fyt - sys_lop(y_3 - yt)
 
         # compute final update
-        y_new = yt + dt * (phiLs[(1.,1)] @ fyt + (1/c2) * phiLs[(1.,2)] @ r_2)
+        y_new = yt + dt * (phiLs[(1.,1)] @ fyt + (3./2.) * phiLs[(1.,2)] @ r_3)
 
-        # TODO: error estimate by comparing y_2 and y_new?
+        # TODO: error estimate?
         y_err = -1.0
 
-        return StepResult(t+dt, dt, y_new, y_err)
+        return y_new, y_err
 
     def _step_exp3_dense(self, dt: float) -> StepResult:
         """
@@ -338,23 +376,7 @@ class ExpSplitIntegrator(IntegrateSys):
                (1., [1, 2])]
         phiLs = self._update_dense_phiLs(dt, cks)
 
-        fyt = self.sys.frhs(t, yt)
-
-        # 2nd stage
-        t_2 = t + c2*dt
-        y_2 = yt + c2*dt * phiLs[(c2,1)] @ fyt
-        r_2 = self._remf(t_2, y_2, fyt, self._cached_sys_lop)
-
-        # 3rd stage
-        t_3 = t + c3*dt
-        y_3 = yt + c3*dt * (phiLs[(c3,1)] @ fyt + (2./3./c2) * phiLs[(c3,2)] @ r_2)
-        r_3 = self._remf(t_3, y_3, fyt, self._cached_sys_lop)
-
-        # compute final update
-        y_new = yt + dt * (phiLs[(1.,1)] @ fyt + (3./2.) * phiLs[(1.,2)] @ r_3)
-
-        # TODO: embedded error estimate?
-        y_err = -1.0
+        y_new, y_err = ExpSplitIntegrator._step_exp3_jit(t, yt, dt, self.sys, self._cached_sys_lop, phiLs, c2, c3)
 
         return StepResult(t+dt, dt, y_new, y_err)
 

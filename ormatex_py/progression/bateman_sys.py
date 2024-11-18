@@ -27,10 +27,10 @@ decay_lib_1 = {
     'c_0':  ('none', 3.0),
     'c_1':  ('none', 0.3),
     'c_2':  ('none', 0.03),
-    'te_135': ('i_135', jnp.log(2) / 19.0),
-    'i_135':  ('xe_135', jnp.log(2) / (6.57*3600) ),
-    'xe_135': ('cs_135', jnp.log(2) / (9.14*3600) ),
-    'cs_135': ('none', jnp.log(2) / (1.33e6*365*24*3600) ),
+    'te_135': ('i_135', np.log(2.) / 19.0),
+    'i_135':  ('xe_135', np.log(2.) / (6.57*3600) ),
+    'xe_135': ('cs_135', np.log(2.) / (9.14*3600) ),
+    'cs_135': ('none', np.log(2.) / (1.33e6*365*24*3600) ),
 }
 
 def gen_bateman_matrix(keymap: list, bateman_lib: dict) -> jax.Array:
