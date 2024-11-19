@@ -376,7 +376,7 @@ class IntegrateSys(metaclass=ABCMeta):
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, order: int, method: str, *args, **kwargs):
         assert order > 0
         self.sys = sys
-        self.t = t0
+        self.t = float(t0)
         self.order = order
         self.method = method
         self.t_hist = deque(maxlen=order)
@@ -385,7 +385,7 @@ class IntegrateSys(metaclass=ABCMeta):
         self.y_hist.appendleft(y0)
 
     def reset_ic(self, t0: float, y0: jax.Array):
-        self.t = t0
+        self.t = float(t0)
         self.t_hist.clear()
         self.y_hist.clear()
         self.t_hist.appendleft(t0)
