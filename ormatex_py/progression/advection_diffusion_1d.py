@@ -7,7 +7,6 @@ import time
 import jax
 import jax.numpy as jnp
 from jax.experimental import sparse as jsp
-jax.config.update("jax_enable_x64", True)
 
 from collections.abc import Callable
 
@@ -213,6 +212,8 @@ class AffineLinearSEM(OdeSplitSys):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
+
+    jax.config.update("jax_enable_x64", True)
     print(f"Running on {jax.devices()}.")
 
     parser = argparse.ArgumentParser()

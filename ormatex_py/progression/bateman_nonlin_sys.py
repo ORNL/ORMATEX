@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 import jax
 import numpy as np
 from jax import numpy as jnp
-jax.config.update("jax_enable_x64", True)
 
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
@@ -131,6 +130,8 @@ class NonlinearBateman(OdeSys):
 
 
 if __name__ == "__main__":
+    jax.config.update("jax_enable_x64", True)
+    
     method = "epi3"
     bateman_sys = NonlinearBateman()
     t = 0.0

@@ -7,7 +7,6 @@ import jax
 import equinox as eqx
 import numpy as np
 from jax import numpy as jnp
-jax.config.update("jax_enable_x64", True)
 
 rgas = 8.3145  # gas constant J/mol/K
 

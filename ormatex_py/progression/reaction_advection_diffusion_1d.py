@@ -36,8 +36,6 @@ import jax.numpy as jnp
 from jax.experimental import sparse as jsp
 import equinox as eqx
 
-jax.config.update("jax_enable_x64", True)
-
 import skfem as fem
 
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
@@ -119,6 +117,8 @@ class RAD_SEM(OdeSplitSys):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
+
+    jax.config.update("jax_enable_x64", True)
     print(f"Running on {jax.devices()}.")
 
     parser = argparse.ArgumentParser()
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     y0 = flatten_u(jnp.asarray(y0_profile).transpose())
 
     # integrate the system
-    t0 = 0
+    t0 = 0.
     dt = .1
     nsteps = 20
     method = args.method

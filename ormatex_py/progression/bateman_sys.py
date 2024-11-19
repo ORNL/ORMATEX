@@ -4,7 +4,6 @@ Methods to define a Bateman system of equations
 import jax
 import numpy as np
 from jax import numpy as jnp
-jax.config.update("jax_enable_x64", True)
 
 from ormatex_py.ode_sys import OdeSys, MatrixLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator
@@ -98,6 +97,8 @@ class TestBatemanSysJac(OdeSys):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
+
+    jax.config.update("jax_enable_x64", True)
 
     # associates names with variable index
     keymap = ["c_0", "c_1", "c_2"]
