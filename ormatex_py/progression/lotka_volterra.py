@@ -9,11 +9,11 @@ from jax import numpy as jnp
 import diffrax
 jax.config.update("jax_enable_x64", True)
 
-from ormatex_py.ode_sys import OdeSys, JaxMatrixLinop
-from ormatex_py.ode_epirk import EpirkIntegrator
+from ormatex_py.ode_sys import OdeSplitSys, MatrixLinOp
+from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
 
 
-class LotkaVolterra(OdeSys):
+class LotkaVolterra(OdeSplitSys):
     alpha: float
     beta: float
     delta: float
@@ -26,24 +26,35 @@ class LotkaVolterra(OdeSys):
         self.delta = kwargs.get("delta", 1.0)
         self.gamma = kwargs.get("gamma", 1.0)
 
+    @jax.jit
     def _frhs(self, t, x, **kwargs):
         prey_t = self.alpha * x[0] - self.beta * x[0] * x[1]
         pred_t = self.delta * x[0] * x[1] - self.gamma * x[1]
         return jnp.array([prey_t, pred_t])
 
+    # define the Jacobian LinOp (comment out to use autograd)
+    @jax.jit
     def _fjac(self, t, x, **kwargs):
         jac = jnp.array([
-            [self.alpha - self.beta * x[1],  -self.beta*x[0]],
-            [self.delta*x[1], self.delta*x[0]-self.gamma]
+            [self.alpha - self.beta * x[1], - self.beta*x[0]],
+            [self.delta*x[1], self.delta*x[0] - self.gamma]
             ])
-        return JaxMatrixLinop(jac)
+        return MatrixLinOp(jac)
 
+    # define a linear operator for testing
+    @jax.jit
+    def _fl(self, t, x, **kwargs):
+        lop = jnp.array([
+            [self.alpha - self.beta*2, 0.],
+            [0., - self.gamma]
+            ])
+        return MatrixLinOp(lop)
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("-method", type=str, default="epirk2")
+    parser.add_argument("-method", type=str, default="epi3")
     args = parser.parse_args()
     method = args.method
 
@@ -71,13 +82,17 @@ if __name__ == "__main__":
     t_gold, y_gold = res.ts, res.ys
 
     # sweep over time step size and integrate
-    dt_list = [0.01, 0.02, 0.025, 0.05, 0.1]
+    dt_list = [0.0125, 0.025, 0.05, 0.125, 0.25]
+    #dt_list = [0.5*dt for dt in dt_list]
     t_list = []
     y_list = []
     for dt in dt_list:
         print("dt = %0.2e" % dt)
-        t = 0.0
-        sys_int = EpirkIntegrator(lv_sys, t, y0, method=method, max_krylov_dim=10, iom=2)
+        t0 = 0.0
+        try:
+            sys_int = ExpRBIntegrator(lv_sys, t0, y0, method=method, max_krylov_dim=10, iom=5)
+        except AttributeError:
+            sys_int = ExpSplitIntegrator(lv_sys, t0, y0, method=method, max_krylov_dim=10, iom=5)
 
         nsteps = int(t_end/dt)
         t_res, y_res = [], []
@@ -96,6 +111,7 @@ if __name__ == "__main__":
         ax1.plot(t_res, y_res[:, 1], label="pred")
         ax1.plot(t_gold, y_gold[:, 0], ls='--', label="prey true")
         ax1.plot(t_gold, y_gold[:, 1], ls='--', label="pred true")
+        ax1.set(ylim=(-1., 6.))
         plt.legend()
         plt.grid(ls='--')
         ax1.set_xlabel("time")

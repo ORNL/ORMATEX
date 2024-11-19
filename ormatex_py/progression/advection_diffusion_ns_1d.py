@@ -39,14 +39,13 @@ import equinox as eqx
 
 import skfem as fem
 from skfem.helpers import dot, grad
+
+from ormatex_py.ode_sys import OdeSys, FdJacLinOp
+
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
-
-from ormatex_py.ode_sys import JaxMatrixLinop
-from ormatex_py.ode_sys import OdeSys
-from ormatex_py.ode_epirk import EpirkIntegrator
 from ormatex_py.progression.advection_diffusion_1d import mass
-from ormatex_py.progression.advection_diffusion_1d import integrate_diffrax, integrate_ormatex
+from ormatex_py.progression import integrate_wrapper
 
 # Specify velocity
 vel = 0.5
@@ -245,6 +244,9 @@ class AdDiffSEM:
 class AffineLinearSEM(OdeSys):
     """
     Define ODE System associated to affine linear sparse Jacobian problem
+
+    due to the non-autodifferentiable, non-jitable assemble call
+    use jax_disable_jit to use this class
     """
     bat_mat: jax.Array
     A: jsp.JAXSparse
@@ -253,12 +255,12 @@ class AffineLinearSEM(OdeSys):
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         self.sys_assembler = sys_assembler
-        self.A, self.Ml = self.sys_assembler.assemble(**kwargs)
+        self.A, self.Ml = sys_assembler.assemble(**kwargs)
         self.bat_mat = gen_bateman_matrix(['u_0', 'u_1'], decay_lib)
         super().__init__()
 
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-        n = self.sys_assembler.n_species
+        n = self.bat_mat.shape[0] #self.sys_assembler.n_species
         un = stack_u(u, n)
         # nonlin rhs
         b = self.sys_assembler.assemble_rhs(u=un)
@@ -268,11 +270,17 @@ class AffineLinearSEM(OdeSys):
         # integrators currently expect a flat U
         return flatten_u(udot)
 
+    def _fjac(self, t: float, u: jax.Array, **kwargs):
+        # finite difference Jacobian
+        # automatic Jacobian is not supported
+        return FdJacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
     jax.config.update('jax_platform_name', 'cpu')
+    jax.config.update("jax_disable_jit", True)
     print(f"Running on {jax.devices()}.")
 
     parser = argparse.ArgumentParser()
@@ -280,7 +288,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
-    parser.add_argument("-method", help="time step method", type=str, default="epirk3")
+    parser.add_argument("-method", help="time step method", type=str, default="epi3")
     args = parser.parse_args()
 
     # create the mesh
@@ -320,14 +328,11 @@ if __name__ == "__main__":
     y0 = flatten_u(jnp.asarray(y0_profile).transpose())
 
     # integrate the system
+    t0 = 0.
     dt = .1
     nsteps = 20
     method = args.method
-    diffrax_methods = ["euler", "heun", "midpoint", "bosh3", "dopri5", "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
-    if method in diffrax_methods:
-        t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
-    else:
-        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method)
+    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=100)
 
     si = xs.argsort()
     sx = xs[si]

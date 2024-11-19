@@ -17,8 +17,9 @@ jax.config.update("jax_enable_x64", True)
 
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
-from ormatex_py.ode_sys import OdeSys, JaxMatrixLinop
-from ormatex_py.ode_epirk import EpirkIntegrator
+
+from ormatex_py.ode_sys import OdeSys, MatrixLinOp
+from ormatex_py.ode_exp import ExpRBIntegrator
 
 # removal rate constants from gas purification
 gas_purify_lambda = jnp.log(2) / 1.0
@@ -130,14 +131,14 @@ class NonlinearBateman(OdeSys):
 
 
 if __name__ == "__main__":
-    method = "epirk2"
+    method = "epi3"
     bateman_sys = NonlinearBateman()
     t = 0.0
     # initially, clean salt
     y0 = jnp.asarray([1e-16] * len(keymap))
 
     # step system forward
-    sys_int = EpirkIntegrator(bateman_sys, t, y0, method=method, max_krylov_dim=12, iom=2)
+    sys_int = ExpRBIntegrator(bateman_sys, t, y0, method=method, max_krylov_dim=12, iom=2)
 
     t_res = []
     y_res = []

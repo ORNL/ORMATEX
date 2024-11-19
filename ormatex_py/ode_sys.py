@@ -3,11 +3,9 @@ Defines an interface for coupled systems of ODEs.
 This interface is compatible with all time integration
 methods in this ormatex_py package.
 
-TODO: Needs updates for jax compatibility.
 jax allows user defined types as PyTrees:
 See: https://jax.readthedocs.io/en/latest/pytrees.html
-
-NOTE: this equinox package may make jax compatibility
+NOTE: we use equinox to make jax compatibility
 simpler by removing boilerplate to register objects as pytrees.
 from discussion here:  https://github.com/jax-ml/jax/discussions/10598
 """
@@ -15,7 +13,6 @@ from abc import ABCMeta
 from abc import abstractmethod, abstractproperty
 from collections.abc import Callable
 import numpy as np
-from scipy.sparse.linalg import LinearOperator
 from functools import partial
 from collections import deque
 import jax
@@ -25,9 +22,65 @@ import equinox as eqx
 from dataclasses import dataclass
 
 
-class JaxMatrixLinop(eqx.Module):
+class LinOp(eqx.Module):
+
+    @abstractmethod
+    def _matvec(self, v):
+        raise NotImplementedError
+
+    def __call__(self, v):
+        return self._matvec(v)
+
+    def matvec(self, v: jax.Array) -> jax.Array:
+        return self._matvec(v)
+
+    @abstractmethod
+    def _dense(self):
+        raise NotImplementedError
+
+    def dense(self) -> jax.Array:
+        return self._dense()
+
+
+class EyeLinOp(LinOp):
     """
-    Helper class to wrap a jax.Array as a linop
+    Identity LinOp
+    """
+
+    n: int
+
+    def __init__(self, n: int):
+        self.n = n
+
+    @jax.jit
+    def _matvec(self, v):
+        return v
+
+    def _dense(self):
+        return jnp.eye(n)
+
+
+class DiagLinOp(LinOp):
+    """
+    Diagonal linear operator with diagonal d
+    """
+
+    d: jax.Array
+
+    def __init__(self, d: jax.Array):
+        self.d = d
+
+    @jax.jit
+    def _matvec(self, v):
+        return self.d * v
+
+    def _dense(self):
+        return jnp.diag(self.d)
+
+
+class MatrixLinOp(LinOp):
+    """
+    Helper class to wrap a jax.Array as a LinOp
     similar to scipy.sparse.linalg.aslinearoperator()
     """
     a: jax.Array | jsp.JAXSparse
@@ -37,63 +90,95 @@ class JaxMatrixLinop(eqx.Module):
         assert a.shape[0] == a.shape[1]
         self.a = a
 
-    def __call__(self, b: jax.Array):
+    @jax.jit
+    def _matvec(self, b: jax.Array) -> jax.Array:
         return self.a @ b
 
-    def _matvec(self, b: jax.Array):
-        return self(b)
+    def _dense(self) -> jax.Array:
+        if isinstance(self.a, jax.Array):
+            return self.a
+        else:
+            #convert sparse array to dense
+            return self.a.todense()
 
-    def matvec(self, b: jax.Array):
-        return self._matvec(b)
 
-
-class AugMatrixLinop(eqx.Module):
+class AugMatrixLinOp(LinOp):
     """
     Helper class to create a larger linear operator
     out of a block matrix comprised of components:
     a_lo_aug =
-        [[A,  B],
-         [0,  K]]
+        [[dt*A,  B],
+         [0,     K]]
     where A is the original NxN linop
+    dt is a scalar factor applied to A
     b is a Nxp dense matrix
     K is a pxp sparse matrix
     """
-    a_lo: Callable
-    # scalar factor applied to a_lo
+    a_lo: LinOp
     dt: float
     B: jax.Array
     K: jax.Array
-    n: int
-    p: int
 
     def __init__(self, a_lo, dt, B, K):
         self.a_lo = a_lo
         self.dt = dt
         self.B = B
         self.K = K
-        self.n = self.B.shape[0]
-        self.p = self.B.shape[1]
-        assert self.p == self.K.shape[0]
-        assert self.p == self.K.shape[1]
+        assert self.B.shape[1] == self.K.shape[0]
+        assert self.B.shape[1] == self.K.shape[1]
 
-    def __call__(self, v):
+    @jax.jit
+    def _matvec(self, v):
         """
         Computes a_lo_aug @ v
         """
-        assert v.shape[0] == self.n + self.p
-        ab_v = self.dt*self.a_lo(v[0:self.n]) + self.B @ v[-self.p:]
-        k_v = self.K @ v[-self.p:]
+        n = self.B.shape[0]
+        p = self.B.shape[1]
+        assert v.shape[0] == n + p
+        ab_v = self.dt*self.a_lo(v[0:n]) + self.B @ v[-p:]
+        k_v = self.K @ v[-p:]
         res = jnp.concat((ab_v, k_v))
         return res
 
-    def _matvec(self, v):
-        return self(v)
-
-    def matvec(self, v):
-        return self._matvec(v)
+    def _dense(self):
+        raise NotImplementedError
 
 
-class FdJacLinOp(eqx.Module):
+class JacLinOp(LinOp):
+    t: float
+    u: jax.Array
+    frhs: eqx.Module
+    # storage for rhs evaluated at u, computed in linerize call
+    # TODO: figure out how to eliminate this redundant computation
+    frhs_u: jax.Array
+    frhs_kwargs: dict
+    fjac_u: Callable
+
+    def __init__(self, t, u, frhs: eqx.Module, frhs_kwargs: dict={}, **kwargs):
+        self.t = t
+        self.u = u
+        self.frhs = frhs
+        self.frhs_kwargs = frhs_kwargs
+        self.frhs_u, self.fjac_u = jax.linearize(partial(frhs, self.t, **self.frhs_kwargs), self.u)
+
+    @jax.jit
+    def _matvec(self, v: jax.Array) -> jax.Array:
+        """
+        Define the action of the Jacobian of frhs on a vector v.
+
+        Args:
+            v: target vector to apply linop to
+        """
+        return self.fjac_u(v)
+
+    def _dense(self):
+        """
+        Define the (dense) jacobian of frhs.
+        """
+        return jax.vmap(self.fjac_u, in_axes=(1), out_axes=1)(jnp.eye(self.u.shape[0]))
+
+
+class FdJacLinOp(LinOp):
     t: float
     u: jax.Array
     frhs: Callable
@@ -105,8 +190,8 @@ class FdJacLinOp(eqx.Module):
     gamma: float
     eps: float
 
-    def __init__(self, t, u, frhs: Callable, frhs_kwargs: dict,
-                 scale: float=1.0,  gamma: float=0.0, *args, **kwargs):
+    def __init__(self, t, u, frhs: Callable, frhs_kwargs: dict={},
+                 scale: float=1.0, gamma: float=0.0, **kwargs):
         self.t = t
         self.u = u
         self.frhs = frhs
@@ -121,38 +206,14 @@ class FdJacLinOp(eqx.Module):
     @property
     def shape(self) -> (int, int):
         """
-        Linop shape
+        LinOp shape
         """
         return (self.u.size, self.u.size)
 
-    def set_op_u(self, t: float, u: jax.Array):
-        """
-        Set state at which to linearize the system
-        """
-        self.t = t
-        self.u = u
-        self.frhs_u = self.frhs(t, u, **self.frhs_kwargs)
-
-    def set_scale(self, scale: float, gamma: float):
-        """
-        For optional scaling and shifting of the Jv product
-        """
-        self.scale = scale
-        self.gamma = gamma
-
-    def __call__(self, v: jax.Array) -> jax.Array:
-        """
-        Alias to linop-vector product
-        """
-        return self._matvec(v)
-
+    @jax.jit
     def _matvec(self, v: jax.Array) -> jax.Array:
         """
         Define action of linop on a vector.
-        NOTE:
-        https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.linalg.LinearOperator.html
-        This defines the @ operator for this class
-
         Args:
             v: target vector to apply linop to
         """
@@ -161,7 +222,7 @@ class FdJacLinOp(eqx.Module):
         ieps = self.scale / scaled_eps
         u_pert = self.u + scaled_eps*v
 
-        # compute the ushifited jac-vec product.
+        # compute the unshifted jac-vec product.
         diff = self.frhs(self.t, u_pert, **self.frhs_kwargs) - self.frhs_u
         j_v = (diff)*ieps
 
@@ -169,9 +230,12 @@ class FdJacLinOp(eqx.Module):
         j_v += self.gamma * v
         return j_v
 
+    def _dense(self):
+        raise NotImplementedError
+
 
 # NOTE:  https://docs.kidger.site/equinox/api/module/module/
-# every eqx.Module is an abstarct base class by default
+# every eqx.Module is an abstract base class by default
 class OdeSys(eqx.Module):
     def __init__(self, *args, **kwargs):
         pass
@@ -183,7 +247,7 @@ class OdeSys(eqx.Module):
 
         Ex: Could look like:
         F(t, U) = M^-1 [AU + BU + S]
-        where M=const, A=A(U,t), B=B(U,t) are matricies
+        where M=const, A, B are matricies
         and S=S(u,t) is a vec.
 
         Args:
@@ -192,17 +256,21 @@ class OdeSys(eqx.Module):
         """
         return self._frhs(t, u, **kwargs)
 
-    def fjac(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
+    def __call__(self, t: float, u: jax.Array, *args, **kwargs) -> jax.Array:
+        """
+        Alias to _frhs for diffrax compatibility.
+        """
+        return self._frhs(t, u, **kwargs)
+
+    def fjac(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         """
         Define the Jacobian of the system as a linear operator
 
         Ex: Could look like:
-        dF(t, U)/dU|_(t,u) = M^-1 d[AU + BU + S]/dU |_(t,u)
+        dF(t, U)/dU|_(t,u) = M^-1 (A + B + dS/dU|_(t,u))
         where M, A, B are matricies and S is a vec. and M is const.
 
-        The default implementation uses a finite diff approx
-        to construct this linear operator, but is highly inefficient.
-        NOTE: Recommend to override this method.
+        The default implementation uses jax.linearize.
 
         Args:
             t:  current time
@@ -210,9 +278,9 @@ class OdeSys(eqx.Module):
         """
         return self._fjac(t, u, **kwargs)
 
-    def fm(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
+    def fm(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         """
-        Method that returns the mass matrix lin op
+        Method that returns the mass matrix LinOp
         """
         return self._fm(t, u, **kwargs)
 
@@ -221,23 +289,58 @@ class OdeSys(eqx.Module):
         # the user must override this
         raise NotImplementedError
 
-    def frhs_aug(self, t: float, u: jax.Array, aug: jax.Array, aug_scale: float, **kwargs) -> jax.Array:
-        return aug_scale * self.frhs(t, u, **kwargs) + aug
+    @jax.jit
+    def _fjac(self, t: float, u: jax.Array, **kwargs) -> LinOp:
+        # default implementation (autodiff Jacobian)
+        return JacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
 
-    # @partial(jax.jit(static_argnums=(0,)))
-    def _fjac(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
-        # default implementation
-        return FdJacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
+    def _fm(self, t: float, u: jax.Array, **kwargs) -> LinOp:
+        # default implementation (identity operator)
+        return EyeLinOp(u.shape[0])
 
-    def _fm(self, t: float, u: jax.Array, **kwargs) -> LinearOperator:
-        # default implementation
-        return lambda x: x
 
-    def __call__(self, t: float, u: jax.Array, *args, **kwargs) -> jax.Array:
+class OdeSplitSys(OdeSys):
+    """
+    Define a split ODE system.
+      dU/dt = F(t, U) = L(t, U) @ U + R(t, U),
+    where L(t, U) is a (potentially time and state dependent) LinOp, different from the Jacobian.
+    """
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def fl(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         """
-        Alias to _frhs for diffrax compatibility.
+        Define the LinOp L(t,u) of the system.
+        Args:
+            t:  current time
+            u:  current system state.
         """
-        return self._frhs(t, u, **kwargs)
+        return self._fl(t, u, **kwargs)
+
+    @abstractmethod
+    def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        """
+        Define the RHS of the split system
+          dU/dt = F(t, U) = L(t, U) @ U + R(t, U).
+
+        Since we need residual quantities
+          R_0 = F(t, U) - F(t_0, U_0) - L(t_0,U_0) @ (U - U0)
+        which is not the same as R(t, U) - R(t_0, U_0), it is easier to
+        specify F(t, U) and L(t, U), which implicitly defines
+          R(t, U) = F(t, U) - L(t, U) @ U,
+        which however is not explicitly needed by the integrators.
+
+        Args:
+            t:  current time
+            u:  current system state.
+        """
+        # the user must override this
+        raise NotImplementedError
+
+    @abstractmethod
+    def _fl(self, t: float, u: jax.Array, **kwargs) -> LinOp:
+        # the user must override this
+        raise NotImplementedError
 
 
 @dataclass
@@ -256,6 +359,10 @@ class IntegrateSys(metaclass=ABCMeta):
     """
     Defines interface to time integrators
     """
+
+    # list of valid methods
+    _valid_methods = {}
+
     # defines the rhs of the system of odes
     sys: OdeSys
     # current time

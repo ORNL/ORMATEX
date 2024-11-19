@@ -1,23 +1,26 @@
 import numpy as np
 import scipy as sp
 
+from functools import partial
+import time
+
 import jax
 import jax.numpy as jnp
 from jax.experimental import sparse as jsp
-import equinox as eqx
 from collections.abc import Callable
 
 import skfem as fem
 from skfem.helpers import dot, grad
-import warnings
 
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
-from ormatex_py.ode_sys import JaxMatrixLinop
+from ormatex_py.ode_sys import LinOp, MatrixLinOp, DiagLinOp
 
 jax.config.update("jax_enable_x64", True)
 
-from ormatex_py.ode_sys import OdeSys
-from ormatex_py.ode_epirk import EpirkIntegrator
+from ormatex_py.ode_sys import OdeSys, OdeSplitSys
+from ormatex_py.ode_exp import ExpRBIntegrator
+
+from ormatex_py.progression import integrate_wrapper
 
 def src_f(x, **kwargs):
     """
@@ -172,104 +175,39 @@ class AdDiffSEM:
 
         return jA, jMl, jb
 
-    def xs(self):
-        return self.basis.doflocs[0]
+    def collocation_points(self):
+        return jnp.asarray(self.basis.doflocs[0])
 
     def ode_sys(self, **kwargs):
         return AffineLinearSEM(self, **kwargs)
 
 
-class AffineLinearSEM(OdeSys):
+class AffineLinearSEM(OdeSplitSys):
     """
     Define ODE System associated to affine linear sparse Jacobian problem
+
+    The system is affine linear and the Jacobian is constant in t an u.
+    Implement a linear operator L equal to Jacobian to test non-Rosenbrock schemes.
+    All schemes should be exact (up to Krylov error) since the residual term vanishes.
     """
     A: jsp.JAXSparse
     Ml: jax.Array
     b: jax.Array
-    jac_lop: Callable
-    sys_assembler: AdDiffSEM
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
-        self.sys_assembler = sys_assembler
-        self.A, self.Ml, self.b = self.sys_assembler.assemble(**kwargs)
+        self.A, self.Ml, self.b = sys_assembler.assemble(**kwargs)
         super().__init__()
 
+    @jax.jit
     def _frhs(self, t: float, u: jax.Array) -> jax.Array:
-        # NOTE: in principle one could do:
-        # self.A, self.Ml, self.b = self.sys_assembler.assemble(t=t, u=u, **kwargs)
-        # here to rebuild the system given the current system state, u
         return (self.b - self.A @ u) / self.Ml
 
-    @property
-    def jac_lop(self):
-        return JaxMatrixLinop(-self.A / self.Ml[:,None])
-
-    def _fjac(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-        return self.jac_lop
+    @jax.jit
+    def _fl(self, t: float, u: jax.Array, **kwargs):
+        return MatrixLinOp(-self.A / self.Ml[:,None])
 
     def _fm(self, t: float, u: jax.Array, **kwargs):
-        return lambda x: self.Ml * x
-
-
-def integrate_diffrax(ode_sys, y0, dt, nsteps, method="implicit_euler"):
-    """
-    Uses diffrax integrators to step adv diff system forward
-    """
-    import diffrax
-    import optimistix
-    # thin wrapper around ode_sys for diffrax compat
-    diffrax_ode_sys = diffrax.ODETerm(ode_sys)
-    method_dict = {
-            # explicit
-            "euler": diffrax.Euler,
-            "heun": diffrax.Heun,
-            "midpoint": diffrax.Midpoint,
-            "bosh3": diffrax.Bosh3,
-            "dopri5": diffrax.Dopri5,
-            # implicit
-            "implicit_euler": diffrax.ImplicitEuler,
-            "implicit_esdirk3": diffrax.Kvaerno3,
-            "implicit_esdirk4": diffrax.Kvaerno4,
-           }
-    try:
-        root_finder=diffrax.VeryChord(rtol=1e-8, atol=1e-8, norm=optimistix.max_norm)
-        solver = method_dict[method](root_finder=root_finder)
-    except:
-        solver = method_dict[method]()
-    t0 = 0.0
-    tf = dt * nsteps
-    step_ctrl = diffrax.ConstantStepSize()
-    res = diffrax.diffeqsolve(
-            diffrax_ode_sys,
-            solver,
-            t0, tf, dt, y0,
-            saveat=diffrax.SaveAt(steps=True),
-            stepsize_controller=step_ctrl,
-            max_steps=nsteps,
-            )
-    return res.ts, res.ys
-
-
-def integrate_ormatex(ode_sys, y0, dt, nsteps, method="epirk3", max_krylov_dim=40, iom=2):
-    """
-    Uses ormatex exponential integrators to step adv diff system forward
-    """
-    # init the time integrator
-    t0 = 0.0
-    sys_int = EpirkIntegrator(
-            ode_sys, t0, y0, method=method,
-            max_krylov_dim=max_krylov_dim, iom=iom
-            )
-    t_res, y_res = [0,], [y0,]
-    for i in range(nsteps):
-        res = sys_int.step(dt)
-        # log the results for plotting
-        t_res.append(res.t)
-        y_res.append(res.y)
-        # this would be where you could reject a step, if the
-        # estimated err was too large
-        sys_int.accept_step(res)
-    return t_res, y_res
+        return DiagLinOp(self.Ml)
 
 
 if __name__ == "__main__":
@@ -282,7 +220,7 @@ if __name__ == "__main__":
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
-    parser.add_argument("-method", help="time step method", type=str, default="epirk3")
+    parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     args = parser.parse_args()
 
@@ -317,7 +255,7 @@ if __name__ == "__main__":
     t = 0.0
 
     # mesh mask for initial conditions
-    xs = np.asarray(sem.basis.doflocs.flatten())
+    xs = np.asarray(sem.collocation_points())
 
     if args.ic == "square":
         # square wave
@@ -337,14 +275,11 @@ if __name__ == "__main__":
         g_prof_exact = lambda t, x: np.exp(-( ( (x - (wc+t*vel)%1 ) ) /(2*ww))**2.0)
 
     # integrate the system
+    t0 = 0.
     dt = .1
     nsteps = 10
     method = args.method
-    diffrax_methods = ["euler", "heun", "midpoint", "bosh3", "dopri5", "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
-    if method in diffrax_methods:
-        t_res, y_res = integrate_diffrax(ode_sys, y0, dt, nsteps, method=method)
-    else:
-        t_res, y_res = integrate_ormatex(ode_sys, y0, dt, nsteps, method=method)
+    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=100)
 
     # compute expected solution
     # y_exact_res = [g_prof_exact(0.0, sx),]
