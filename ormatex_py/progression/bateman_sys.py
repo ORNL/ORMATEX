@@ -86,6 +86,7 @@ class TestBatemanSysJac(OdeSys):
         self.bat_mat = bmat
         super().__init__()
 
+    @jax.jit
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         res = self.bat_mat @ u
         return res
