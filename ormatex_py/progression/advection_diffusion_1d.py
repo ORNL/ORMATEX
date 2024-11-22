@@ -279,7 +279,7 @@ if __name__ == "__main__":
     dt = .1
     nsteps = 10
     method = args.method
-    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200)
+    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=160, iom=10)
 
     # compute expected solution
     # y_exact_res = [g_prof_exact(0.0, sx),]

@@ -170,7 +170,7 @@ if __name__ == "__main__":
     dt = .1
     nsteps = 20
     method = args.method
-    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200)
+    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10)
 
     si = xs.argsort()
     sx = xs[si]

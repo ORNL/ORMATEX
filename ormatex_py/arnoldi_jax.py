@@ -25,7 +25,7 @@ def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k
         qs: modified ONB
         bool. true if no happy breakdown
     """
-    print(f"jit-compiled MGS")
+    print(f"jit-compiling MGS")
 
     m = hs.shape[0]
     breakdown_tol = 1e-12
@@ -74,23 +74,27 @@ def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k
 
     return hs, qs, not_breakdown
 
-@jax.jit
-def arnoldi_lop_jit(a_lo: LinOp, a_scale: float, b: jax.Array, hs: jax.Array, qs: jax.Array, iom: int) -> (jax.Array, jax.Array, int):
+@partial(jax.jit, static_argnums=(3,))
+def arnoldi_lop_jit(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int) -> (jax.Array, jax.Array, int):
     """
     Args:
         a_lo: linear operator
         a_scale: scaling factor
         b: right hand side
-        hs: hessenberg
-        qs: orthonormal basis of krylov subspace
+        m: number of Krylov vectors to produce
         iom: number of (incomplete) orthogonalizations
 
     Return:
-        hs: modified hessenberg
-        qs: modified ONB
-        breakdown_k: iteration k where happy breakdown occurred, or hs.shape[0]
+        hs: hessenberg
+        qs: orthonormal basis of krylov subspace
+        breakdown_k: iteration k where happy breakdown occurred, or m
     """
-    print(f"jit-compiled Arnoldi")
+    print(f"jit-compiling Arnoldi")
+
+    b_nrows = b.shape[0]
+    m = min(b_nrows, m)
+    hs = jax.numpy.zeros((m, m))
+    qs = jax.numpy.zeros((b_nrows, m))
 
     m = hs.shape[0]
     q0 = b / jnp.linalg.norm(b, 2)
@@ -111,21 +115,10 @@ def arnoldi_lop_jit(a_lo: LinOp, a_scale: float, b: jax.Array, hs: jax.Array, qs
     return hs, qs, breakdown_k
 
 def arnoldi_lop(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int) -> (jax.Array, jax.Array, int):
-    b_nrows = b.shape[0]
-    m = min(b_nrows, m)
-    hs = jax.numpy.zeros((m,m))
-    qs = jax.numpy.zeros((b_nrows, m))
 
-    hs, qs, breakdown_k = arnoldi_lop_jit(a_lo, a_scale, b, hs, qs, iom)
-    #breakdown_k = 0
-    #for k in range(0, m):
-    #    hs, qs, not_breakdown = arnoldi_mgs_lop(
-    #            a_lo, a_scale, hs, qs, k, iom)
-    #    breakdown_k = k
-    #    if not not_breakdown:
-    #        break
+    hs, qs, breakdown_k = arnoldi_lop_jit(a_lo, a_scale, b, m, iom)
 
-    #print(jnp.diag(hs, 1))
+    #print(jnp.diag(hs, -2), jnp.diag(hs, -1), jnp.diag(hs, 0), jnp.diag(hs, 1))
     #print(f"Arnoldi had breakdown at {breakdown_k}, m={m}, iom={iom}.")
 
     return qs[:,:breakdown_k], hs[:breakdown_k,:breakdown_k], breakdown_k

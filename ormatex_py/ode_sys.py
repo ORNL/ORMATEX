@@ -92,6 +92,7 @@ class MatrixLinOp(LinOp):
 
     @jax.jit
     def _matvec(self, b: jax.Array) -> jax.Array:
+        print("jit-compiling MatrixLinOp._matvec")
         return self.a @ b
 
     def _dense(self) -> jax.Array:
@@ -132,6 +133,7 @@ class AugMatrixLinOp(LinOp):
         """
         Computes a_lo_aug @ v
         """
+        print("jit-compiling AugMatrixLinOp._matvec")
         n = self.B.shape[0]
         p = self.B.shape[1]
         assert v.shape[0] == n + p
@@ -169,6 +171,7 @@ class JacLinOp(LinOp):
         Args:
             v: target vector to apply linop to
         """
+        print("jit-compiling JacLinOp._matvec")
         return self.fjac_u(v)
 
     def _dense(self):
@@ -292,6 +295,7 @@ class OdeSys(eqx.Module):
     @jax.jit
     def _fjac(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         # default implementation (autodiff Jacobian)
+        print("jit-compiling ODESys._fjac")
         return JacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
 
     def _fm(self, t: float, u: jax.Array, **kwargs) -> LinOp:
