@@ -166,11 +166,11 @@ if __name__ == "__main__":
     y0 = flatten_u(jnp.asarray(y0_profile).transpose())
 
     # integrate the system
-    t0 = 0
+    t0 = 0.
     dt = .1
     nsteps = 20
     method = args.method
-    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=100)
+    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10)
 
     si = xs.argsort()
     sx = xs[si]

@@ -23,7 +23,7 @@ class ExpRBIntegrator(IntegrateSys):
         order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, **kwargs)
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
-        self.iom = kwargs.get("iom", 2)
+        self.iom = kwargs.get("iom", 100)
 
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
@@ -151,7 +151,7 @@ class ExpSplitIntegrator(IntegrateSys):
         super().__init__(sys, t0, y0, order, method, **kwargs)
 
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
-        self.iom = kwargs.get("iom", 2)
+        self.iom = kwargs.get("iom", 200)
 
         #TODO: used to check if dense phiL matrices need updating
         self._cached_dt = None
