@@ -6,8 +6,6 @@ import scipy as sp
 import numpy as np
 import matplotlib.pyplot as plt
 from jax import numpy as jnp
-import diffrax
-jax.config.update("jax_enable_x64", True)
 
 from ormatex_py.ode_sys import OdeSplitSys, MatrixLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
@@ -53,6 +51,10 @@ class LotkaVolterra(OdeSplitSys):
 
 if __name__ == "__main__":
     import argparse
+    import diffrax
+
+    jax.config.update("jax_enable_x64", True)
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("-method", type=str, default="epi3")
     args = parser.parse_args()

@@ -117,7 +117,8 @@ class RAD_SEM(OdeSplitSys):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
-    jax.config.update('jax_platform_name', 'cpu')
+
+    jax.config.update("jax_enable_x64", True)
     print(f"Running on {jax.devices()}.")
 
     parser = argparse.ArgumentParser()

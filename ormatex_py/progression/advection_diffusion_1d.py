@@ -7,6 +7,7 @@ import time
 import jax
 import jax.numpy as jnp
 from jax.experimental import sparse as jsp
+
 from collections.abc import Callable
 
 import skfem as fem
@@ -14,8 +15,6 @@ from skfem.helpers import dot, grad
 
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
 from ormatex_py.ode_sys import LinOp, MatrixLinOp, DiagLinOp
-
-jax.config.update("jax_enable_x64", True)
 
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys
 from ormatex_py.ode_exp import ExpRBIntegrator
@@ -213,7 +212,8 @@ class AffineLinearSEM(OdeSplitSys):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
-    jax.config.update('jax_platform_name', 'cpu')
+
+    jax.config.update("jax_enable_x64", True)
     print(f"Running on {jax.devices()}.")
 
     parser = argparse.ArgumentParser()
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     plt.close()
 
     # Print results summary to table
-    print("CFL: %0.4f" % cfl)
+    print("CFL: %0.4f, Ndof: %d" % (cfl, xs.size))
 
     err = y_exact - y
     l2 = np.sqrt(np.sum(err**2 * ode_sys.Ml))

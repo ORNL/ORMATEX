@@ -56,7 +56,6 @@ decay_lib = {
     'u_1':  ('none', 0.3e-1),
 }
 
-
 def src_f(x, **kwargs):
     """
     Custom source term, could depend on solution y
@@ -279,7 +278,6 @@ class AffineLinearSEM(OdeSys):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
-    jax.config.update('jax_platform_name', 'cpu')
     jax.config.update("jax_disable_jit", True)
     print(f"Running on {jax.devices()}.")
 

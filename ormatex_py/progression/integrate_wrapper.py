@@ -32,6 +32,8 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
             print(e)
             raise AttributeError(f"no valid method {method} found")
 
+    #wait for computation of last step to finish
+    y_res[-1].block_until_ready()
     toc = time.perf_counter()
 
     print(f"Integrated system with {method} in {toc - tic:0.4f} seconds")
