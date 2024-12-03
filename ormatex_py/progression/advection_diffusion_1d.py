@@ -19,7 +19,7 @@ from ormatex_py.ode_sys import LinOp, MatrixLinOp, DiagLinOp
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys
 from ormatex_py.ode_exp import ExpRBIntegrator
 
-from ormatex_py.progression import integrate_wrapper
+from ormatex_py import integrate_wrapper
 
 def src_f(x, **kwargs):
     """

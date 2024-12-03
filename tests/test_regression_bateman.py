@@ -1,5 +1,5 @@
 """
-Regression test for Bateman system.
+Regression test for pure linear Bateman system.
 
 Check that all exponential integrators solve a simple
 Bateman system to the expected precission.

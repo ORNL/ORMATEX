@@ -43,7 +43,7 @@ from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix
-from ormatex_py.progression import integrate_wrapper
+from ormatex_py import integrate_wrapper
 
 # decay lib
 decay_lib = {

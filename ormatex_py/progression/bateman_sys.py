@@ -5,7 +5,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from ormatex_py.progression import integrate_wrapper
+from ormatex_py import integrate_wrapper
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator
 
@@ -174,6 +174,7 @@ def analytic_bateman_single_parent(t, batmat, n0):
 
 
 def analytic_bateman_s3(method="epi2", do_plot=True):
+    jax.config.update("jax_enable_x64", True)
     keymap = ["c_0", "c_1", "c_2"]
     decay_lib_sp = {
         'c_0':  ('c_1', 1.0e-1),
@@ -295,6 +296,7 @@ if __name__ == "__main__":
 
     analytic_bateman_s3("epi2")
     analytic_bateman_s3("epi3")
-    analytic_bateman_s3("exprb3")
     analytic_bateman_s3("exp2_dense")
     analytic_bateman_s3("exp3_dense")
+    # FIXME: exprb3 is broken for this example
+    analytic_bateman_s3("exprb3")

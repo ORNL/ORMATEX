@@ -45,7 +45,7 @@ from ormatex_py.ode_sys import OdeSys, FdJacLinOp
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
 from ormatex_py.progression.advection_diffusion_1d import mass
-from ormatex_py.progression import integrate_wrapper
+from ormatex_py import integrate_wrapper
 
 # Specify velocity
 vel = 0.5

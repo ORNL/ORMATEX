@@ -15,7 +15,7 @@ import numpy as np
 from jax import numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
-from ormatex_py.progression import integrate_wrapper
+from ormatex_py import integrate_wrapper
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 
