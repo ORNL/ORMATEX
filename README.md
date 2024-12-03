@@ -13,10 +13,9 @@ The current set of implemented and planned time integration methods in each lang
 
 Exponential integrators:
 
-- [x] EPIRK2  (exponential propagation iterative Runga-Kutta)
-- [x] EPIRK3
+- [x] EPI2 = EXPRB2 = EPIRK2
+- [x] EPI3
 - [ ] EPIRK4
-- [x] EXPRB2
 - [ ] EXPRB4  (exponential rosenbrock order 4)
 
 Classic integrators:
@@ -112,7 +111,7 @@ Initialize the system and integrate
 
     method = 'epi3'
     sys = LotkaVolterra()
-    y0 = jnp.array([0., 0.])
+    y0 = jnp.array([0.1, 0.2])
     t0 = 0.0
     dt = 0.2
     nsteps = 100

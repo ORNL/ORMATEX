@@ -4,12 +4,17 @@ Nonlinear example progression problems
 import jax
 import scipy as sp
 import numpy as np
-import matplotlib.pyplot as plt
 from jax import numpy as jnp
 
 from ormatex_py import integrate_wrapper
 from ormatex_py.ode_sys import OdeSplitSys, MatrixLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
+
+try:
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except:
+    HAS_MATPLOTLIB = False
 
 
 class LotkaVolterra(OdeSplitSys):
@@ -32,13 +37,13 @@ class LotkaVolterra(OdeSplitSys):
         return jnp.array([prey_t, pred_t])
 
     # define the Jacobian LinOp (comment out to use autograd)
-#     @jax.jit
-#     def _fjac(self, t, x, **kwargs):
-#         jac = jnp.array([
-#             [self.alpha - self.beta * x[1], - self.beta*x[0]],
-#             [self.delta*x[1], self.delta*x[0] - self.gamma]
-#             ])
-#         return MatrixLinOp(jac)
+    @jax.jit
+    def _fjac(self, t, x, **kwargs):
+        jac = jnp.array([
+            [self.alpha - self.beta * x[1], - self.beta*x[0]],
+            [self.delta*x[1], self.delta*x[0] - self.gamma]
+            ])
+        return MatrixLinOp(jac)
 
     # define a linear operator for testing
     @jax.jit
