@@ -3,12 +3,17 @@ Methods to define a Bateman system of equations
 """
 import jax
 import numpy as np
-import matplotlib.pyplot as plt
 from jax import numpy as jnp
 
 from ormatex_py.progression import integrate_wrapper
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator
+
+try:
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except:
+    HAS_MATPLOTLIB = False
 
 
 decay_lib_0 = {
@@ -193,7 +198,7 @@ def analytic_bateman_s3(method="epi2", do_plot=True):
     y_res = np.asarray(y_res)
 
     # plot
-    if do_plot:
+    if do_plot and HAS_MATPLOTLIB:
         plt.figure()
         plt.xscale('log')
         plt.yscale('log')
