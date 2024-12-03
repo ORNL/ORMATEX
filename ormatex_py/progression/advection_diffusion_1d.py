@@ -277,7 +277,7 @@ if __name__ == "__main__":
     # integrate the system
     t0 = 0.
     dt = .1
-    nsteps = 10
+    nsteps = 40
     method = args.method
     t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=160, iom=10)
 
@@ -296,7 +296,7 @@ if __name__ == "__main__":
     cfl = dt * vel / mesh_spacing
     plt.figure()
     for i in range(nsteps):
-        if i % 2 == 0 or i == 0:
+        if i % 4 == 0 or i == 0:
             t = t_res[i]
             y = y_res[i][si]
             y_exact = y_exact_res[i][si]
@@ -307,7 +307,7 @@ if __name__ == "__main__":
     plt.ylabel('u')
     plt.xlabel('x')
     plt.title(r"Method=%s, $C$=%0.2e, $\Delta$ t=%0.2e, $\Delta$ x=%0.2e" % (method, cfl, dt, mesh_spacing))
-    plt.savefig('adv_diff_1d.png')
+    plt.savefig('adv_diff_1d_%s.png' % method)
     plt.close()
 
     # Print results summary to table

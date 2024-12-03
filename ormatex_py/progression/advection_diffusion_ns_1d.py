@@ -113,7 +113,7 @@ def robin(u, v, w):
     return dot(vel_f(**w), w.n) * u * v
 
 
-class AdDiffSEM:
+class AdDiffSEM(eqx.Module):
     """
     Assemble matrices for spectral finite element discretization
     of an advection diffusion eqaution
@@ -121,6 +121,15 @@ class AdDiffSEM:
     p: polynomial order
     nu: diffusion coeff
     """
+    params: dict
+    p: int
+    n_species: int
+    field_fns: dict
+    mesh: fem.Mesh
+    element: fem.Element
+    basis: fem.Basis
+    basis_f: fem.FacetBasis
+
     def __init__(self, mesh, p=1, n_species=1, field_fns={}, params={}, **kwargs):
         # diffusion coeff
         self.params = {"nu": params.get("nu", 5e-3)}
@@ -164,6 +173,7 @@ class AdDiffSEM:
             for n in range(self.n_species):
                 ub = basis.interpolate(u.at[:, n].get())
                 fields["u_%d"%n] = ub
+                pass
         # other aux fields
         for field_name, field_f in self.field_fns.items():
             vals = field_f(basis.doflocs, **kwargs).flatten()
@@ -177,6 +187,7 @@ class AdDiffSEM:
         full_w_dict = {**self.params, **fields, **species_id}
         return full_w_dict
 
+    @eqx.filter_jit
     def assemble(self, **kwargs):
         """
         kwargs: extra args passed to user defined field functions
@@ -184,37 +195,36 @@ class AdDiffSEM:
         conservative = True
         if conservative:
             # remark: w_dict must contain only scalars and skfem.element.DiscreteField
-            self.A = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+            A = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
             if self.mesh.boundaries:
                 # if not periodic, add boundary term
-                self.A += robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
+                A += robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
         else:
-            self.A = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+            A = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
         M = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
         if self.mesh.boundaries:
             # Dirichlet boundary conditions
             fem.enforce(M, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
-            fem.enforce(self.A, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+            fem.enforce(A, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
         else:
             # periodic boundary conditions
             fem.enforce(M, D=self.basis.get_dofs().flatten(), overwrite=True)
-            fem.enforce(self.A, D=self.basis.get_dofs().flatten(), overwrite=True)
+            fem.enforce(A, D=self.basis.get_dofs().flatten(), overwrite=True)
 
         Ml = M @ np.ones((M.shape[1],))
 
         # provide jax arrays
         jMl = jnp.asarray(Ml)
-        jA = jsp.BCOO.from_scipy_sparse(self.A)
-        return jA, jMl
+        jA = jsp.BCOO.from_scipy_sparse(A)
+        return A, jA, jMl
 
-    def assemble_rhs(self, u=None, **kwargs):
+    def assemble_rhs(self, A, u=None, **kwargs):
         """
         Handle nonlinear source term.  Call if the solution updates
         and the rhs depends on u.
         """
-        assert hasattr(self, 'A')
         wkwargs = {**kwargs, **{'u': u}}
         b = []
         for n in range(self.n_species):
@@ -224,11 +234,11 @@ class AdDiffSEM:
         if self.mesh.boundaries:
             # Dirichlet boundary conditions
             for bn in b:
-                fem.enforce(self.A, bn, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+                fem.enforce(A, bn, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
         else:
             # periodic boundary conditions
             for bn in b:
-                fem.enforce(self.A, bn, D=self.basis.get_dofs().flatten(), overwrite=True)
+                fem.enforce(A, bn, D=self.basis.get_dofs().flatten(), overwrite=True)
         # columns index in b represents each species id
         jb = jnp.asarray(b).transpose()
         return jb
@@ -248,13 +258,14 @@ class AffineLinearSEM(OdeSys):
     use jax_disable_jit to use this class
     """
     bat_mat: jax.Array
+    npA: np.ndarray
     A: jsp.JAXSparse
     Ml: jax.Array
     sys_assembler: AdDiffSEM
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         self.sys_assembler = sys_assembler
-        self.A, self.Ml = sys_assembler.assemble(**kwargs)
+        self.npA, self.A, self.Ml = sys_assembler.assemble(**kwargs)
         self.bat_mat = gen_bateman_matrix(['u_0', 'u_1'], decay_lib)
         super().__init__()
 
@@ -262,7 +273,7 @@ class AffineLinearSEM(OdeSys):
         n = self.bat_mat.shape[0] #self.sys_assembler.n_species
         un = stack_u(u, n)
         # nonlin rhs
-        b = self.sys_assembler.assemble_rhs(u=un)
+        b = self.sys_assembler.assemble_rhs(self.npA, u=un)
         # add bateman
         lub = un @ self.bat_mat.transpose()
         udot = (b - self.A @ un) / self.Ml.reshape((-1, 1)) + lub
@@ -279,6 +290,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
     jax.config.update("jax_disable_jit", True)
+    jax.config.update("jax_enable_x64", True)
     print(f"Running on {jax.devices()}.")
 
     parser = argparse.ArgumentParser()
@@ -351,5 +363,5 @@ if __name__ == "__main__":
     plt.ylabel('u')
     plt.xlabel('x')
     plt.title(r"method: %s" % (method))
-    plt.savefig('adv_diff_ns_1d.png')
+    plt.savefig('adv_diff_ns_1d_%s.png' % method)
     plt.close()

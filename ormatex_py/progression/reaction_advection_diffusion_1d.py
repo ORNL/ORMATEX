@@ -40,6 +40,7 @@ import skfem as fem
 
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
 
+from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix
 from ormatex_py.progression import integrate_wrapper
@@ -68,7 +69,7 @@ class RAD_SEM(OdeSplitSys):
     xs: jax.Array
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
-        # get stiffness matrix and mass vector 
+        # get stiffness matrix and mass vector
         self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
         # get collocation points
         self.xs = sys_assembler.collocation_points()
@@ -76,14 +77,22 @@ class RAD_SEM(OdeSplitSys):
         self.bat_mat = gen_bateman_matrix(['u_0', 'u_1'], decay_lib)
         super().__init__()
 
-    def _source(self, un):
+    def _source_poly(self, un):
         #n = un.shape[1]
         s = jnp.zeros(un.shape)
         # implement a nonlinear transfer from last to first species
         transfer = 10. * un[:,-1]**5
         s = s.at[:,0].add(transfer)
-        s = s.at[:,1].add(- transfer)
+        s = s.at[:,1].add(-transfer)
         #TODO implement more reasonable / interesting nonlinear source
+        return s
+
+    def _source_nonlin_evap(self, un):
+        s = jnp.zeros(un.shape)
+        transfer = mxf_liq_vapor_nonlin(un.at[:,0].get(), un.at[:-1].get(), 1e-4, 1.0, 1.0)
+        import pdb; pdb.set_trace()
+        s = s.at[:,0].add(transfer)
+        s = s.at[:,1].add(-transfer)
         return s
 
     @jax.jit
@@ -91,7 +100,7 @@ class RAD_SEM(OdeSplitSys):
         n = self.bat_mat.shape[0]
         un = stack_u(u, n)
         # nonlin rhs
-        s = self._source(un)
+        s = self._source_nonlin_evap(un)
         # add bateman
         lub = un @ self.bat_mat.transpose()
         udot = lub + s - (self.A @ un) / self.Ml.reshape((-1, 1))

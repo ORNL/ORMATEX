@@ -21,7 +21,9 @@ def mxf_liq_vapor_nonlin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.
         u_a: species concentration in the aqueous phase (mol/cc)
         u_g: species concentration in the gas phase (mol/cc)
     """
-    return k * u_g * (u_g*k_g - u_a*k_a)
+    s = k * u_g * (k_g*u_g - k_a*u_a)
+    import pdb; pdb.set_trace()
+    return s
 
 @eqx.filter_jit
 def mxf_liq_vapor_bubble_ig(u_a: jax.Array, u_g: jax.Array, cvol: float, alpha_g=0.01, k=1e-2, h=1e-4, nb=10., T=900.):
