@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 from ormatex_py.ode_sys import MatrixLinOp
 from ormatex_py.matexp_krylov import phi_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k, f_phi_k_ext, f_phi_k_appl
+from ormatex_py.matexp_phi import f_phi_k, f_phi_k_ext, f_phi_k_appl, f_phi_k_sq
 
 jax.config.update("jax_enable_x64", True)
 
@@ -35,6 +35,8 @@ def test_phi_0():
     assert jnp.allclose(jnp.diag(jax_phi_0), ref_phi[0,:])
     jax_phi_0 = f_phi_k_ext(d_z, k=0)
     assert jnp.allclose(jnp.diag(jax_phi_0), ref_phi[0,:])
+    jax_phi_0 = f_phi_k_sq(d_z, k=0)
+    assert jnp.allclose(jnp.diag(jax_phi_0), ref_phi[0,:])
 
     np.random.seed(42)
     for it in range(3):
@@ -47,18 +49,19 @@ def test_phi_0():
         assert jnp.allclose(np_phi_0, jax_phi_0)
         jax_phi_0_ext = f_phi_k_ext(test_a, k=0)
         assert jnp.allclose(np_phi_0, jax_phi_0_ext)
+        jax_phi_0_sq = f_phi_k_sq(test_a, k=0)
+        assert jnp.allclose(np_phi_0, jax_phi_0_sq)
 
-def test_phi_1():
-    """
-    Computes phi_1(A)
-    """
-
+def run_test_phi_k(k):
     # test a diagonal matrix with reference values
-    d_z = jnp.diag(ref_z)
-    jax_phi_1 = f_phi_k(d_z, k=1)
-    assert jnp.allclose(jnp.diag(jax_phi_1), ref_phi[1,:])
-    jax_phi_1 = f_phi_k_ext(d_z, k=1)
-    assert jnp.allclose(jnp.diag(jax_phi_1), ref_phi[1,:])
+    if k < ref_phi.shape[0]:
+        d_z = jnp.diag(ref_z)
+        jax_phi_k = f_phi_k(d_z, k=k)
+        assert jnp.allclose(jnp.diag(jax_phi_k), ref_phi[k,:])
+        jax_phi_k = f_phi_k_ext(d_z, k=k)
+        assert jnp.allclose(jnp.diag(jax_phi_k), ref_phi[k,:])
+        jax_phi_k = f_phi_k_sq(d_z, k=k)
+        assert jnp.allclose(jnp.diag(jax_phi_k), ref_phi[k,:])
 
     np.random.seed(42)
     for it in range(3):
@@ -67,32 +70,55 @@ def test_phi_1():
         test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
 
         # test against different impl.
-        jax_phi_1 = f_phi_k(test_a, k=1)
-        jax_phi_1_ext = f_phi_k_ext(test_a, k=1)
-        assert jnp.allclose(jax_phi_1, jax_phi_1_ext)
+        jax_phi_k = f_phi_k(test_a, k=k)
+        jax_phi_k_ext = f_phi_k_ext(test_a, k=k)
+        assert jnp.allclose(jax_phi_k, jax_phi_k_ext)
+        jax_phi_k_sq = f_phi_k_sq(test_a, k=k)
+        #jax.debug.print("{a}\n{b}", a=jax_phi_k, b=jax_phi_k_poly)
+        assert jnp.allclose(jax_phi_k_sq, jax_phi_k_ext)
 
-def test_phi_k():
+def test_phi_1():
+    """
+    Computes phi_1(A)
+    """
+    run_test_phi_k(1)
+
+def test_phi_k_seqential():
     """
     Computes phi_k(A) with k >= 2
     """
     for k in range(2, ref_phi.shape[0]):
-        # test a diagonal matrix with reference values
-        d_z = jnp.diag(ref_z)
-        jax_phi_k = f_phi_k(d_z, k=k)
-        assert jnp.allclose(jnp.diag(jax_phi_k), ref_phi[k,:])
-        jax_phi_k = f_phi_k_ext(d_z, k=k)
-        assert jnp.allclose(jnp.diag(jax_phi_k), ref_phi[k,:])
+        run_test_phi_k(k)
 
-        np.random.seed(42)
-        for it in range(3):
-            dim = 5*(it+1)
-            np_test_a = np.random.randn(dim, dim)
-            test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
 
-            # test against different impl.
-            jax_phi_k = f_phi_k(test_a, k=k)
-            jax_phi_k_ext = f_phi_k_ext(test_a, k=k)
-            assert jnp.allclose(jax_phi_k, jax_phi_k_ext)
+def test_phi_k_all():   
+    """
+    test routines that compute phi_k(A) for all k < k_max
+    """
+    
+    k_max = ref_phi.shape[0]-1
+    d_z = jnp.diag(ref_z)
+    jax_phi_ks = f_phi_k_ext(d_z, k=k_max, return_all=True)
+    diags = lambda z: jnp.einsum("kii -> ki", z)
+    assert jnp.allclose(diags(jax_phi_ks), ref_phi)
+    jax_phi_ks = f_phi_k_sq(d_z, k=k_max, return_all=True)
+    jax.debug.print("{a}\n{b}", a=diags(jax_phi_ks), b=ref_phi)
+    assert jnp.allclose(diags(jax_phi_ks), ref_phi)
+
+    #np.random.seed(42)
+    #for it in range(3):
+    #    dim = 5*(it+1)
+    #    np_test_a = np.random.randn(dim, dim)
+    #    test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
+
+    #    # test against different impl.
+    #    jax_phi_k = f_phi_k(test_a, k=k)
+    #    jax_phi_k_ext = f_phi_k_ext(test_a, k=k)
+    #    assert jnp.allclose(jax_phi_k, jax_phi_k_ext)
+    #    jax_phi_k_sq = f_phi_k_sq(test_a, k=k)
+    #    #jax.debug.print("{a}\n{b}", a=jax_phi_k, b=jax_phi_k_poly)
+    #    assert jnp.allclose(jax_phi_k_sq, jax_phi_k_ext)
+
 
 def test_phi_k_appl():
     """
