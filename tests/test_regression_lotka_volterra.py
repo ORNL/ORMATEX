@@ -30,7 +30,7 @@ def test_lotka_volterra():
             tf = 20.0
             nsteps = int(tf/dt)
             t_true, y_true = integrate_wrapper.integrate(
-                    sys, y0, t0, dt, nsteps, "dopri5")
+                    sys, y0, t0, dt, nsteps, "rk4")
 
             # compute ormatex result
             y0 = jnp.array([0.1, 0.2])
