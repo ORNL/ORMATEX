@@ -80,7 +80,7 @@ def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler"):
             max_steps=nsteps,
             )
     # return res.ts, res.ys
-    return jnp.hstack(([t0], res.ts)), jnp.vstack((y0, res.ys))
+    return jnp.hstack((jnp.asarray([t0]), res.ts)), jnp.vstack((y0, res.ys))
 
 
 def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2", **kwargs):

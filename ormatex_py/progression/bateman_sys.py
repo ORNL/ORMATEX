@@ -194,7 +194,7 @@ def analytic_bateman_s3(method="epi2", do_plot=True):
     test_ode_sys = TestBatemanSysJac(keymap, decay_lib_sp)
     y0 = jnp.array([n0, 0.0, 0.0])
     nsteps = int((tf - t0) / dt)
-    t_res, y_res = integrate_wrapper.integrate(test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12)
+    t_res, y_res = integrate_wrapper.integrate(test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=12)
     t_res = np.asarray(t_res)
     y_res = np.asarray(y_res)
 
@@ -273,7 +273,7 @@ if __name__ == "__main__":
     tf = 1000.0
     dt = 10.0
     nsteps = int((tf - t0) / dt)
-    t_res, y_res = integrate_wrapper.integrate(test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12)
+    t_res, y_res = integrate_wrapper.integrate(test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=12)
 
     t_res = np.asarray(t_res)
     y_res = np.asarray(y_res)
