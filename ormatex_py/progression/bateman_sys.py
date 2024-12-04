@@ -146,7 +146,7 @@ def analytic_bateman_single_parent(t, batmat, n0):
         batmat: bateman matrix
         n0: initial concentration of the 0th species
     """
-    blib = np.asarray(batmat, dtype=np.float128)
+    blib = np.asarray(batmat, dtype=np.float64)
     ns = blib.shape[0]
     nt = len(t)
     assert blib.shape[0] == blib.shape[1]
@@ -155,13 +155,13 @@ def analytic_bateman_single_parent(t, batmat, n0):
     sdiag = blib.diagonal(offset=-1)
     assert np.allclose(sdiag, -1.0*diag[0:ns-1])
     lmbd = -1.0*diag
-    N = np.zeros((nt, ns), dtype=np.float128)
+    N = np.zeros((nt, ns), dtype=np.float64)
     for n in range(1, ns+1):
         lmbd_prod = 1.0
         for i in range(n-1):
             if i >= 0:
                 lmbd_prod *= lmbd[i]
-        sum_k = np.zeros(nt, dtype=np.float128)
+        sum_k = np.zeros(nt, dtype=np.float64)
         for i in range(n):
             prod_l = 1.0
             for j in range(n):
