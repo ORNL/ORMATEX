@@ -60,16 +60,15 @@ def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k
                   k, hs, norm_v)
 
     def body_subdiag(k, qv, qs, norm_v):
-        qv *= 1./norm_v
-        qs = qs.at[:, k+1].set(qv)
-        return (qv, qs)
+        qs = qs.at[:, k+1].set(qv / norm_v)
+        return qs
 
     not_breakdown = (norm_v > breakdown_tol)
 
     update_last = not_final_it & not_breakdown
-    qv, qs = lax.cond(update_last,
+    qs = lax.cond(update_last,
         lambda k, qv, qs, norm_v: body_subdiag(k, qv, qs, norm_v),
-        lambda k, qv, qs, norm_v: (qv, qs),
+        lambda k, qv, qs, norm_v: qs,
         k, qv, qs, norm_v)
 
     return hs, qs, not_breakdown
@@ -97,7 +96,12 @@ def arnoldi_lop_jit(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int)
     qs = jax.numpy.zeros((b_nrows, m))
 
     m = hs.shape[0]
-    q0 = b / jnp.linalg.norm(b, 2)
+    norm_b = jnp.linalg.norm(b, 2)
+    not_breakdown = (norm_b > 0.)
+    q0 = lax.cond(not_breakdown, \
+                  lambda b, norm_b: b / norm_b, \
+                  lambda k, norm_b: b, \
+                  b, norm_b)
     qs = qs.at[:, 0].set(q0.flatten())
     k = 0
 
@@ -111,14 +115,14 @@ def arnoldi_lop_jit(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int)
         _, _, k, not_breakdown = args
         return (k < m) & not_breakdown
 
-    hs, qs, breakdown_k, _ = lax.while_loop(cond_arnoldi, body_arnoldi, (hs, qs, k, True))
+    hs, qs, breakdown_k, _ = lax.while_loop(cond_arnoldi, body_arnoldi, (hs, qs, k, not_breakdown))
     return hs, qs, breakdown_k
 
-def arnoldi_lop(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int) -> (jax.Array, jax.Array, int):
+def arnoldi_lop(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int) -> (jax.Array, jax.Array):
 
     hs, qs, breakdown_k = arnoldi_lop_jit(a_lo, a_scale, b, m, iom)
 
     #print(jnp.diag(hs, -2), jnp.diag(hs, -1), jnp.diag(hs, 0), jnp.diag(hs, 1))
     #print(f"Arnoldi had breakdown at {breakdown_k}, m={m}, iom={iom}.")
 
-    return qs[:,:breakdown_k], hs[:breakdown_k,:breakdown_k], breakdown_k
+    return qs[:,:breakdown_k], hs[:breakdown_k,:breakdown_k]

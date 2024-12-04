@@ -24,11 +24,11 @@ def test_arnoldi_ortho():
         iom = 10000
         # scale the linop (optional, typically 1.0)
         dt = 2.3
-        qs, hs, bd = arnoldi_lop(test_a_lop, dt, b, m, iom)
+        qs, hs = arnoldi_lop(test_a_lop, dt, b, m, iom)
         print("qs shape: ", qs.shape)
         print("hs shape: ", hs.shape)
         # since test_a is only 10x10, check that breakdown happened
-        assert bd == 10
+        assert hs.shape[0] == 10
         # ensure orthonormal Q: Q^T*Q = I
         assert jnp.allclose(qs.T @ qs, jnp.eye(10))
         # ensure Q^T*A*Q = H
