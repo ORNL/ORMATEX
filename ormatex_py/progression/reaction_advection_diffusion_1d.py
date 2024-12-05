@@ -92,7 +92,7 @@ class RAD_SEM(OdeSplitSys):
         # the surface area increases thus providing a simple positive nonlinear
         # feedback mechanism for the species transfer rate.
         s = jnp.zeros(un.shape)
-        transfer = mxf_liq_vapor_nonlin(un.at[:,0].get(), un.at[:,-1].get(), 2.0, 1.0, 1.0)
+        transfer = mxf_liq_vapor_nonlin(un.at[:,0].get(), un.at[:,1].get(), 2.0, 1.0, 1.0)
         s = s.at[:,0].add(transfer)
         s = s.at[:,1].add(-transfer)
         return s
