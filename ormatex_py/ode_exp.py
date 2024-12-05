@@ -8,7 +8,7 @@ from functools import partial
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k_ext
+from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq
 
 ##TODO:
 # - RB methods are only second and third order for f(t,y) = f(y) non-autonomous systems

@@ -118,9 +118,9 @@ def f_phi_k_sq(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
     # use infty matrix norm instead of spectral radius to determine scaling
     theta = jnp.linalg.norm(z, ord=np.inf)
     # TODO: determine the optimal initial ploynomial degree and the number of squarings
-    scale_fact = 5
+    scale_fact = 16
     init_poly_deg = 4
-    Nscale = jnp.floor(scale_fact * jnp.log2(theta)).astype(jnp.int32)
+    Nscale = jnp.floor(jnp.log2(theta * scale_fact)).astype(int)
     tt_N = 2 ** Nscale
 
     # compute the initial approximation of the phi functions for scaled z
