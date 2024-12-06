@@ -292,3 +292,22 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig('reac_adv_diff_s9.png')
     plt.close()
+
+
+    dtJ = np.asarray(dt*ode_sys.fjac(0., y_res[-1]).dense())
+
+    print(dtJ)
+
+    eigdtJ = np.linalg.eig(dtJ)[0]
+    plt.figure()
+    plt.scatter(-eigdtJ.real, eigdtJ.imag)
+    plt.ylabel('Imaginary')
+    plt.xlabel('Real')
+    plt.xscale('log')
+    plt.title("dt*Jac eigenvalues")
+    plt.savefig('rad_1d_9s_eigplot.png')
+    plt.close()
+
+    dtJnorm = np.linalg.norm(dtJ, ord=np.inf)
+    dtJeig = np.max(np.abs(eigdtJ))
+    print("CFL: %0.4f/%0.4f, Ndof: %d" % (dtJeig, dtJnorm, xs.size))
