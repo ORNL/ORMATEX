@@ -79,23 +79,7 @@ class RAD_SEM(OdeSplitSys):
         return MatrixLinOp(L)
 
 
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-    import argparse
-
-    jax.config.update("jax_enable_x64", True)
-    print(f"Running on {jax.devices()}.")
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
-    parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
-    parser.add_argument("-p", help="basis order", type=int, default=2)
-    parser.add_argument("-per", help="impose periodic BC", action='store_true')
-    parser.add_argument("-method", help="time step method", type=str, default="epi3")
-    parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
-    args = parser.parse_args()
-    jax.config.update("jax_disable_jit", args.nojit)
-
+def main(dt, method='epi3', periodic=True, mr=6, p=2):
     # create the mesh
     dwidth = 1.0
     mesh0 = fem.MeshLine1(np.array([[0., dwidth]])).with_boundaries({
@@ -103,10 +87,9 @@ if __name__ == "__main__":
         'right': lambda x: np.isclose(x[0], dwidth)
     })
     # mesh refinement
-    nrefs = args.mr
+    nrefs = mr
     mesh = mesh0.refined(nrefs)
 
-    periodic = args.per
     if periodic:
         mesh = fem.MeshLine1DG.periodic(
             mesh,
@@ -120,7 +103,7 @@ if __name__ == "__main__":
 
     # init the system
     n_species = 3
-    sem = AdDiffSEM(mesh, p=args.p, params=param_dict)
+    sem = AdDiffSEM(mesh, p=p, params=param_dict)
     ode_sys = RAD_SEM(sem)
     t = 0.0
 
@@ -145,7 +128,7 @@ if __name__ == "__main__":
 
     # time step settings
     t0 = 0.
-    dt = 0.1
+    dt = dt
     nsteps = 12
 
     # Compute analytic solution. In this case,
@@ -161,7 +144,6 @@ if __name__ == "__main__":
     y_true = np.asarray(profile_true)
 
     # integrate the system
-    method = args.method
     t_res, y_res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10)
 
@@ -188,7 +170,7 @@ if __name__ == "__main__":
                 diff = u_calc - u_analytic
                 mae = np.mean(np.abs(diff))
                 mae_list.append(mae)
-                ax[n].set_title("Method: %s, MAE: %0.4e" % (method, mae))
+                ax[n].set_title(r"Method: %s, MAE: %0.4e, $\Delta$ t=%0.2e" % (method, mae, dt))
 
     # TODO: mark reactor boundaries on the plot
     # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
@@ -196,7 +178,7 @@ if __name__ == "__main__":
     ax[0].set_ylabel("concentration [mol/cc]")
     ax[0].set_xlabel("location [m]")
     plt.tight_layout()
-    plt.savefig('reac_adv_diff_s3.png')
+    plt.savefig('reac_adv_diff_s3_%s.png' % method)
     plt.close()
 
     print("=== Species MAEs at t=%0.4e ===" % t_res[-1])
@@ -207,3 +189,40 @@ if __name__ == "__main__":
     mesh_spacing = (sx[1] - sx[0])
     cfl = dt * vel / mesh_spacing
     print("mesh_spacing: %0.4e, CFL=%0.4f" % (mesh_spacing, cfl))
+    return mae_list
+
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    import argparse
+
+    jax.config.update("jax_enable_x64", True)
+    print(f"Running on {jax.devices()}.")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-sweep", help="run method sweep", default=False, action='store_true')
+    parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
+    parser.add_argument("-p", help="basis order", type=int, default=2)
+    parser.add_argument("-dt", help="time step size", type=float, default=0.1)
+    parser.add_argument("-per", help="impose periodic BC", action='store_true')
+    parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
+    args = parser.parse_args()
+    jax.config.update("jax_disable_jit", args.nojit)
+
+    if args.sweep:
+        methods = ['exprb2', 'exprb3', 'epi3', 'implicit_euler', 'implicit_esdirk3']
+        dts = [0.05, 0.1, 0.15, 0.2]
+        mae_sweep = {}
+        for method in methods:
+            mae_sweep[method] = []
+            for dt in dts:
+                mae = main(dt, method, True, args.mr, args.p)
+                mae_sweep[method].append(([dt] + mae))
+            print("=== Method: %s" % method)
+            for mae_res in mae_sweep[method]:
+                print(*["%0.4e" % r for r in mae_res], sep=', ', end='')
+                print()
+    else:
+        main(args.dt, args.method, args.per, args.mr, args.p)
+
