@@ -305,7 +305,7 @@ if __name__ == "__main__":
     plt.xlabel('Real')
     plt.xscale('log')
     plt.title("dt*Jac eigenvalues")
-    plt.savefig('rad_1d_9s_eigplot.png')
+    plt.savefig('reac_adv_diff_s9_eigplot.png')
     plt.close()
 
     dtJnorm = np.linalg.norm(dtJ, ord=np.inf)
