@@ -1,5 +1,13 @@
 """
 This example solves a system of nine advected, coupled reactive species.
+This example contains nonlinear reactions, and
+coupled to the advection and diffusion system,
+no analytic solution is availible.
+
+The purpose of this example is to demonstrate the relative
+performance of different numerical integration schemes and
+to compare the results of the exponential integrators to
+traditional implicit time integration methods.
 """
 import numpy as np
 import scipy as sp
@@ -12,6 +20,7 @@ import equinox as eqx
 import skfem as fem
 
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
+from ormatex_py.ode_utils import stack_u, flatten_u
 
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
@@ -89,13 +98,6 @@ def flux_profile(h: float, x: jax.Array, idxs: jax.Array):
     phi = jnp.zeros(x.shape)
     phi = phi.at[idxs[0]].set(jnp.cos(jnp.pi * (x[idxs[0]]-h/2.) / h))
     return jnp.array([p * phi]).transpose()
-
-def stack_u(u: jax.Array, n: int):
-    return u.reshape((-1, n), order='F')
-
-def flatten_u(u: jax.Array):
-    # use column major ordering
-    return u.reshape((-1, ), order='F')
 
 class RAD_SEM(OdeSplitSys):
     """

@@ -1,0 +1,209 @@
+"""
+This example solves a system of three advected, coupled reactive species.  This example only contains linear Bateman decay
+for which an analytic solution may be developed.
+
+The purpose of this example is to benchmark the various
+exponential integration methods to ensure the expected accuracy
+and order of accuracy is obtained when compared with
+the analytic result.
+"""
+import numpy as np
+import scipy as sp
+
+import jax
+import jax.numpy as jnp
+from jax.experimental import sparse as jsp
+import equinox as eqx
+
+import skfem as fem
+
+from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
+from ormatex_py.ode_utils import stack_u, flatten_u
+
+from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
+from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
+from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix, analytic_bateman_single_parent
+from ormatex_py import integrate_wrapper
+
+jax.config.update("jax_enable_x64", True)
+keymap = ["c_0", "c_1", "c_2"]
+decay_lib = {
+    'c_0':  ('c_1', 1.0e-1*10),
+    'c_1':  ('c_2', 1.0e1*10),
+    'c_2':  ('none', 1.0e-3*10),
+}
+
+
+class RAD_SEM(OdeSplitSys):
+    """
+    Define ODE System associated to RAD problem
+    """
+    bat_mat: jax.Array
+    A: jsp.JAXSparse
+    Ml: jax.Array
+    xs: jax.Array
+
+    def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
+        # get stiffness matrix and mass vector
+        self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
+        # get collocation points
+        self.xs = sys_assembler.collocation_points()
+        # get bateman matrix
+        self.bat_mat = gen_bateman_matrix(keymap, decay_lib)
+        super().__init__()
+
+    @jax.jit
+    def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        n = self.bat_mat.shape[0]
+        un = stack_u(u, n)
+        # bateman
+        lub = un @ self.bat_mat.transpose()
+        # full system
+        udot = lub - (self.A @ un) / self.Ml.reshape((-1, 1))
+        # integrators currently expect a flat U
+        return flatten_u(udot)
+
+    @jax.jit
+    def _fl(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
+        """
+        define a linear operator (for testing purposes)
+        # TODO: uses dense Kronecker product, should be a BlockDiagLinOp (not implemented yet)
+        """
+        n = self.bat_mat.shape[0]
+        Ndof = self.Ml.shape[0]
+        # only use Bateman terms for L
+        #L = jnp.kron(self.bat_mat, jnp.eye(Ndof))
+        # only use adv-diff terms for L
+        L = jnp.kron(jnp.eye(n), (- self.A / self.Ml.reshape((-1, 1))).todense())
+        #print(L)
+        return MatrixLinOp(L)
+
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    import argparse
+
+    jax.config.update("jax_enable_x64", True)
+    print(f"Running on {jax.devices()}.")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
+    parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
+    parser.add_argument("-p", help="basis order", type=int, default=2)
+    parser.add_argument("-per", help="impose periodic BC", action='store_true')
+    parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
+    args = parser.parse_args()
+    jax.config.update("jax_disable_jit", args.nojit)
+
+    # create the mesh
+    dwidth = 1.0
+    mesh0 = fem.MeshLine1(np.array([[0., dwidth]])).with_boundaries({
+        'left': lambda x: np.isclose(x[0], 0.),
+        'right': lambda x: np.isclose(x[0], dwidth)
+    })
+    # mesh refinement
+    nrefs = args.mr
+    mesh = mesh0.refined(nrefs)
+
+    periodic = args.per
+    if periodic:
+        mesh = fem.MeshLine1DG.periodic(
+            mesh,
+            mesh.boundaries['right'],
+            mesh.boundaries['left'],
+        )
+
+    # diffusion coefficient
+    vel = 0.5
+    param_dict = {"nu": 1e-10, "vel": vel}
+
+    # init the system
+    n_species = 3
+    sem = AdDiffSEM(mesh, p=args.p, params=param_dict)
+    ode_sys = RAD_SEM(sem)
+    t = 0.0
+
+    # mesh mask for initial conditions
+    xs = np.asarray(sem.basis.doflocs.flatten())
+
+    # initial profiles for each species
+    wc, ww = 0.4, 0.05
+    g_prof0 = lambda x: 0.0*x + 1e-16
+    g_prof1 = lambda x: np.exp(-((x-wc)/(2*ww))**2.0) * 1.0
+    if periodic:
+        g_prof_exact = lambda t, x: np.exp(-((1.0-((x - (wc+t*vel)) % 1)) / (2*ww))**2.0) + \
+            np.exp(-((((x - (wc+t*vel)) % 1)) / (2*ww))**2.0)
+    else:
+        g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel)) / (2*ww))**2.0)
+    y0_profile = [
+            g_prof1(xs),
+            g_prof0(xs),
+            g_prof0(xs),
+    ]
+    y0 = flatten_u(jnp.asarray(y0_profile).transpose())
+
+    # time step settings
+    t0 = 0.
+    dt = 0.1
+    nsteps = 12
+
+    # Compute analytic solution. In this case,
+    # the analytic solution is the product of pure bateman decay
+    # solution with the advected gaussian wave.
+    bat_mat = gen_bateman_matrix(keymap, decay_lib)
+    ts = np.linspace(0.0, nsteps*dt, nsteps+1)
+    scale_true = analytic_bateman_single_parent(ts, bat_mat, 1.0)
+    profile_true = []
+    for i, t in enumerate(ts):
+        prof = scale_true[i].reshape((-1,1)) @ g_prof_exact(t, ode_sys.xs).reshape((-1,1)).T
+        profile_true.append(prof)
+    y_true = np.asarray(profile_true)
+
+    # integrate the system
+    method = args.method
+    t_res, y_res = integrate_wrapper.integrate(
+            ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10)
+
+    si = xs.argsort()
+    sx = xs[si]
+    fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5,10))
+    mae_list = []
+    for i in range(nsteps):
+        if i == nsteps-1:
+            t = t_res[i]
+            yf = y_res[i]
+            uf = stack_u(yf, n_species)
+            ut = y_true[i]
+            for n in range(0, n_species):
+                us = uf[:, n]
+                u_true = ut[n, :]
+                u_calc = us[si]
+                u_analytic = u_true[si]
+                ax[n].plot(sx, u_calc, label='t=%0.4f, species=%s' % (t, str(n)))
+                ax[n].plot(sx, u_analytic, ls='--', label='t=%0.4f, true' % (t))
+                ax[n].legend()
+                ax[n].grid(ls='--')
+                # compute diff
+                diff = u_calc - u_analytic
+                mae = np.mean(np.abs(diff))
+                mae_list.append(mae)
+                ax[n].set_title("Method: %s, MAE: %0.4e" % (method, mae))
+
+    # TODO: mark reactor boundaries on the plot
+    # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
+    # ax[0].set_yscale('log')
+    ax[0].set_ylabel("concentration [mol/cc]")
+    ax[0].set_xlabel("location [m]")
+    plt.tight_layout()
+    plt.savefig('reac_adv_diff_s3.png')
+    plt.close()
+
+    print("=== Species MAEs at t=%0.4e ===" % t_res[-1])
+    [print("%0.4e" % a, end=', ') for a in mae_list]
+    print()
+    si = xs.argsort()
+    sx = xs[si]
+    mesh_spacing = (sx[1] - sx[0])
+    cfl = dt * vel / mesh_spacing
+    print("mesh_spacing: %0.4e, CFL=%0.4f" % (mesh_spacing, cfl))

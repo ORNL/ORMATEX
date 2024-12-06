@@ -6,7 +6,8 @@ import jax
 import jax.numpy as jnp
 
 from ormatex_py.ode_sys import OdeSys
-from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator, RKIntegrator
+from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
+from ormatex_py.ode_explicit import RKIntegrator
 
 
 def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
