@@ -90,12 +90,11 @@ def test_phi_k_seqential():
     for k in range(2, ref_phi.shape[0]):
         run_test_phi_k(k)
 
-
-def test_phi_k_all():   
+def test_phi_k_all():
     """
     test routines that compute phi_k(A) for all k < k_max
     """
-    
+
     k_max = ref_phi.shape[0]-1
     d_z = jnp.diag(ref_z)
     jax_phi_ks = f_phi_k_ext(d_z, k=k_max, return_all=True)

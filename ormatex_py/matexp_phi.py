@@ -75,12 +75,13 @@ def f_phi_k_ext(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
     if return_all:
         phi_k = phi_ks[:N,:].reshape((N,k+1,N))
         phi_k = phi_k.swapaxes(0, 1) # swap the k index to first axes
+        return phi_k
     else:
         phi_k = phi_ks[:N,-N:]
-    return phi_k
+        return phi_k
 
-@partial(jax.jit, static_argnums=(1,2,3))
-def f_phi_k_poly(z: jax.Array, k: int, return_all: bool=False, poly_deg: int=4) -> jax.Array:
+@partial(jax.jit, static_argnums=(1,2))
+def f_phi_k_poly_all(z: jax.Array, k: int, poly_deg: int=4) -> list[jax.Array]:
     """
     Computes phi_k(Z) for dense Z, using a Taylor polynomial
     """
@@ -95,21 +96,26 @@ def f_phi_k_poly(z: jax.Array, k: int, return_all: bool=False, poly_deg: int=4) 
         zpow_kfac = z @ zpow_kfac / j
         poly_approx = poly_approx + zpow_kfac
 
-    if return_all:
-        phi_ks = jnp.zeros((k+1, N, N))
-        phi_ks = phi_ks.at[k].set(poly_approx)
-        fact_j = fact_k / k
-        for j in range(k-1, -1, -1):
-            # recursion formula phi_j(z) = 1/j! + z phi_{j+1}(z)
-            phi_ks = phi_ks.at[j].set( jnp.eye(N)/fact_j + z @ phi_ks[j+1] )
-            fact_j = fact_j / j
-    else:
-        phi_ks = poly_approx
+    #phi_ks = jnp.zeros((k+1, N, N))
+    #phi_ks = phi_ks.at[k].set(poly_approx)
+    #fact_j = fact_k / k
+    #for j in range(k-1, -1, -1):
+    #    # recursion formula phi_j(z) = 1/j! + z phi_{j+1}(z)
+    #    phi_ks = phi_ks.at[j].set( jnp.eye(N)/fact_j + z @ phi_ks[j+1] )
+    #    fact_j = fact_j / j
+
+    phi_ks = [None] * (k+1)
+    phi_ks[k] = poly_approx
+    fact_j = fact_k / k
+    for j in range(k-1, -1, -1):
+        # recursion formula phi_j(z) = 1/j! + z phi_{j+1}(z)
+        phi_ks[j] = jnp.eye(N)/fact_j + z @ phi_ks[j+1]
+        fact_j = fact_j / j
 
     return phi_ks
 
-@partial(jax.jit, static_argnums=(1,2))
-def f_phi_k_sq(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
+@partial(jax.jit, static_argnums=(1,))
+def f_phi_k_sq_all(z: jax.Array, k: int) -> list[jax.Array]:
     """
     Computes phi_k(Z) for dense Z, using the scaling and squaring relations
     """
@@ -117,37 +123,63 @@ def f_phi_k_sq(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
 
     # use infty matrix norm instead of spectral radius to determine scaling
     theta = jnp.linalg.norm(z, ord=np.inf)
-    # TODO: determine the optimal initial ploynomial degree and the number of squarings
+    # TODO: determine the optimal initial polynomial degree and the number of squarings
     scale_fact = 16
     init_poly_deg = 4
     Nscale = jnp.floor(jnp.log2(theta * scale_fact)).astype(int)
     tt_N = 2 ** Nscale
 
     # compute the initial approximation of the phi functions for scaled z
-    phi_ks = f_phi_k_poly(z / tt_N, k, return_all=True, poly_deg=init_poly_deg)
+    phi_ks = f_phi_k_poly_all(z / tt_N, k, poly_deg=init_poly_deg)
 
     # determine scaling constants
     zero_to_k = jax.lax.iota(z.dtype, k+1)
     scalings = 1. / (jax.scipy.special.factorial(zero_to_k[:,None] - zero_to_k[None,:]) * 2. ** zero_to_k[:,None])
-    #jax.debug.print("scalings={a}, Nscale={b}", a=scalings, b=Nscale)
+
+    #jax.debug.print("scalings={a}, Nscale={b}, {c}", a=scalings, b=Nscale, c=type(Nscale))
+    #jax.debug.print("phi_ks_init=\n{x}", x=[phi_k[0:3,0:3] for phi_k in phi_ks])
+
+    ## TODO: this implementation caused a bug on my GPU with jit (not with CPU or without jit)
+    ## using a list of jax.Array instead of a 3d tensor fixed it
 
     # scaling and modified squaring for all phi_ks at once
+    #def sq_step(counter, args):
+    #    phi_ks, scalings = args
+    #    for j in range(k, 0, -1):
+    #        # first term in the sum and first correction
+    #        phi_ks = phi_ks.at[j].set((phi_ks[0] @ phi_ks[j] + phi_ks[j]) * scalings[j,j])
+    #        # remaining corrections
+    #        jax.debug.print("scale=\n{x}", x=scalings[j,1:j])
+    #        #jax.debug.print("phi_scale=\n{x}", x=phi_ks[1:j,...])
+    #        phi_ks = phi_ks.at[j].add(jnp.einsum("i...,i->...", phi_ks[1:j,...], scalings[j,1:j]))
+    #    # traditional squaring of exp
+    #    phi_ks = phi_ks.at[0].set(phi_ks[0] @ phi_ks[0])
+    #    jax.debug.print("phi_ks=\n{x}", x=phi_ks[:,1:4,1:4])
+    #    return phi_ks, scalings
+
     def sq_step(counter, phi_ks):
         for j in range(k, 0, -1):
-            # first term in the sum and first correction
-            phi_ks = phi_ks.at[j].set((phi_ks[0] @ phi_ks[j] + phi_ks[j]) * scalings[j,j])
-            # remaining corrections
-            phi_ks = phi_ks.at[j].add(jnp.einsum("i...,i->...", phi_ks[1:j,...], scalings[j,1:j]))
+            # first term in the sum and last correction
+            phi_ks[j] = (phi_ks[0] @ phi_ks[j] + phi_ks[j]) * scalings[j,j]
+            for jj in range(j-1, 0, -1):
+                # remaining corrections
+                phi_ks[j] = phi_ks[j] + phi_ks[jj] * scalings[j,jj]
         # traditional squaring of exp
-        phi_ks = phi_ks.at[0].set(phi_ks[0] @ phi_ks[0])
+        phi_ks[0] = phi_ks[0] @ phi_ks[0]
+        #jax.debug.print("phi_ks=\n{x}", x=[phi_k[0:3,0:3] for phi_k in phi_ks])
         return phi_ks
 
     phi_ks = jax.lax.fori_loop(0, Nscale, sq_step, phi_ks)
 
-    if not return_all:
-        phi_ks = phi_ks[k]
-
     return phi_ks
+
+def f_phi_k_sq(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
+
+    phi_ks = f_phi_k_sq_all(z, k)
+    if return_all:
+        return jnp.array(phi_ks)
+    else:
+        return phi_ks[k]
 
 ## methods for phi_k(A)B
 

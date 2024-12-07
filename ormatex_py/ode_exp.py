@@ -8,7 +8,7 @@ from functools import partial
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq
+from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all
 
 ##TODO:
 # - RB methods are only second and third order for f(t,y) = f(y) non-autonomous systems
@@ -268,7 +268,9 @@ class ExpSplitIntegrator(IntegrateSys):
 
             self._cached_phiLs = dict()
             for c, ks in cks:
-                phikLs = f_phi_k_ext(dt*c*L, max(ks), return_all=True)
+                # use scaling and modified squaring
+                phikLs = f_phi_k_sq_all(dt*c*L, max(ks))
+                #phikLs = f_phi_k_ext(dt*c*L, max(ks), return_all=True)
                 for k in ks:
                     self._cached_phiLs[(c,k)] = phikLs[k]
             self._cached_dt = dt
@@ -277,7 +279,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
     @jax.jit
     def _step_exp1_jit(t, yt, dt, sys, phiLs):
-        print("jit-compiling exp1 kernel")
+        print("jit-compiling exp1_dense kernel")
         fyt = sys.frhs(t, yt)
         y_new = yt + dt * phiLs[(1.,1)] @ fyt
         # no error est. avail
@@ -302,7 +304,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
     @partial(jax.jit, static_argnames=('c2', ))
     def _step_exp2_jit(t, yt, dt, sys, sys_lop, phiLs, c2):
-        print("jit-compiling exp2 kernel")
+        print("jit-compiling exp2_dense kernel")
         fyt = sys.frhs(t, yt)
         # 2nd stage
         t_2 = t + c2*dt
@@ -337,7 +339,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
     @partial(jax.jit, static_argnames=('c2', 'c3'))
     def _step_exp3_jit(t, yt, dt, sys, sys_lop, phiLs, c2, c3):
-        print("jit-compiling exp3 kernel")
+        print("jit-compiling exp3_dense kernel")
 
         fyt = sys.frhs(t, yt)
 
