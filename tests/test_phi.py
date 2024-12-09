@@ -104,21 +104,6 @@ def test_phi_k_all():
     jax.debug.print("{a}\n{b}", a=diags(jax_phi_ks), b=ref_phi)
     assert jnp.allclose(diags(jax_phi_ks), ref_phi)
 
-    #np.random.seed(42)
-    #for it in range(3):
-    #    dim = 5*(it+1)
-    #    np_test_a = np.random.randn(dim, dim)
-    #    test_a = jnp.asarray(np_test_a, dtype=jnp.float64)
-
-    #    # test against different impl.
-    #    jax_phi_k = f_phi_k(test_a, k=k)
-    #    jax_phi_k_ext = f_phi_k_ext(test_a, k=k)
-    #    assert jnp.allclose(jax_phi_k, jax_phi_k_ext)
-    #    jax_phi_k_sq = f_phi_k_sq(test_a, k=k)
-    #    #jax.debug.print("{a}\n{b}", a=jax_phi_k, b=jax_phi_k_poly)
-    #    assert jnp.allclose(jax_phi_k_sq, jax_phi_k_ext)
-
-
 def test_phi_k_appl():
     """
     Computes phi_k(A)B with k >= 0
