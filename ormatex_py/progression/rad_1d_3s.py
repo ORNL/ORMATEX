@@ -127,9 +127,10 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2):
     y0 = flatten_u(jnp.asarray(y0_profile).transpose())
 
     # time step settings
-    t0 = 0.
+    t0 = 0.0
+    tf = 1.0
     dt = dt
-    nsteps = 12
+    nsteps = int(tf / dt)
 
     # Compute analytic solution. In this case,
     # the analytic solution is the product of pure bateman decay
@@ -212,7 +213,7 @@ if __name__ == "__main__":
 
     if args.sweep:
         methods = ['exprb2', 'exprb3', 'epi3', 'implicit_euler', 'implicit_esdirk3']
-        dts = [0.05, 0.1, 0.15, 0.2]
+        dts = [0.05, 0.1, 0.125, 0.2]
         mae_sweep = {}
         for method in methods:
             mae_sweep[method] = []
