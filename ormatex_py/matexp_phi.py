@@ -190,13 +190,3 @@ def f_phi_k_appl(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
         phi_kb = jax.scipy.linalg.expm(z) @ b
 
     return phi_kb
-
-@partial(jax.jit, static_argnums=(2,))
-def f_phi_k_appl_sq(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
-    """
-    Computes phi_k(Z)B for dense Z and dense B, using a scaling and squaring formula
-    """
-
-    N, M, B = _validate_args_appl(z, b, k)
-
-    return None
