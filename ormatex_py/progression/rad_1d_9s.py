@@ -38,19 +38,19 @@ keymap = [
     'cs_135_a',
     'xe_135_v',
     'cs_135_v',]
-gas_purify_lambda = jnp.log(2) / 5.0
+gas_purify_lambda = np.log(2) / 5.0
 decay_lib = {
     # species dissolved in the liquid phase
     'c_0_a':  ('none', 3.0),
     'c_1_a':  ('none', 0.3),
     'c_2_a':  ('none', 0.03),
-    'te_135_a': ('i_135_a', jnp.log(2)/19.0),
-    'i_135_a':  ('xe_135_a', jnp.log(2)/(6.57*3600) ),
-    'xe_135_a': ('cs_135_a', jnp.log(2) / (9.14*3600) ),
-    'cs_135_a': ('none', jnp.log(2) / (1.33e6*365*24*3600) ),
+    'te_135_a': ('i_135_a', np.log(2)/19.0),
+    'i_135_a':  ('xe_135_a', np.log(2)/(6.57*3600) ),
+    'xe_135_a': ('cs_135_a', np.log(2) / (9.14*3600) ),
+    'cs_135_a': ('none', np.log(2) / (1.33e6*365*24*3600) ),
     # vapor species
-    'xe_135_v': (('cs_135_v', jnp.log(2) / (9.14*3600)),),
-    'cs_135_v': ('none', jnp.log(2) / (1.33e6*365*24*3600)),
+    'xe_135_v': (('cs_135_v', np.log(2) / (9.14*3600)),),
+    'cs_135_v': ('none', np.log(2) / (1.33e6*365*24*3600)),
 }
 
 # placeholder absorption cross section of xe_135
@@ -304,7 +304,7 @@ if __name__ == "__main__":
     plt.figure()
     plt.scatter(-eigdtJ.real, eigdtJ.imag)
     plt.ylabel('Imaginary')
-    plt.xlabel('Real')
+    plt.xlabel('(-) Real')
     plt.xscale('log')
     plt.title("dt*Jac eigenvalues")
     plt.savefig('reac_adv_diff_s9_eigplot.png')
