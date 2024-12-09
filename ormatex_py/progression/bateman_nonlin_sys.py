@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 import jax
 import numpy as np
 from jax import numpy as jnp
-jax.config.update("jax_enable_x64", True)
 
 from ormatex_py import integrate_wrapper
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix
@@ -23,19 +22,19 @@ from ormatex_py.ode_sys import OdeSys, MatrixLinOp, OdeSplitSys
 from ormatex_py.ode_exp import ExpRBIntegrator
 
 # removal rate constants from gas purification
-gas_purify_lambda = jnp.log(2) / 1.0
+gas_purify_lambda = np.log(2) / 1.0
 decay_lib = {
     # species dissolved in the liquid phase
     'c_0_a':  ('none', 3.0),
     'c_1_a':  ('none', 0.3),
     'c_2_a':  ('none', 0.03),
-    'te_135_a': ('i_135_a', jnp.log(2)/19.0),
-    'i_135_a':  ('xe_135_a', jnp.log(2)/(6.57*3600) ),
-    'xe_135_a': ('cs_135_a', jnp.log(2) / (9.14*3600) ),
-    'cs_135_a': ('none', jnp.log(2) / (1.33e6*365*24*3600) ),
+    'te_135_a': ('i_135_a', np.log(2)/19.0),
+    'i_135_a':  ('xe_135_a', np.log(2)/(6.57*3600) ),
+    'xe_135_a': ('cs_135_a', np.log(2) / (9.14*3600) ),
+    'cs_135_a': ('none', np.log(2) / (1.33e6*365*24*3600) ),
     # vapor species
-    'xe_135_v': (('cs_135_v', jnp.log(2) / (9.14*3600)), ('none', gas_purify_lambda),),
-    'cs_135_v': ('none', jnp.log(2) / (1.33e6*365*24*3600) + gas_purify_lambda),
+    'xe_135_v': (('cs_135_v', np.log(2) / (9.14*3600)), ('none', gas_purify_lambda),),
+    'cs_135_v': ('none', np.log(2) / (1.33e6*365*24*3600) + gas_purify_lambda),
 }
 keymap = [
     'c_0_a',
@@ -136,6 +135,7 @@ class NonlinearBateman(OdeSplitSys):
 
 
 if __name__ == "__main__":
+    jax.config.update("jax_enable_x64", True)
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("-method", help="time step method", type=str, default="epi3")

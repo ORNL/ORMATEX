@@ -25,7 +25,6 @@ from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix, analytic_bateman_single_parent
 from ormatex_py import integrate_wrapper
 
-jax.config.update("jax_enable_x64", True)
 keymap = ["c_0", "c_1", "c_2"]
 decay_lib = {
     'c_0':  ('c_1', 1.0e-1*10),
