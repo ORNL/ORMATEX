@@ -96,14 +96,6 @@ def f_phi_k_poly_all(z: jax.Array, k: int, poly_deg: int=4) -> list[jax.Array]:
         zpow_kfac = z @ zpow_kfac / j
         poly_approx = poly_approx + zpow_kfac
 
-    #phi_ks = jnp.zeros((k+1, N, N))
-    #phi_ks = phi_ks.at[k].set(poly_approx)
-    #fact_j = fact_k / k
-    #for j in range(k-1, -1, -1):
-    #    # recursion formula phi_j(z) = 1/j! + z phi_{j+1}(z)
-    #    phi_ks = phi_ks.at[j].set( jnp.eye(N)/fact_j + z @ phi_ks[j+1] )
-    #    fact_j = fact_j / j
-
     phi_ks = [None] * (k+1)
     phi_ks[k] = poly_approx
     fact_j = fact_k / k
@@ -136,26 +128,7 @@ def f_phi_k_sq_all(z: jax.Array, k: int) -> list[jax.Array]:
     zero_to_k = jax.lax.iota(z.dtype, k+1)
     scalings = 1. / (jax.scipy.special.factorial(zero_to_k[:,None] - zero_to_k[None,:]) * 2. ** zero_to_k[:,None])
 
-    #jax.debug.print("scalings={a}, Nscale={b}, {c}", a=scalings, b=Nscale, c=type(Nscale))
-    #jax.debug.print("phi_ks_init=\n{x}", x=[phi_k[0:3,0:3] for phi_k in phi_ks])
-
-    ## TODO: this implementation caused a bug on my GPU with jit (not with CPU or without jit)
-    ## using a list of jax.Array instead of a 3d tensor fixed it
-
-    # scaling and modified squaring for all phi_ks at once
-    #def sq_step(counter, args):
-    #    phi_ks, scalings = args
-    #    for j in range(k, 0, -1):
-    #        # first term in the sum and first correction
-    #        phi_ks = phi_ks.at[j].set((phi_ks[0] @ phi_ks[j] + phi_ks[j]) * scalings[j,j])
-    #        # remaining corrections
-    #        jax.debug.print("scale=\n{x}", x=scalings[j,1:j])
-    #        #jax.debug.print("phi_scale=\n{x}", x=phi_ks[1:j,...])
-    #        phi_ks = phi_ks.at[j].add(jnp.einsum("i...,i->...", phi_ks[1:j,...], scalings[j,1:j]))
-    #    # traditional squaring of exp
-    #    phi_ks = phi_ks.at[0].set(phi_ks[0] @ phi_ks[0])
-    #    jax.debug.print("phi_ks=\n{x}", x=phi_ks[:,1:4,1:4])
-    #    return phi_ks, scalings
+    #jax.debug.print("scalings={a}, Nscale={b}", a=scalings, b=Nscale)
 
     def sq_step(counter, phi_ks):
         for j in range(k, 0, -1):
@@ -166,7 +139,6 @@ def f_phi_k_sq_all(z: jax.Array, k: int) -> list[jax.Array]:
                 phi_ks[j] = phi_ks[j] + phi_ks[jj] * scalings[j,jj]
         # traditional squaring of exp
         phi_ks[0] = phi_ks[0] @ phi_ks[0]
-        #jax.debug.print("phi_ks=\n{x}", x=[phi_k[0:3,0:3] for phi_k in phi_ks])
         return phi_ks
 
     phi_ks = jax.lax.fori_loop(0, Nscale, sq_step, phi_ks)
