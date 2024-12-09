@@ -78,7 +78,7 @@ class RAD_SEM(OdeSplitSys):
         return MatrixLinOp(L)
 
 
-def main(dt, method='epi3', periodic=True, mr=6, p=2):
+def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0):
     # create the mesh
     dwidth = 1.0
     mesh0 = fem.MeshLine1(np.array([[0., dwidth]])).with_boundaries({
@@ -127,9 +127,8 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2):
 
     # time step settings
     t0 = 0.0
-    tf = 1.0
     dt = dt
-    nsteps = int(tf / dt)
+    nsteps = int(np.round(tf / dt))
 
     # Compute analytic solution. In this case,
     # the analytic solution is the product of pure bateman decay
@@ -151,26 +150,25 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2):
     sx = xs[si]
     fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5,10))
     mae_list = []
-    for i in range(nsteps):
-        if i == nsteps-1:
-            t = t_res[i]
-            yf = y_res[i]
-            uf = stack_u(yf, n_species)
-            ut = y_true[i]
-            for n in range(0, n_species):
-                us = uf[:, n]
-                u_true = ut[n, :]
-                u_calc = us[si]
-                u_analytic = u_true[si]
-                ax[n].plot(sx, u_calc, label='t=%0.4f, species=%s' % (t, str(n)))
-                ax[n].plot(sx, u_analytic, ls='--', label='t=%0.4f, true' % (t))
-                ax[n].legend()
-                ax[n].grid(ls='--')
-                # compute diff
-                diff = u_calc - u_analytic
-                mae = np.mean(np.abs(diff))
-                mae_list.append(mae)
-                ax[n].set_title(r"Method: %s, MAE: %0.4e, $\Delta$ t=%0.2e" % (method, mae, dt))
+
+    t = t_res[-1]
+    yf = y_res[-1]
+    uf = stack_u(yf, n_species)
+    ut = y_true[-1]
+    for n in range(0, n_species):
+        us = uf[:, n]
+        u_true = ut[n, :]
+        u_calc = us[si]
+        u_analytic = u_true[si]
+        ax[n].plot(sx, u_calc, label='t=%0.4f, species=%s' % (t, str(n)))
+        ax[n].plot(sx, u_analytic, ls='--', label='t=%0.4f, true' % (t))
+        ax[n].legend()
+        ax[n].grid(ls='--')
+        # compute diff
+        diff = u_calc - u_analytic
+        mae = np.mean(np.abs(diff))
+        mae_list.append(mae)
+        ax[n].set_title(r"M: %s, MAE: %0.3e, $\Delta$ t=%0.2e" % (method, mae, dt))
 
     # TODO: mark reactor boundaries on the plot
     # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
@@ -178,7 +176,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2):
     ax[0].set_ylabel("concentration [mol/cc]")
     ax[0].set_xlabel("location [m]")
     plt.tight_layout()
-    plt.savefig('reac_adv_diff_s3_%s.png' % method)
+    plt.savefig('reac_adv_diff_s3_%s_%0.3e.png' % (method, dt))
     plt.close()
 
     print("=== Species MAEs at t=%0.4e ===" % t_res[-1])
@@ -217,7 +215,7 @@ if __name__ == "__main__":
         for method in methods:
             mae_sweep[method] = []
             for dt in dts:
-                mae = main(dt, method, True, args.mr, args.p)
+                mae = main(dt, method, True, args.mr, args.p, tf=2.0)
                 mae_sweep[method].append(([dt] + mae))
             print("=== Method: %s" % method)
             for mae_res in mae_sweep[method]:
