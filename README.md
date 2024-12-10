@@ -146,6 +146,8 @@ Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, au
                 ])
             return MatrixLinOp(jac)
 
+Additional examples are provided in the `ormatex_py/progression` directory.
+
 # Rust Setup
 
 Download rustup: https://www.rust-lang.org/tools/install
