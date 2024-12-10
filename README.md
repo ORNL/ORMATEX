@@ -81,6 +81,10 @@ From the project base directory (the directory this readme is located in), run:
 
 ### Use
 
+Examples are provided in the `ormatex_py/progression` directory.
+
+#### Quick Start
+
 Imports
 
     from ormatex_py.ode_sys import OdeSys, MatrixLinOp
@@ -145,8 +149,6 @@ Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, au
                 [self.delta*x[1], self.delta*x[0] - self.gamma]
                 ])
             return MatrixLinOp(jac)
-
-Additional examples are provided in the `ormatex_py/progression` directory.
 
 # Rust Setup
 
