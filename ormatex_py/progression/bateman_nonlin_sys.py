@@ -14,26 +14,27 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
+from ormatex_py import integrate_wrapper
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 
-from ormatex_py.ode_sys import OdeSys, MatrixLinOp
+from ormatex_py.ode_sys import OdeSys, MatrixLinOp, OdeSplitSys
 from ormatex_py.ode_exp import ExpRBIntegrator
 
 # removal rate constants from gas purification
-gas_purify_lambda = jnp.log(2) / 1.0
+gas_purify_lambda = np.log(2) / 1.0
 decay_lib = {
     # species dissolved in the liquid phase
     'c_0_a':  ('none', 3.0),
     'c_1_a':  ('none', 0.3),
     'c_2_a':  ('none', 0.03),
-    'te_135_a': ('i_135_a', jnp.log(2)/19.0),
-    'i_135_a':  ('xe_135_a', jnp.log(2)/(6.57*3600) ),
-    'xe_135_a': ('cs_135_a', jnp.log(2) / (9.14*3600) ),
-    'cs_135_a': ('none', jnp.log(2) / (1.33e6*365*24*3600) ),
+    'te_135_a': ('i_135_a', np.log(2)/19.0),
+    'i_135_a':  ('xe_135_a', np.log(2)/(6.57*3600) ),
+    'xe_135_a': ('cs_135_a', np.log(2) / (9.14*3600) ),
+    'cs_135_a': ('none', np.log(2) / (1.33e6*365*24*3600) ),
     # vapor species
-    'xe_135_v': ('cs_135_v', jnp.log(2) / (9.14*3600)),
-    'cs_135_v': ('none', jnp.log(2) / (1.33e6*365*24*3600) + gas_purify_lambda),
+    'xe_135_v': (('cs_135_v', np.log(2) / (9.14*3600)), ('none', gas_purify_lambda),),
+    'cs_135_v': ('none', np.log(2) / (1.33e6*365*24*3600) + gas_purify_lambda),
 }
 keymap = [
     'c_0_a',
@@ -50,7 +51,7 @@ bateman_mat = gen_bateman_matrix(keymap, decay_lib)
 # initially, the concentration of xe_135_v is 0.
 
 # placeholder absorption cross section of xe_135
-sigma_a_xe = 1.0e-12
+sigma_a_xe = 1.0e-9
 transmute_lib = {
     'c_0_a':  ('none', 0.0),
     'c_1_a':  ('none', 0.0),
@@ -99,7 +100,8 @@ def srcf_xe_av(u, i_a, i_g, alpha_g=0.05, tank_vol=100.0):
     return src
 
 
-class NonlinearBateman(OdeSys):
+# class NonlinearBateman(OdeSys):
+class NonlinearBateman(OdeSplitSys):
     # neutron flux in n/cm^2/s
     n_phi: float
     # tank volume in cc
@@ -128,36 +130,35 @@ class NonlinearBateman(OdeSys):
         u_dot = bat + trans + fis + nonlin
         return u_dot
 
+    def _fl(self, t, u, **kwargs):
+        return MatrixLinOp(self.bat_mat)
+
 
 if __name__ == "__main__":
     jax.config.update("jax_enable_x64", True)
-    
-    method = "epi3"
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    args = parser.parse_args()
+    method = args.method
+
     bateman_sys = NonlinearBateman()
     t = 0.0
     # initially, clean salt
     y0 = jnp.asarray([1e-16] * len(keymap))
 
     # step system forward
-    sys_int = ExpRBIntegrator(bateman_sys, t, y0, method=method, max_krylov_dim=12, iom=2)
-
-    t_res = []
-    y_res = []
-    dt = 0.5
-    nsteps = 400
-    for i in range(nsteps):
-        res = sys_int.step(dt)
-        # log the results for plotting
-        t_res.append(res.t)
-        y_res.append(res.y)
-        # this would be where you could reject a step, if the
-        # estimated err was too large
-        sys_int.accept_step(res)
-        print("t=", res.t)
-
+    t0 = 0.0
+    dt = 5.0
+    nsteps = 800
+    t_res, y_res = integrate_wrapper.integrate(bateman_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=2)
     t_res = np.asarray(t_res)
     y_res = np.asarray(y_res)
     print(y_res)
+
+    dense_jac = bateman_sys.fjac(0.0, y_res[-1]).dense()
+    print(dense_jac)
+    # import pdb; pdb.set_trace()
 
     plt.figure()
     for n in range(y_res.shape[1]):
@@ -166,11 +167,13 @@ if __name__ == "__main__":
         plt.plot(t_res, u_n, label="species: %s" % str(species_name))
     plt.xscale("log")
     plt.yscale("log")
+    plt.ylim((1e-14, 1e3))
+    plt.xlim((1e-1, None))
     plt.grid(ls='--')
     plt.legend()
     plt.ylabel("species concentration (mol/cc)")
     plt.xlabel("time (s)")
-    plt.title("method: %s" % str(method))
+    plt.title(r"method: %s, $\Delta$ t: %s" % (str(method), str(dt)))
     plt.tight_layout()
-    plt.savefig("bateman_nonlin_n9_%s.png" % str(method))
+    plt.savefig("bateman_nonlin_n9_dt_%s_%s.png" % (str(dt), str(method)))
     plt.close()

@@ -4,11 +4,17 @@ Nonlinear example progression problems
 import jax
 import scipy as sp
 import numpy as np
-import matplotlib.pyplot as plt
 from jax import numpy as jnp
 
+from ormatex_py import integrate_wrapper
 from ormatex_py.ode_sys import OdeSplitSys, MatrixLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
+
+try:
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except:
+    HAS_MATPLOTLIB = False
 
 
 class LotkaVolterra(OdeSplitSys):
@@ -52,9 +58,8 @@ class LotkaVolterra(OdeSplitSys):
 if __name__ == "__main__":
     import argparse
     import diffrax
-
     jax.config.update("jax_enable_x64", True)
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("-method", type=str, default="epi3")
     args = parser.parse_args()
@@ -84,7 +89,7 @@ if __name__ == "__main__":
     t_gold, y_gold = res.ts, res.ys
 
     # sweep over time step size and integrate
-    dt_list = [0.0125, 0.025, 0.05, 0.125, 0.25]
+    dt_list = [0.01, 0.0125, 0.02, 0.025, 0.05, 0.125]
     #dt_list = [0.5*dt for dt in dt_list]
     t_list = []
     y_list = []

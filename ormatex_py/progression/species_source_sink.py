@@ -21,7 +21,8 @@ def mxf_liq_vapor_nonlin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.
         u_a: species concentration in the aqueous phase (mol/cc)
         u_g: species concentration in the gas phase (mol/cc)
     """
-    return k * u_g * (u_g*k_g - u_a*k_a)
+    s = k * u_g * (k_g*u_g - k_a*u_a)
+    return s
 
 @eqx.filter_jit
 def mxf_liq_vapor_bubble_ig(u_a: jax.Array, u_g: jax.Array, cvol: float, alpha_g=0.01, k=1e-2, h=1e-4, nb=10., T=900.):
@@ -30,7 +31,7 @@ def mxf_liq_vapor_bubble_ig(u_a: jax.Array, u_g: jax.Array, cvol: float, alpha_g
     tranport.  It is assumed vapor bubbles of some diameter
     and some number density already exist in the flow.
     The existing bubbles are termed carrier bubbles.
-    The gas is assumed to be idea.
+    The gas is assumed to be ideal.
 
     Args:
         u_a: species concentration in the aqueous phase (mol/cc_tot)
@@ -113,7 +114,7 @@ def mxf_arrhenius(u_a: jax.Array, u_b: jax.Array, e: float, apre: float, m_a=1.0
 
 
 def mxf_liq_vapor_raoults(u_a: jax.Array, u_g: jax.Array, u_tot: jax.Array, alpha_g: float, p_si: float, gamma=1.0, phi=1.0, k=1e-2, p_tot=101.3e3):
-    """
+    r"""
     TODO:  https://en.wikipedia.org/wiki/Raoult%27s_law
     """
     raise NotImplementedError

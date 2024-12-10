@@ -7,6 +7,7 @@ import jax.numpy as jnp
 
 from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
+from ormatex_py.ode_explicit import RKIntegrator
 
 
 def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
@@ -15,12 +16,15 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
 
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
-    if is_rb or is_split:
+    is_rk = method in RKIntegrator._valid_methods.keys()
+    if is_rb or is_split or is_rk:
         # init the time integrator
         if is_rb:
             sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, **kwargs)
         elif is_split:
             sys_int = ExpSplitIntegrator(ode_sys, t0, y0, method=method, **kwargs)
+        elif is_rk:
+            sys_int = RKIntegrator(ode_sys, t0, y0, method=method, **kwargs)
 
         t_res, y_res = integrate_ormatex(sys_int, y0, t0, dt, nsteps, method=method,
                                          **kwargs)
@@ -79,7 +83,8 @@ def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler"):
             stepsize_controller=step_ctrl,
             max_steps=nsteps,
             )
-    return res.ts, res.ys
+    # return res.ts, res.ys
+    return jnp.hstack((jnp.asarray([t0]), res.ts)), jnp.vstack((y0, res.ys))
 
 
 def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2", **kwargs):

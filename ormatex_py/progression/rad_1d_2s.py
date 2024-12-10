@@ -40,14 +40,15 @@ import skfem as fem
 
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
 
+from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix
-from ormatex_py.progression import integrate_wrapper
+from ormatex_py import integrate_wrapper
 
 # decay lib
 decay_lib = {
     # more stiff:'u_0':  ('u_1', 3e1),
-    'u_0':  ('u_1', 3.e-1),
+    'u_0':  ('u_1', 3.e-3),
     'u_1':  ('none', .3e-1),
 }
 
@@ -68,7 +69,7 @@ class RAD_SEM(OdeSplitSys):
     xs: jax.Array
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
-        # get stiffness matrix and mass vector 
+        # get stiffness matrix and mass vector
         self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
         # get collocation points
         self.xs = sys_assembler.collocation_points()
@@ -76,14 +77,24 @@ class RAD_SEM(OdeSplitSys):
         self.bat_mat = gen_bateman_matrix(['u_0', 'u_1'], decay_lib)
         super().__init__()
 
-    def _source(self, un):
-        #n = un.shape[1]
+    def _source_poly(self, un):
+        # Implement a nonlinear transfer from first to last species
         s = jnp.zeros(un.shape)
-        # implement a nonlinear transfer from last to first species
-        transfer = 10. * un[:,-1]**5
+        transfer = -0.5 * jnp.abs(un[:,0]**3)
         s = s.at[:,0].add(transfer)
-        s = s.at[:,1].add(- transfer)
-        #TODO implement more reasonable / interesting nonlinear source
+        s = s.at[:,1].add(-transfer)
+        return s
+
+    def _source_nonlin_evap(self, un):
+        # More reasonable / physics-approx-based nonlinear source
+        # This represents a species transfering from being dissolved in
+        # the liquid, into vapor bubbles.  As the vapor bubbles grow,
+        # the surface area increases thus providing a simple positive nonlinear
+        # feedback mechanism for the species transfer rate.
+        s = jnp.zeros(un.shape)
+        transfer = mxf_liq_vapor_nonlin(un.at[:,0].get(), un.at[:,1].get(), 2.0, 1.0, 1.0)
+        s = s.at[:,0].add(transfer)
+        s = s.at[:,1].add(-transfer)
         return s
 
     @jax.jit
@@ -91,7 +102,7 @@ class RAD_SEM(OdeSplitSys):
         n = self.bat_mat.shape[0]
         un = stack_u(u, n)
         # nonlin rhs
-        s = self._source(un)
+        s = self._source_nonlin_evap(un)
         # add bateman
         lub = un @ self.bat_mat.transpose()
         udot = lub + s - (self.A @ un) / self.Ml.reshape((-1, 1))
@@ -127,7 +138,9 @@ if __name__ == "__main__":
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
     args = parser.parse_args()
+    jax.config.update("jax_disable_jit", args.nojit)
 
     # create the mesh
     mesh0 = fem.MeshLine1().with_boundaries({
@@ -169,7 +182,7 @@ if __name__ == "__main__":
     # integrate the system
     t0 = 0.
     dt = .1
-    nsteps = 20
+    nsteps = 40
     method = args.method
     t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10)
 

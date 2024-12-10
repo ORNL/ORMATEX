@@ -10,7 +10,7 @@ import equinox as eqx
 # internal imports
 from ormatex_py.ode_sys import LinOp, AugMatrixLinOp
 from ormatex_py.arnoldi_jax import arnoldi_lop
-from ormatex_py.matexp_phi import f_phi_k_appl
+from ormatex_py.matexp_phi import f_phi_k_appl, f_phi_k
 
 
 def matexp_linop(a_lo: LinOp, dt: float, v0: jax.Array, max_krylov_dim: int, iom: int=100) -> jax.Array:
@@ -24,23 +24,32 @@ def phi_linop(a_lo: LinOp, dt: float, v0: jax.Array, k: int, max_krylov_dim: int
     """
     Computes phi_k(A*dt)*v where A is a sparse linop
     """
-    (q, h, _) = arnoldi_lop(a_lo, dt, v0, max_krylov_dim, iom)
 
-    unit_vec = jnp.zeros((h.shape[0],))
-    unit_vec = unit_vec.at[0].set(1.0)
+    norm_v0 = jnp.linalg.norm(v0, 2)
+    if norm_v0 > 0:
+        (q, h) = arnoldi_lop(a_lo, dt, v0, max_krylov_dim, iom)
+        assert(h.shape[0] > 0)
 
-    phi_k_e1 = f_phi_k_appl(h, unit_vec, k)
-    beta = jnp.linalg.norm(v0, 2)
+        unit_vec = jnp.zeros((h.shape[0],))
+        unit_vec = unit_vec.at[0].set(1.0)
 
-    return beta * (q @ phi_k_e1)
+        phi_k_e1 = f_phi_k_appl(h, unit_vec, k)
 
+        phi_k_v0 = norm_v0 * (q @ phi_k_e1)
+    else:
+        # v0 is zero, thus phi_k_v as well
+        phi_k_v0 = v0
+
+    #TODO: need a better logic for handling the tolerances/size of krylov_space 
+
+    return phi_k_v0
 
 def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim: int, iom: int=100, n_steps: int=1) -> jax.Array:
     r"""
     Method based roughly on simplified KIOPS with fixes stepsize
     and not Krylov adaptivity.  TODO: add adaptivity routines.
     This avoids the substepping procedure in phipm by computing
-    the phi-vection products as:
+    the phi-vector products as:
 
     .. math::
 
