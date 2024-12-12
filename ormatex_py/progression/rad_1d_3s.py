@@ -91,6 +91,7 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     plt.xscale('log')
     plt.grid(alpha=0.5, ls='--')
     plt.title(r"$\Delta$t*Jac eigenvalues. $\Delta$t=%0.3e" % dt)
+    plt.tight_layout()
     plt.savefig(figname + ".png")
     plt.close()
     dtJnorm = np.linalg.norm(dtJ, ord=np.inf)
@@ -262,18 +263,22 @@ if __name__ == "__main__":
         # color represents method, line style represents species number
         from matplotlib.pyplot import cm
         plt.figure()
-        colors = iter(cm.Set1(np.linspace(0, 1, len(methods))))
-        for method in methods:
+        colors = iter(cm.rainbow(np.linspace(0, 1, len(methods))))
+        for i, method in enumerate(methods):
             dt_v_mae = np.asarray(mae_rl_sweep[method])
             color = next(colors)
-            plt.plot(dt_v_mae[:, 0], dt_v_mae[:, 3], '-o', c=color, label="Method: %s" % method)
+            if i % 2 == 0:
+                plt.plot(dt_v_mae[:, 0], dt_v_mae[:, 3], '-o', alpha=0.85, c=color, label="Method: %s" % method)
+            else:
+                plt.plot(dt_v_mae[:, 0], dt_v_mae[:, 3], ls='--', alpha=0.85, c=color, label="Method: %s" % method)
         plt.ylabel(r"Mean Relative Error. Avg((calc-true)/max(true))")
         plt.yscale("log")
         plt.xscale("log")
         plt.legend()
         plt.xlabel(r"$\Delta$t")
         plt.grid(ls='--')
+        plt.tight_layout()
         plt.savefig("reac_adv_diff_s3_dt_err.png")
         plt.close()
     else:
-        main(args.dt, args.method, args.per, args.mr, args.p, tf=args.tf, jac_plot=True, nu=1e-7)
+        main(args.dt, args.method, args.per, args.mr, args.p, tf=args.tf, jac_plot=True, nu=1e-10)
