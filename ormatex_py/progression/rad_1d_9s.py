@@ -21,7 +21,7 @@ import skfem as fem
 
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
 from ormatex_py.ode_utils import stack_u, flatten_u
-
+from ormatex_py.progression.rad_1d_3s import plot_dt_jac_spec
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix
@@ -295,21 +295,5 @@ if __name__ == "__main__":
     plt.savefig('reac_adv_diff_s9.png')
     plt.close()
 
-
-    dtJ = np.asarray(dt*ode_sys.fjac(0., y_res[-1]).dense())
-
-    print(dtJ)
-
-    eigdtJ = np.linalg.eig(dtJ)[0]
-    plt.figure()
-    plt.scatter(-eigdtJ.real, eigdtJ.imag)
-    plt.ylabel('Imaginary')
-    plt.xlabel('(-) Real')
-    plt.xscale('log')
-    plt.title("dt*Jac eigenvalues")
-    plt.savefig('reac_adv_diff_s9_eigplot.png')
-    plt.close()
-
-    dtJnorm = np.linalg.norm(dtJ, ord=np.inf)
-    dtJeig = np.max(np.abs(eigdtJ))
-    print("CFL: %0.4f/%0.4f, Ndof: %d" % (dtJeig, dtJnorm, xs.size))
+    # plot eigvals of Jac
+    plot_dt_jac_spec(ode_sys, y_res[-1], t=0., dt=dt, figname="reac_adv_diff_s9_eigplot")

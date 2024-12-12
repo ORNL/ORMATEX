@@ -31,7 +31,7 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     else:
         try:
             # try integrate the system with diffrax
-            t_res, y_res = integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method=method)
+            t_res, y_res = integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method=method, **kwargs)
         except AttributeError as e:
             print(e)
             raise AttributeError(f"no valid method {method} found")
@@ -44,7 +44,7 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     return t_res, y_res
 
 
-def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler"):
+def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler", **kwargs):
     """
     Uses diffrax integrators to step adv diff system forward
     """
@@ -69,7 +69,10 @@ def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler"):
         raise AttributeError(f"{method} not in diffrax")
 
     try:
-        root_finder=diffrax.VeryChord(rtol=1e-8, atol=1e-8, norm=optimistix.max_norm)
+        root_finder=diffrax.VeryChord(
+                rtol=kwargs.get("rtol", 1e-10),
+                atol=kwargs.get("atol", 1e-10),
+                norm=optimistix.max_norm)
         solver = method_dict[method](root_finder=root_finder)
     except:
         solver = method_dict[method]()
