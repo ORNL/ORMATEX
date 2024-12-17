@@ -87,6 +87,8 @@ Examples are provided in the `ormatex_py/progression` directory.
 
 Imports
 
+    import jax
+    from jax import numpy as jnp
     from ormatex_py.ode_sys import OdeSys, MatrixLinOp
     from ormatex_py import integrate_wrapper
 
