@@ -81,6 +81,7 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     """
     Plots eigvals of the scaled system Jacobian
     """
+    import matplotlib.pyplot as plt
     dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
     print("dt*J", dtJ)
     eigdtJ = np.linalg.eig(dtJ)[0]
