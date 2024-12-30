@@ -12,7 +12,7 @@ rgas = 8.3145  # gas constant J/mol/K
 
 
 @eqx.filter_jit
-def mxf_liq_vapor_nonlin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.0):
+def mxf_liq_vapor_nonlin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.0, k_s=1e-12):
     """
     Nonlinear liquid to vapor species mass transfer.
     Simplified form of mxf_liq_vapor_bubble_ig.
@@ -21,7 +21,7 @@ def mxf_liq_vapor_nonlin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.
         u_a: species concentration in the aqueous phase (mol/cc)
         u_g: species concentration in the gas phase (mol/cc)
     """
-    s = k * u_g * (k_g*u_g - k_a*u_a)
+    s = k * (jnp.sqrt(jnp.clip(u_g, 1e-16, None)) + k_s) * (k_g*u_g - k_a*u_a)
     return s
 
 @eqx.filter_jit
@@ -32,6 +32,17 @@ def mxf_liq_vapor_bubble_ig(u_a: jax.Array, u_g: jax.Array, cvol: float, alpha_g
     and some number density already exist in the flow.
     The existing bubbles are termed carrier bubbles.
     The gas is assumed to be ideal.
+
+    Refs:
+        M. T. Robinson. A theoretical study of Xe poisoning
+        kinetics in fluid-fueled, gas-sparged nuclear reactors.
+        ORNL-1924. 1956. pg. 6, eq. 3.11.
+        https://media.githubusercontent.com/media/openmsr/msr-archive/master/docs/ORNL-1924.pdf
+
+        Engel, J. R., and Steffy, R. C. XENON BEHAVIOR IN
+        THE MOLTEN SALT REACTOR EXPERIMENT.
+        ORNL-TM-3464. 1971. pg. 33. Web. doi:10.2172/4731186.
+        https://www.osti.gov/biblio/4731186
 
     Args:
         u_a: species concentration in the aqueous phase (mol/cc_tot)

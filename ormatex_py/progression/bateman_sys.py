@@ -173,7 +173,7 @@ def analytic_bateman_single_parent(t, batmat, n0):
     return np.asarray(N, dtype=np.float64)
 
 
-def analytic_bateman_s3(method="epi2", do_plot=True):
+def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000.):
     jax.config.update("jax_enable_x64", True)
     keymap = ["c_0", "c_1", "c_2"]
     decay_lib_sp = {
@@ -184,8 +184,6 @@ def analytic_bateman_s3(method="epi2", do_plot=True):
     bmat = gen_bateman_matrix(keymap, decay_lib_sp)
     n0 = 1.0
     t0 = 0.0
-    tf = 1000.0
-    dt = 10.0
     t = np.arange(t0, tf+dt, dt)
     # analytic result
     y_true = analytic_bateman_single_parent(t, bmat, n0)
@@ -203,24 +201,67 @@ def analytic_bateman_s3(method="epi2", do_plot=True):
         plt.figure()
         plt.xscale('log')
         plt.yscale('log')
-        plt.ylim((1e-14, 10.0))
-        plt.xlim((1.0, 1000.0))
+        plt.ylim((1e-8, 10.0))
+        plt.xlim((1.0, tf))
         # numerical
-        plt.plot(t_res, y_res[:, 0], label="c_0")
-        plt.plot(t_res, y_res[:, 1], label="c_1")
-        plt.plot(t_res, y_res[:, 2], label="c_2")
+        plt.plot(t_res+1.0, y_res[:, 0]+1e-16, label="c_0")
+        plt.plot(t_res+1.0, y_res[:, 1]+1e-16, label="c_1")
+        plt.plot(t_res+1.0, y_res[:, 2]+1e-16, label="c_2")
         # analytic
-        plt.plot(t, y_true[:, 0], ls='--', label="c_0 true")
-        plt.plot(t, y_true[:, 1], ls='--', label="c_1 true")
-        plt.plot(t, y_true[:, 2], ls='--', label="c_2 true")
+        plt.plot(t+1.0, y_true[:, 0]+1e-16, ls='--', label="c_0 true")
+        plt.plot(t+1.0, y_true[:, 1]+1e-16, ls='--', label="c_1 true")
+        plt.plot(t+1.0, y_true[:, 2]+1e-16, ls='--', label="c_2 true")
         plt.legend()
         plt.grid(ls='--')
+        plt.title(r"Method: %s, $\Delta t=$%0.2f" % (method, dt))
         plt.ylabel("Species concentration")
         plt.xlabel("Time [s]")
-        plt.savefig("bateman_analytic_3s_%s.png" % method)
+        plt.savefig("bateman_analytic_3s_%s_dt_%0.2f.png" % (method, dt))
         plt.close()
 
     return t_res, y_res, t, y_true
+
+
+def run_sweep():
+    methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense", "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
+    dts = [1., 2., 5., 10., 25., 50.]
+    tf = 100.
+    nspecies = 3
+    mae_dict = {}
+    for method in methods:
+        err_arr = np.zeros((len(dts), nspecies+1))
+        for j, dt in enumerate(dts):
+            t_res, y_res, t, y_true = \
+                    analytic_bateman_s3(method, dt=dt, tf=tf, do_plot=False)
+            diff = y_res - y_true
+            err_arr[j, 0] = dt
+            # loop over species at last time
+            for s in range(diff.shape[1]):
+                rel_diff = np.abs(diff[-1, s]) / y_true[-1, s]
+                err_arr[j, s+1] = rel_diff + 1e-18
+        mae_dict[method] = err_arr
+        print("=== Method: %s" % method)
+        print("dt, err_s0, err_s1, err_s2")
+        print(err_arr)
+
+    # error vs time step size for each method
+    plt.figure()
+    for method in methods:
+        dt = mae_dict[method][:, 0]
+        s3_err = mae_dict[method][:, 2]
+        plt.plot(dt, s3_err, '-o', label=method)
+    plt.yscale("log")
+    plt.xscale("log")
+    plt.grid(ls='--')
+    plt.title("$t_f$=%0.2f (s)" % tf)
+    plt.xlabel(r"Time step size $\Delta$t (s)")
+    plt.ylabel(r"Species Rel. Err |calc-true| / true")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("bateman_ex_1_converg.png")
+    for method in methods:
+        for dt in [10., 25.]:
+            analytic_bateman_s3(method, dt=dt, tf=500., do_plot=True)
 
 
 class TestBatemanSysJac(OdeSplitSys):
@@ -254,6 +295,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-sweep", help="run convergence sweep", action="store_true", default=False)
     args = parser.parse_args()
     method = args.method
 
@@ -294,9 +336,5 @@ if __name__ == "__main__":
     plt.savefig("bateman_ex_1_%s.png" % method)
     plt.close()
 
-    analytic_bateman_s3("epi2")
-    analytic_bateman_s3("epi3")
-    analytic_bateman_s3("exp2_dense")
-    analytic_bateman_s3("exp3_dense")
-    # FIXME: exprb3 is broken for this example
-    analytic_bateman_s3("exprb3")
+    if args.sweep:
+        run_sweep()

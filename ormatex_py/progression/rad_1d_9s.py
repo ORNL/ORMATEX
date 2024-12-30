@@ -21,7 +21,7 @@ import skfem as fem
 
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
 from ormatex_py.ode_utils import stack_u, flatten_u
-
+from ormatex_py.progression.rad_1d_3s import plot_dt_jac_spec
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix
@@ -54,7 +54,7 @@ decay_lib = {
 }
 
 # placeholder absorption cross section of xe_135
-sigma_a_xe = 1.0e-3
+sigma_a_xe = 9.0e-3
 transmute_lib = {
     'c_0_a':  ('none', 0.0),
     'c_1_a':  ('none', 0.0),
@@ -73,11 +73,11 @@ transmute_mat = gen_transmute_matrix(keymap, transmute_lib)
 # placeholder macro fission cross section
 sigma_f = 1e-4
 fission_lib = {
-    'c_0_a':  ('none', 0.03*sigma_f),  # fission_yeild*Sigma_f
-    'c_1_a':  ('none', 0.02*sigma_f),
-    'c_2_a':  ('none', 0.01*sigma_f),
-    'te_135_a': ('none', 0.20*sigma_f),
-    'i_135_a':  ('none', 0.01*sigma_f),
+    'c_0_a':  ('none', 0.01*sigma_f),  # fission_yeild*Sigma_f
+    'c_1_a':  ('none', 0.03*sigma_f),
+    'c_2_a':  ('none', 0.02*sigma_f),
+    'te_135_a': ('none', 0.18*sigma_f),
+    'i_135_a':  ('none', 0.15*sigma_f),
     'xe_135_a': ('none', 0.0 ),
     'cs_135_a': ('none', 0.0 ),
     # vapor species
@@ -117,21 +117,21 @@ class RAD_SEM(OdeSplitSys):
         # get bateman matrix
         self.bat_mat = gen_bateman_matrix(keymap, decay_lib)
         # reactor height and center
-        h, c = 0.5, 0.25
+        h, c = 1.0, 0.5
         self.region_rx = jnp.where( ((c - h/2.) <= self.xs) & (self.xs <= (c + h/2.)) )
         super().__init__()
 
     def _fission_src(self, un):
         # models production of species from fission only in the reactor
         # region of the mesh
-        phi = flux_profile(0.5, self.xs, self.region_rx)
+        phi = flux_profile(1.0, self.xs, self.region_rx)
         s = phi * (jnp.ones(un.shape) @ fission_mat.transpose())
         return s
 
     def _transmute(self, un):
         # models sink of species and species transmutation from neutron capture
         # Xe-135 is rapidly converted to stable Xe-136 by neutron capture
-        phi = flux_profile(0.5, self.xs, self.region_rx)
+        phi = flux_profile(1.0, self.xs, self.region_rx)
         s = phi * (un @ transmute_mat.transpose())
         return s
 
@@ -139,11 +139,11 @@ class RAD_SEM(OdeSplitSys):
         # models phase transfer for Xe and Cs species from the liquid to vapor phase
         s = jnp.zeros(un.shape)
         # high volotile species
-        xe_transfer = mxf_liq_vapor_nonlin(un.at[:,5].get(), un.at[:,7].get(), 4.0e2, 1.0, 1.0)
+        xe_transfer = mxf_liq_vapor_nonlin(un.at[:,5].get(), un.at[:,7].get(), 10.0e3, 1.0, 1.0)
         s = s.at[:,5].add(xe_transfer)
         s = s.at[:,7].add(-xe_transfer)
         # low volotile species
-        cs_transfer = mxf_liq_vapor_nonlin(un.at[:,6].get(), un.at[:,8].get(), 0.2e2, 1.0, 1.0)
+        cs_transfer = mxf_liq_vapor_nonlin(un.at[:,6].get(), un.at[:,8].get(), 0.9e3, 1.0, 1.0)
         s = s.at[:,6].add(cs_transfer)
         s = s.at[:,8].add(-cs_transfer)
         return s
@@ -153,13 +153,13 @@ class RAD_SEM(OdeSplitSys):
         # models off-gas purification where some Xe and Cs vapor are removed
         # in a specific region of the mesh
         # offgass system width
-        w = 0.1  # [m]
+        w = 0.4  # [m]
         # offgas system center
-        c = 0.8
+        c = 4.0
         lc, rc = c - w/2., c + w/2.
         # removal efficiency per meter
-        eff = 0.01 * w
-        offgas_profile = (jnp.tanh((self.xs-lc)*50.0) * (-jnp.tanh((self.xs-rc)*50.0)) ) / 2. + 0.5
+        eff = 0.40 * w
+        offgas_profile = (jnp.tanh((self.xs-lc)*10.0) * (-jnp.tanh((self.xs-rc)*10.0)) ) / 2. + 0.5
         xe_r = eff * un[:, 7] * offgas_profile
         cs_r = eff * un[:, 8] * offgas_profile
         s = s.at[:, 7].add(-xe_r)
@@ -212,14 +212,16 @@ if __name__ == "__main__":
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
+    parser.add_argument("-nsteps", help="basis order", type=int, default=100)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-fine", help="compare to fine step solution", default=False, action='store_true')
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
     args = parser.parse_args()
     jax.config.update("jax_disable_jit", args.nojit)
 
     # create the mesh
-    dwidth = 1.0
+    dwidth = 5.0
     mesh0 = fem.MeshLine1(np.array([[0., dwidth]])).with_boundaries({
         'left': lambda x: np.isclose(x[0], 0.),
         'right': lambda x: np.isclose(x[0], dwidth)
@@ -238,7 +240,7 @@ if __name__ == "__main__":
 
     # diffusion coefficient
     vel = 0.5
-    param_dict = {"nu": 1e-4, "vel": vel}
+    param_dict = {"nu": 5e-4, "vel": vel}
 
     # init the system
     n_species = 9
@@ -250,7 +252,7 @@ if __name__ == "__main__":
     xs = np.asarray(sem.basis.doflocs.flatten())
 
     # initial profiles for each species
-    g_prof0 = lambda x: 0.0*x + 1e-12
+    g_prof0 = lambda x: 0.0*x + 1e-16
     g_prof1 = lambda x: 0.0*x + 1.
     y0_profile = [
             g_prof0(xs),
@@ -267,49 +269,57 @@ if __name__ == "__main__":
 
     # integrate the system
     t0 = 0.
-    dt = 0.5
-    nsteps = 100
+    dt = 1.0
+    nsteps = args.nsteps
+    tf = dt * nsteps
     method = args.method
-    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10)
+    if args.fine:
+        dt_fine = 1.0
+        nsteps_fine = int(tf / dt_fine)
+        t_res_fine, y_res_fine = integrate_wrapper.integrate(ode_sys, y0, t0, dt_fine, nsteps_fine, "exprb3", max_krylov_dim=240, iom=2)
+    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=2)
 
     si = xs.argsort()
     sx = xs[si]
-    fig, ax = plt.subplots(nrows=9, ncols=1, figsize=(5,20))
+    print("Mesh Spacing: %0.4e" % (sx[2] - sx[0]))
+    fig, ax = plt.subplots(nrows=3, ncols=3, figsize=(15,8.5))
     plt.title(r"method: %s" % (method))
-    for i in range(nsteps):
-        if i == nsteps-1:
-            t = t_res[i]
-            yf = y_res[i]
-            uf = stack_u(yf, n_species)
-            for n in range(0, n_species):
-                us = uf[:, n]
-                ax[n].plot(sx, us[si], label='t=%0.4f, species=%s' % (t, str(n)))
-                ax[n].legend()
-                ax[n].grid(ls='--')
+
+    i = nsteps
+    t = t_res[i]
+    yf = y_res[i]
+    uf = stack_u(yf, n_species)
+    # fine solution
+    if args.fine:
+        i_fine = nsteps_fine
+        t_fine = t_res_fine[i_fine]
+        yf_fine = y_res_fine[i_fine]
+        uf_fine = stack_u(yf_fine, n_species)
+
+    for n in range(0, n_species):
+        us = uf[:, n]
+        # fig row,col
+        fr, fc = n%3, int(n/3)
+        ax[fr, fc].axvspan(0.0, 1.0, alpha=0.3, color='red')
+        ax[fr, fc].axvspan(3.8, 4.2, alpha=0.3, color='blue')
+        ax[fr, fc].plot(sx, us[si], label=r't=%0.4f, $u_{%s}$' % (t, str(n)))
+        if args.fine:
+            us_fine = uf_fine[:, n]
+            rel_diff = (us[si] - us_fine[si]) / jnp.mean(us_fine)
+            mae = jnp.mean(jnp.abs(rel_diff))
+            ax[fr, fc].plot(sx, us_fine[si], ls='--', label='t=%0.4f, baseln $u_{%s}$' % (t_fine, str(n)))
+            ax[fr, fc].set_title(r"%s, $\Delta t=$%0.2e, Rel.Err=%0.3e" % (method, dt, mae))
+        ax[fr, fc].set_ylabel(r"$u_{%d}$ [mol/cc]" % n)
+        ax[fr, fc].legend()
+        ax[fr, fc].grid(ls='--')
+
     # TODO: mark reactor boundaries on the plot
     # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
     # ax[0].set_yscale('log')
-    ax[0].set_ylabel("concentration [mol/cc]")
-    ax[0].set_xlabel("location [m]")
+    # ax[0].set_xlabel("location [m]")
     plt.tight_layout()
-    plt.savefig('reac_adv_diff_s9.png')
+    plt.savefig('reac_adv_diff_s9.png', dpi=160)
     plt.close()
 
-
-    dtJ = np.asarray(dt*ode_sys.fjac(0., y_res[-1]).dense())
-
-    print(dtJ)
-
-    eigdtJ = np.linalg.eig(dtJ)[0]
-    plt.figure()
-    plt.scatter(-eigdtJ.real, eigdtJ.imag)
-    plt.ylabel('Imaginary')
-    plt.xlabel('(-) Real')
-    plt.xscale('log')
-    plt.title("dt*Jac eigenvalues")
-    plt.savefig('reac_adv_diff_s9_eigplot.png')
-    plt.close()
-
-    dtJnorm = np.linalg.norm(dtJ, ord=np.inf)
-    dtJeig = np.max(np.abs(eigdtJ))
-    print("CFL: %0.4f/%0.4f, Ndof: %d" % (dtJeig, dtJnorm, xs.size))
+    # plot eigvals of Jac
+    plot_dt_jac_spec(ode_sys, y_res[-1], t=0., dt=dt, figname="reac_adv_diff_s9_eigplot")

@@ -77,8 +77,29 @@ class RAD_SEM(OdeSplitSys):
         #print(L)
         return MatrixLinOp(L)
 
+def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplot"):
+    """
+    Plots eigvals of the scaled system Jacobian
+    """
+    import matplotlib.pyplot as plt
+    dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
+    print("dt*J", dtJ)
+    eigdtJ = np.linalg.eig(dtJ)[0]
+    plt.figure()
+    plt.scatter(-eigdtJ.real, eigdtJ.imag)
+    plt.ylabel('Imaginary')
+    plt.xlabel('(-) Real')
+    plt.xscale('log')
+    plt.grid(alpha=0.5, ls='--')
+    plt.title(r"$\Delta$t*Jac eigenvalues. $\Delta$t=%0.3e" % dt)
+    plt.tight_layout()
+    plt.savefig(figname + ".png")
+    plt.close()
+    dtJnorm = np.linalg.norm(dtJ, ord=np.inf)
+    dtJeig = np.max(np.abs(eigdtJ))
+    print("CFL: %0.4f/%0.4f" % (dtJeig, dtJnorm))
 
-def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0):
+def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu=1e-10):
     # create the mesh
     dwidth = 1.0
     mesh0 = fem.MeshLine1(np.array([[0., dwidth]])).with_boundaries({
@@ -98,7 +119,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0):
 
     # diffusion coefficient
     vel = 0.5
-    param_dict = {"nu": 1e-10, "vel": vel}
+    param_dict = {"nu": nu, "vel": vel}
 
     # init the system
     n_species = 3
@@ -149,7 +170,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0):
     si = xs.argsort()
     sx = xs[si]
     fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5,10))
-    mae_list = []
+    mae_list, mae_rl_list = [], []
 
     t = t_res[-1]
     yf = y_res[-1]
@@ -166,18 +187,26 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0):
         ax[n].grid(ls='--')
         # compute diff
         diff = u_calc - u_analytic
+        diff_rl = (u_calc - u_analytic) / (np.max(u_analytic))
         mae = np.mean(np.abs(diff))
+        mae_rl = np.mean(np.abs(diff_rl))
         mae_list.append(mae)
-        ax[n].set_title(r"M: %s, MAE: %0.3e, $\Delta$ t=%0.2e" % (method, mae, dt))
+        mae_rl_list.append(mae_rl)
+        ax[n].set_title(r"%s, MAE: %0.3e, $\Delta$t=%0.2e" % (method, mae, dt))
 
     # TODO: mark reactor boundaries on the plot
     # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
     # ax[0].set_yscale('log')
-    ax[0].set_ylabel("concentration [mol/cc]")
+    ax[0].set_ylabel("Species 0 [mol/cc]")
+    ax[1].set_ylabel("Species 1 [mol/cc]")
+    ax[2].set_ylabel("Species 2 [mol/cc]")
     ax[0].set_xlabel("location [m]")
     plt.tight_layout()
     plt.savefig('reac_adv_diff_s3_%s_%0.3e.png' % (method, dt))
     plt.close()
+
+    if jac_plot:
+        plot_dt_jac_spec(ode_sys, y_res[-1], 0.0, dt)
 
     print("=== Species MAEs at t=%0.4e ===" % t_res[-1])
     [print("%0.4e" % a, end=', ') for a in mae_list]
@@ -187,7 +216,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0):
     mesh_spacing = (sx[1] - sx[0])
     cfl = dt * vel / mesh_spacing
     print("mesh_spacing: %0.4e, CFL=%0.4f" % (mesh_spacing, cfl))
-    return mae_list
+    return mae_list, mae_rl_list
 
 
 if __name__ == "__main__":
@@ -202,6 +231,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-dt", help="time step size", type=float, default=0.1)
+    parser.add_argument("-tf", help="final time", type=float, default=2.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
@@ -210,17 +240,46 @@ if __name__ == "__main__":
 
     if args.sweep:
         methods = ['exprb2', 'exprb3', 'epi3', 'implicit_euler', 'implicit_esdirk3']
-        dts = [0.05, 0.1, 0.125, 0.2]
+        dts = [0.025, 0.05, 0.1, 0.125, 0.2, 0.5]
         mae_sweep = {}
+        mae_rl_sweep = {}
         for method in methods:
             mae_sweep[method] = []
+            mae_rl_sweep[method] = []
             for dt in dts:
-                mae = main(dt, method, True, args.mr, args.p, tf=2.0)
+                mae, mae_rl = main(dt, method, True, args.mr, args.p, tf=args.tf)
                 mae_sweep[method].append(([dt] + mae))
+                mae_rl_sweep[method].append(([dt] + mae_rl))
             print("=== Method: %s" % method)
+            print("dt, MAE, ")
             for mae_res in mae_sweep[method]:
                 print(*["%0.4e" % r for r in mae_res], sep=', ', end='')
                 print()
-    else:
-        main(args.dt, args.method, args.per, args.mr, args.p)
+            print("dt, MRE, ")
+            for mae_rl_res in mae_rl_sweep[method]:
+                print(*["%0.4e" % r for r in mae_rl_res], sep=', ', end='')
+                print()
 
+        # plot the MAE vs dt results for each method
+        # color represents method, line style represents species number
+        from matplotlib.pyplot import cm
+        plt.figure()
+        colors = iter(cm.rainbow(np.linspace(0, 1, len(methods))))
+        for i, method in enumerate(methods):
+            dt_v_mae = np.asarray(mae_rl_sweep[method])
+            color = next(colors)
+            if i % 2 == 0:
+                plt.plot(dt_v_mae[:, 0], dt_v_mae[:, 3], '-o', alpha=0.85, c=color, label="Method: %s" % method)
+            else:
+                plt.plot(dt_v_mae[:, 0], dt_v_mae[:, 3], ls='--', alpha=0.85, c=color, label="Method: %s" % method)
+        plt.ylabel(r"Mean Relative Error. Avg((calc-true)/max(true))")
+        plt.yscale("log")
+        plt.xscale("log")
+        plt.legend()
+        plt.xlabel(r"$\Delta$t")
+        plt.grid(ls='--')
+        plt.tight_layout()
+        plt.savefig("reac_adv_diff_s3_dt_err.png")
+        plt.close()
+    else:
+        main(args.dt, args.method, args.per, args.mr, args.p, tf=args.tf, jac_plot=True, nu=1e-10)

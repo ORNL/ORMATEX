@@ -55,16 +55,7 @@ class LotkaVolterra(OdeSplitSys):
         return MatrixLinOp(lop)
 
 
-if __name__ == "__main__":
-    import argparse
-    import diffrax
-    jax.config.update("jax_enable_x64", True)
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-method", type=str, default="epi3")
-    args = parser.parse_args()
-    method = args.method
-
+def main(method='epi3', do_plot=True):
     # setup lotka voltera system
     lv_sys = LotkaVolterra()
     t_end = 20.0
@@ -96,42 +87,35 @@ if __name__ == "__main__":
     for dt in dt_list:
         print("dt = %0.2e" % dt)
         t0 = 0.0
-        try:
-            sys_int = ExpRBIntegrator(lv_sys, t0, y0, method=method, max_krylov_dim=10, iom=5)
-        except AttributeError:
-            sys_int = ExpSplitIntegrator(lv_sys, t0, y0, method=method, max_krylov_dim=10, iom=5)
-
         nsteps = int(t_end/dt)
-        t_res, y_res = [], []
-        for i in range(nsteps):
-            res = sys_int.step(dt)
-            t_res.append(res.t)
-            y_res.append(res.y)
-            sys_int.accept_step(res)
+
+        t_res, y_res = integrate_wrapper.integrate(lv_sys, y0, t0, dt, nsteps, method, max_krylov_dim=10, iom=5)
         t_res = jnp.asarray(t_res)
         y_res = jnp.asarray(y_res)
         t_list.append(t_res)
         y_list.append(y_res)
 
-        fig, ax1 = plt.subplots()
-        ax1.plot(t_res, y_res[:, 0], label="prey")
-        ax1.plot(t_res, y_res[:, 1], label="pred")
-        ax1.plot(t_gold, y_gold[:, 0], ls='--', label="prey true")
-        ax1.plot(t_gold, y_gold[:, 1], ls='--', label="pred true")
-        ax1.set(ylim=(-1., 6.))
-        plt.legend()
-        plt.grid(ls='--')
-        ax1.set_xlabel("time")
-        ax1.set_ylabel("population")
-        # interp the fine gold results to coarse grid
-        y_gold_int = jnp.interp(t_res, t_gold, y_gold[:, 0])
-        diff = y_res[:, 0] - y_gold_int
-        ax2 = ax1.twinx()
-        ax2.plot(t_res, diff, c='k', ls='--')
-        ax2.set_ylabel("prey diff")
-        plt.tight_layout()
-        plt.savefig("lotka_volterra_%s_dt_%s.png" % (str(method), str(dt)))
-        plt.close()
+        if do_plot:
+            fig, ax1 = plt.subplots()
+            ax1.plot(t_res, y_res[:, 0], label="prey")
+            ax1.plot(t_res, y_res[:, 1], label="pred")
+            ax1.plot(t_gold, y_gold[:, 0], ls='--', label="prey true")
+            ax1.plot(t_gold, y_gold[:, 1], ls='--', label="pred true")
+            ax1.set(ylim=(-1., 6.))
+            plt.legend()
+            plt.grid(ls='--')
+            ax1.set_xlabel("time")
+            ax1.set_ylabel("population")
+            # interp the fine gold results to coarse grid
+            y_gold_int = jnp.interp(t_res, t_gold, y_gold[:, 0])
+            diff = y_res[:, 0] - y_gold_int
+            ax2 = ax1.twinx()
+            ax2.plot(t_res, diff, c='k', ls='--')
+            ax2.set_ylabel("prey diff")
+            plt.title(r"Method: %s, $\Delta t=$ %0.4f" % (method, dt))
+            plt.tight_layout()
+            plt.savefig("lotka_volterra_%s_dt_%s.png" % (str(method), str(dt)))
+            plt.close()
 
     # compare solutions
     err_dt = []
@@ -148,16 +132,56 @@ if __name__ == "__main__":
     trendf = lambda x, s, b: s*np.log(x)+b
     popt, _ = sp.optimize.curve_fit(trendf, err_dt[:, 0], np.log(err_dt[:, 1]), p0=[1.0, 1.0])
     print("est conv order: ", popt[0])
+    lb = r"%s, O($\Delta t$)=%0.2e" % (method, popt[0])
+    if do_plot:
+        plt.figure()
+        plt.scatter(err_dt[:, 0], err_dt[:, 1])
+        plt.plot(err_dt[:, 0], np.exp(trendf(err_dt[:, 0], popt[0], popt[1])), ls='--', label=lb)
+        plt.legend()
+        plt.yscale('log')
+        plt.xscale('log')
+        plt.xlabel(r"$\Delta t$")
+        plt.ylabel(r"|diff|")
+        plt.grid(ls='--')
+        plt.title("method: %s" % str(method))
+        plt.tight_layout()
+        plt.savefig("lotka_volterra_%s_conv.png" % (str(method)))
+        plt.close()
+    # time step sizes, error, label
+    return err_dt, np.exp(trendf(err_dt[:, 0], popt[0], popt[1])), lb
+
+
+def sweep_methods():
+    methods = ["epi3", "exprb2", "exprb3", "exp3_dense", "exp2_dense", "implicit_euler", "implicit_esdirk3"]
     plt.figure()
-    plt.scatter(err_dt[:, 0], err_dt[:, 1])
-    plt.plot(err_dt[:, 0], np.exp(trendf(err_dt[:, 0], popt[0], popt[1])), ls='--', label="trendline, s=%0.2e" % popt[0])
+    for method in methods:
+        err_dt, err, lb = main(method, do_plot=False)
+        plt.scatter(err_dt[:, 0], err_dt[:, 1])
+        plt.plot(err_dt[:, 0], err, ls='--', label=lb)
     plt.legend()
     plt.yscale('log')
     plt.xscale('log')
-    plt.xlabel(r"$\Delta t$")
+    plt.xlabel(r"Time step size, $\Delta t$")
     plt.ylabel(r"|diff|")
     plt.grid(ls='--')
-    plt.title("method: %s" % str(method))
     plt.tight_layout()
-    plt.savefig("lotka_volterra_%s_conv.png" % (str(method)))
+    plt.savefig("lotka_volterra_sweep_conv.png")
     plt.close()
+
+
+if __name__ == "__main__":
+    import argparse
+    import diffrax
+    jax.config.update("jax_enable_x64", True)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-method", type=str, default="epi3")
+    parser.add_argument("-sweep", help="run convergence sweep", action="store_true", default=False)
+    args = parser.parse_args()
+    method = args.method
+
+    # optionally run sweep over methods
+    if args.sweep:
+        sweep_methods()
+    else:
+        main(method)
