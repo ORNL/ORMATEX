@@ -11,6 +11,8 @@ pub mod ode_utils;
 pub mod ode_test_common;
 // old stuff
 pub mod mat_utils;
+// python bindings
+pub mod ormatex_rspy;
 
 // deprecated
 //pub mod matexp;

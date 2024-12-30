@@ -168,7 +168,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
         mut out: MatMut<f64>,
         rhs: MatRef<f64>,
         parallelism: Parallelism,
-        stack: PodStack<'_>,
+        stack: &mut PodStack,
         )
     {
         // compute unshifted jacobian vector product
@@ -192,7 +192,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
             out: MatMut<'_, f64>,
             rhs: MatRef<'_, f64>,
             parallelism: Parallelism,
-            stack: PodStack<'_>,
+            stack: &mut PodStack,
         ) {
         // Not implented error!
         panic!("Not Implemented");
@@ -293,7 +293,7 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
         mut out: MatMut<f64>,
         rhs: MatRef<f64>,
         parallelism: Parallelism,
-        stack: PodStack<'_>,
+        stack: &mut PodStack,
         )
     {
         // unused
@@ -328,7 +328,7 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
             out: MatMut<'_, f64>,
             rhs: MatRef<'_, f64>,
             parallelism: Parallelism,
-            stack: PodStack<'_>,
+            stack: &mut PodStack,
         ) {
         // Not implented error!
         panic!("Not Implemented");

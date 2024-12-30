@@ -1,6 +1,5 @@
 /// matrix exponential eval methods for dense faer Mats
 use faer::prelude::*;
-use faer::solvers::SolverCore;
 use libm::frexp;
 
 
