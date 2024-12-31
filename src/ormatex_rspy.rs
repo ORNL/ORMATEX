@@ -85,8 +85,8 @@ impl OdeSys<'_> for PySysWrapped {
 fn integrate_wrapper_rs<'py>(
     py: Python<'py>,
     sys: &PySysWrapped,
-    t0: f64,
     y0: PyReadonlyArray2<f64>,
+    t0: f64,
     dt: f64,
     nsteps: usize,
     krylov_dim: usize
@@ -116,7 +116,8 @@ fn integrate_wrapper_rs<'py>(
 }
 
 #[pymodule]
-fn ormatex_rspy<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()>
+#[pyo3(name="ormatex")]
+fn ormatex<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()>
 {
     // Adds PySys wrapper
     m.add_class::<PySysWrapped>()?;
