@@ -82,32 +82,6 @@ impl OdeSys<'_> for PySysWrapped {
     }
 }
 
-fn integrate_fixed_step<'py>(
-    py: Python<'py>,
-    sys_solver: &'py mut impl IntegrateSys<'py, TimeType = f64, SysStateType = faer::Mat<f64>>,
-    dt: f64,
-    nsteps: usize,
-    osteps: usize,
-    mut y_out: Vec<Bound<'py, PyArray2<f64>>>,
-    mut t_out: Vec<f64>
-    )
-{
-    // integrate the sys
-    for i in 0..nsteps {
-        if i % osteps == 0 {
-            let _y = sys_solver.state();
-            let _t = sys_solver.time();
-            y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
-            t_out.push(_t.clone());
-        }
-        let y_new = sys_solver.step(dt).unwrap();
-        sys_solver.accept_step(y_new);
-    }
-    let _y = sys_solver.state();
-    let _t = sys_solver.time();
-    y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
-    t_out.push(_t.clone());
-}
 
 #[pyfunction]
 #[pyo3(signature = (sys, y0, t0, dt, nsteps, **kwds))]
