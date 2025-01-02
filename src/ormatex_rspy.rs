@@ -19,6 +19,7 @@ use numpy::{IntoPyArray, PyArray1, PyArray2,
     PyReadonlyArray, PyReadonlyArray1, PyReadonlyArray2,
     PyArrayDyn, PyReadonlyArrayDyn};
 use pyo3::{exceptions::PyRuntimeError, pymethods, pymodule, types::PyModule, PyResult, Python};
+use pyo3::types::{PyList, PyDict};
 use pyo3::prelude::*;
 
 use faer::prelude::*;
@@ -89,9 +90,9 @@ fn integrate_wrapper_rs<'py>(
     t0: f64,
     dt: f64,
     nsteps: usize,
-    krylov_dim: usize
+    krylov_dim: usize,
     )
-    -> Bound<'py, PyArray2<f64>>
+    -> (Bound<'py, PyList>, Bound<'py, PyList>)
 {
     let y = y0.as_array();
     let y0_mat = y.view().into_faer();
@@ -103,16 +104,23 @@ fn integrate_wrapper_rs<'py>(
     let mut sys_solver = ode_epirk::EpirkIntegrator::new(
         t0, y0_mat.as_ref(), order, sys, matexp_m);
 
+    // storage for results
+    let mut y_out: Vec<Bound<PyArray2<f64>>> = Vec::with_capacity(nsteps);
+    let mut t_out: Vec<f64> = Vec::with_capacity(nsteps);
+
     // integrate the sys
     for _i in 0..nsteps {
         let y_new = sys_solver.step(dt).unwrap();
         sys_solver.accept_step(y_new);
+        let _y = sys_solver.state();
+        let _t = sys_solver.time();
+        y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
+        t_out.push(_t.clone());
     }
-    let y_f = sys_solver.state();
+    let y_out_pylist = PyList::new(py, y_out).unwrap();
+    let t_out_pylist = PyList::new(py, t_out).unwrap();
 
-    let y_new_ndarray = y_f.as_ref().into_ndarray().to_owned();
-    y_new_ndarray.into_pyarray(py)
-
+    (y_out_pylist, t_out_pylist)
 }
 
 #[pymodule]
