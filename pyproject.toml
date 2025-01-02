@@ -35,3 +35,6 @@ fem = ["scikit-fem"]
 
 [tool.setuptools]
 packages = ["ormatex_py"]
+
+[tool.maturin]
+module-name = "ormatex_py.ormatex"

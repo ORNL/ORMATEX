@@ -18,9 +18,9 @@ use numpy::ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayViewD, ArrayViewMu
 use numpy::{IntoPyArray, PyArray1, PyArray2,
     PyReadonlyArray, PyReadonlyArray1, PyReadonlyArray2,
     PyArrayDyn, PyReadonlyArrayDyn};
+use pyo3::prelude::*;
 use pyo3::{exceptions::PyRuntimeError, pymethods, pymodule, types::PyModule, PyResult, Python};
 use pyo3::types::{PyList, PyDict};
-use pyo3::prelude::*;
 
 use faer::prelude::*;
 use faer_ext::*;
@@ -82,7 +82,35 @@ impl OdeSys<'_> for PySysWrapped {
     }
 }
 
+fn integrate_fixed_step<'py>(
+    py: Python<'py>,
+    sys_solver: &'py mut impl IntegrateSys<'py, TimeType = f64, SysStateType = faer::Mat<f64>>,
+    dt: f64,
+    nsteps: usize,
+    osteps: usize,
+    mut y_out: Vec<Bound<'py, PyArray2<f64>>>,
+    mut t_out: Vec<f64>
+    )
+{
+    // integrate the sys
+    for i in 0..nsteps {
+        if i % osteps == 0 {
+            let _y = sys_solver.state();
+            let _t = sys_solver.time();
+            y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
+            t_out.push(_t.clone());
+        }
+        let y_new = sys_solver.step(dt).unwrap();
+        sys_solver.accept_step(y_new);
+    }
+    let _y = sys_solver.state();
+    let _t = sys_solver.time();
+    y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
+    t_out.push(_t.clone());
+}
+
 #[pyfunction]
+#[pyo3(signature = (sys, y0, t0, dt, nsteps, **kwds))]
 fn integrate_wrapper_rs<'py>(
     py: Python<'py>,
     sys: &PySysWrapped,
@@ -90,33 +118,51 @@ fn integrate_wrapper_rs<'py>(
     t0: f64,
     dt: f64,
     nsteps: usize,
-    krylov_dim: usize,
+    kwds: Option<Bound<'py, PyDict>>
     )
     -> (Bound<'py, PyList>, Bound<'py, PyList>)
 {
+    // process kwargs
+    let kd = kwds.unwrap_or(PyDict::new(py));
+    let method: String = kd.as_ref().get_item("method").and_then(|item| item.extract::<String>()).unwrap_or(String::from("epi"));
+    let krylov_dim: usize = kd.as_ref().get_item("krylov_dim").and_then(|item| item.extract::<usize>()).unwrap_or(100);
+    let iom: usize = kd.as_ref().get_item("iom").and_then(|item| item.extract::<usize>()).unwrap_or(2);
+    let tol: f64 = kd.as_ref().get_item("tol").and_then(|item| item.extract::<f64>()).unwrap_or(1e-8);
+    let order: usize = kd.as_ref().get_item("order").and_then(|item| item.extract::<usize>()).unwrap_or(2);
+    let osteps: usize = kd.as_ref().get_item("osteps").and_then(|item| item.extract::<usize>()).unwrap_or(1);
+
     let y = y0.as_array();
     let y0_mat = y.view().into_faer();
 
     // setup the integrator
-    let iom = 2;
-    let order = 3;
-    let matexp_m = matexp_krylov::KrylovExpm::new(krylov_dim, Some(iom));
-    let mut sys_solver = ode_epirk::EpirkIntegrator::new(
-        t0, y0_mat.as_ref(), order, sys, matexp_m);
+    let mut sys_solver = match method.as_str() {
+        _ => {
+            // epi integrator family is default
+            let matexp_m = matexp_krylov::KrylovExpm::new(krylov_dim, Some(iom));
+            ode_epirk::EpirkIntegrator::new(
+                t0, y0_mat.as_ref(), order, sys, matexp_m)
+        },
+    };
 
     // storage for results
     let mut y_out: Vec<Bound<PyArray2<f64>>> = Vec::with_capacity(nsteps);
     let mut t_out: Vec<f64> = Vec::with_capacity(nsteps);
 
     // integrate the sys
-    for _i in 0..nsteps {
+    for i in 0..nsteps {
+        if i % osteps == 0 {
+            let _y = sys_solver.state();
+            let _t = sys_solver.time();
+            y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
+            t_out.push(_t.clone());
+        }
         let y_new = sys_solver.step(dt).unwrap();
         sys_solver.accept_step(y_new);
-        let _y = sys_solver.state();
-        let _t = sys_solver.time();
-        y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
-        t_out.push(_t.clone());
     }
+    let _y = sys_solver.state();
+    let _t = sys_solver.time();
+    y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
+    t_out.push(_t.clone());
     let y_out_pylist = PyList::new(py, y_out).unwrap();
     let t_out_pylist = PyList::new(py, t_out).unwrap();
 
@@ -131,7 +177,7 @@ fn ormatex<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()>
     m.add_class::<PySysWrapped>()?;
 
     // Adds rust ormatex integrate method
-    let _ = m.add_function(wrap_pyfunction!(integrate_wrapper_rs, m)?);
+    m.add_function(wrap_pyfunction!(integrate_wrapper_rs, m)?)?;
 
     Ok(())
 }
