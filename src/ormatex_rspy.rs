@@ -199,7 +199,7 @@ fn integrate_wrapper_rs<'py>(
     // process kwargs
     let kd = kwds.unwrap_or(PyDict::new(py));
     let method: String = kd.as_ref().get_item("method").and_then(|item| item.extract::<String>()).unwrap_or(String::from("epi"));
-    let krylov_dim: usize = kd.as_ref().get_item("krylov_dim").and_then(|item| item.extract::<usize>()).unwrap_or(100);
+    let krylov_dim: usize = kd.as_ref().get_item("max_krylov_dim").and_then(|item| item.extract::<usize>()).unwrap_or(100);
     let iom: usize = kd.as_ref().get_item("iom").and_then(|item| item.extract::<usize>()).unwrap_or(2);
     let tol: f64 = kd.as_ref().get_item("tol").and_then(|item| item.extract::<f64>()).unwrap_or(1e-8);
     let order: usize = kd.as_ref().get_item("order").and_then(|item| item.extract::<usize>()).unwrap_or(2);

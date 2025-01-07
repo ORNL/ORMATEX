@@ -350,6 +350,24 @@ class OdeSplitSys(OdeSys):
         raise NotImplementedError
 
 
+class OdeSysNp(OdeSys):
+    inner: OdeSys
+
+    def __init__(self, inner):
+        super().__init__()
+        self.inner = inner
+
+    def _frhs(self, t, x, **kwargs):
+        # Convert jax array to numpy array for Rust compat
+        # Alternatively, a pure numpy implementation is acceptable,
+        # but JAX can be powerful for automatic differentiation
+        # and GPU acceleration of the system model.
+        return np.asarray(self.inner._frhs(t, x, **kwargs))
+
+    def _fjac(self, t, x, **kwargs):
+        return self.inner._fjac(t, x, **kwargs)
+
+
 @dataclass
 class StepResult:
     # time at end of the step

@@ -19,7 +19,8 @@ import equinox as eqx
 
 import skfem as fem
 
-from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
+from ormatex_py.ormatex import integrate_wrapper_rs, PySysWrapped
+from ormatex_py.ode_sys import OdeSys, OdeSplitSys, OdeSysNp, MatrixLinOp
 from ormatex_py.ode_utils import stack_u, flatten_u
 from ormatex_py.progression.rad_1d_3s import plot_dt_jac_spec
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
@@ -276,8 +277,16 @@ if __name__ == "__main__":
     if args.fine:
         dt_fine = 1.0
         nsteps_fine = int(tf / dt_fine)
-        t_res_fine, y_res_fine = integrate_wrapper.integrate(ode_sys, y0, t0, dt_fine, nsteps_fine, "exprb3", max_krylov_dim=240, iom=2)
-    t_res, y_res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=2)
+        t_res_fine, y_res_fine = integrate_wrapper.integrate(
+                ode_sys, y0, t0, dt_fine, nsteps_fine, "exprb3", max_krylov_dim=240, iom=2)
+
+    if method == "epi_rs":
+        y0 = np.asarray(y0).reshape((-1, 1))
+        t_res, y_res = integrate_wrapper.integrate(
+                PySysWrapped(OdeSysNp(ode_sys)), y0, t0, dt, nsteps, "epi_rs", max_krylov_dim=200, iom=2)
+    else:
+        t_res, y_res = integrate_wrapper.integrate(
+                ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=2)
 
     si = xs.argsort()
     sx = xs[si]
