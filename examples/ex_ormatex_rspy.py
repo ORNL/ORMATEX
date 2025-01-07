@@ -39,7 +39,6 @@ def run_model():
     # Wrap the system for rust compatibility
     lv_sys = PySysWrapped(OdeSysNp(LotkaVolterra()))
 
-
     # Step the system forward using rust-based integrator
     t0 = 0.0
     y0 = np.array([[0.1, 0.2],]).T

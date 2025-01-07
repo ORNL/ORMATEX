@@ -16,7 +16,6 @@ except ImportError:
     HAS_ORMATEX_RUST = False
 
 def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
-
     tic = time.perf_counter()
     is_rs = method in ["exprb_rs", "epi_rs"]
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
