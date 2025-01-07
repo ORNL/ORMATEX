@@ -34,6 +34,9 @@ class LinOp(eqx.Module):
     def matvec(self, v: jax.Array) -> jax.Array:
         return self._matvec(v)
 
+    def matvec_npcompat(self, v: np.ndarray) -> np.ndarray:
+        return np.asarray(self._matvec(v))
+
     @abstractmethod
     def _dense(self):
         raise NotImplementedError
@@ -57,7 +60,7 @@ class EyeLinOp(LinOp):
         return v
 
     def _dense(self):
-        return jnp.eye(n)
+        return jnp.eye(self.n)
 
 
 class DiagLinOp(LinOp):
@@ -172,7 +175,7 @@ class JacLinOp(LinOp):
             v: target vector to apply linop to
         """
         print("jit-compiling JacLinOp._matvec")
-        return self.fjac_u(v)
+        return self.fjac_u(v.reshape(self.u.shape))
 
     def _dense(self):
         """

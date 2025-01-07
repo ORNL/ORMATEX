@@ -21,13 +21,15 @@ use numpy::{IntoPyArray, PyArray1, PyArray2,
 use pyo3::prelude::*;
 use pyo3::{exceptions::PyRuntimeError, pymethods, pymodule, types::PyModule, PyResult, Python};
 use pyo3::types::{PyList, PyDict};
+use std::{error::Error, fmt};
 
 use faer::prelude::*;
 use faer_ext::*;
-
+use faer::Parallelism;
 use faer::linop::LinOp;
-use crate::ode_sys::*;
+use faer::dyn_stack::PodStack;
 
+use crate::ode_sys::*;
 use crate::ode_sys::*;
 use crate::ode_bdf;
 use crate::ode_rk;
@@ -52,6 +54,93 @@ impl PySysWrapped {
         }
     }
 }
+
+/// LinOp for python JAX-based linear operator
+#[pyclass]
+pub struct PyJaxJacLinOp {
+    /// inner linop def in python
+    /// see omatex_py.ode_sys.LinOp for def
+    py_linop: PyObject,
+}
+
+#[pymethods]
+impl PyJaxJacLinOp {
+    #[new]
+    pub fn new(py_linop: PyObject) -> Self {
+        // let gil = Python::acquire_gil();
+        Self {
+            py_linop,
+        }
+    }
+}
+impl fmt::Debug for PyJaxJacLinOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Py LinOp x={:?} \n ", self.py_linop)
+    }
+}
+impl LinOp<f64> for PyJaxJacLinOp {
+    fn apply_req(
+            &self,
+            rhs_ncols: usize,
+            parallelism: Parallelism,
+        ) -> Result<faer::dyn_stack::StackReq, faer::dyn_stack::SizeOverflow> {
+        let _ = parallelism;
+        let _ = rhs_ncols;
+        Ok(faer::dyn_stack::StackReq::empty())
+    }
+
+    /// Number of rows in the linop
+    fn nrows(&self) -> usize {
+        // Not implented error!
+        panic!("Not Implemented");
+    }
+
+    /// Number of cols in the linop
+    fn ncols(&self) -> usize {
+        // Not implented error!
+        panic!("Not Implemented");
+    }
+
+    fn apply(
+        &self,
+        mut out: MatMut<f64>,
+        rhs: MatRef<f64>,
+        parallelism: Parallelism,
+        stack: &mut PodStack,
+        )
+    {
+        // unused
+        _ = parallelism;
+        _ = stack;
+
+        // compute jacobian vector product in python
+        let j_v = Python::with_gil(|py| {
+            // convert MatRef to PyArray
+            let x_slice = rhs.col(0).try_as_slice().unwrap();
+            let x_np = x_slice.to_vec().into_pyarray(py);
+            let j_v_py = self.py_linop.call_method(py, "matvec_npcompat", (x_np,), None).unwrap();
+            let inner_bound = j_v_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
+            let inner: PyReadonlyArray1<f64> = inner_bound.extract().unwrap();
+            let slice_view = inner.as_slice().unwrap();
+            faer::col::from_slice(slice_view).as_2d().to_owned()
+        });
+
+        out.copy_from(j_v);
+    }
+
+    fn conj_apply(
+            &self,
+            out: MatMut<'_, f64>,
+            rhs: MatRef<'_, f64>,
+            parallelism: Parallelism,
+            stack: &mut PodStack,
+        ) {
+        // Not implented error!
+        panic!("Not Implemented");
+    }
+}
+
+
 
 /// Implement required OdeSys interface for interop
 /// with Rust ormatex integrators.  Calls the
@@ -78,7 +167,18 @@ impl OdeSys<'_> for PySysWrapped {
                 t: f64,
                 x: MatRef<'b, f64>)
             -> Box<dyn LinOp<f64> + '_> {
-        Box::new(get_fd_jac(self, t, x))
+        // Box::new(get_fd_jac(self, t, x))
+        Python::with_gil(|py| {
+            // convert x to numpy array
+            let x_ndarray = x.into_ndarray().to_owned();
+            let x_np = x_ndarray.into_pyarray(py);
+            // py based jacobian linop
+            let fjac_py = self.py_sys.call_method(
+                py, "fjac", (t, x_np), None).unwrap();
+            // wrapped jacobian linop
+            let fjac_inner = PyJaxJacLinOp::new(fjac_py);
+            Box::new(fjac_inner)
+        })
     }
 }
 

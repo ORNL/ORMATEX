@@ -49,6 +49,8 @@ class OdeSysNp(OdeSys):
         # and GPU acceleration of the system model.
         return np.asarray(self.inner._frhs(t, x, **kwargs))
 
+    def _fjac(self, t, x, **kwargs):
+        return self.inner._fjac(t, x, **kwargs)
 
 # Wrap the system for rust compatibility
 lv_sys = PySysWrapped(OdeSysNp(LotkaVolterra()))

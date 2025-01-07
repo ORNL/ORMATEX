@@ -108,6 +108,21 @@ pub fn apply_linop(lop: &impl LinOp<f64>, q: MatRef<f64>) -> Mat<f64> {
 }
 
 
+/// Wrapper to shift a LinOp, A
+/// and applies
+/// [[ A,  B],
+///  [ 0,  K]]
+/// to a vector.
+/// Note: block matricies can be built in faer with
+/// mat.get_mut(1..5,3..6).copy_from(other.get(0..4, 0..3))
+pub struct ExtendedLinOp<'a> {
+    t: f64,
+    inner_lop: Box<dyn LinOp<f64> + 'a>,
+    B: faer::Mat<f64>,
+    K: faer::Mat<f64>,
+}
+
+
 /// Wrapper to shift and scale a LinOp
 pub struct ShiftedLinOp<'a> {
     t: f64,
