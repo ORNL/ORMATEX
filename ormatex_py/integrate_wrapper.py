@@ -17,7 +17,7 @@ except ImportError:
 
 def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     tic = time.perf_counter()
-    is_rs = method in ["exprb_rs", "epi_rs"]
+    is_rs = method in ["exprb2_rs", "exprb3_rs", "epi2_rs", "epi3_rs"]
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
     is_rk = method in RKIntegrator._valid_methods.keys()
@@ -35,10 +35,11 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
         #wait for computation of last step to finish
         y_res[-1].block_until_ready()
     elif is_rs:
+        # try to integrate with rust ormatex integrators
         if not HAS_ORMATEX_RUST:
             raise ImportError("import ormatex_py.ormatex failed. Rust ormatex bindings not found. Run: maturin develop")
         assert isinstance(ode_sys, PySysWrapped)
-        y_res, t_res = integrate_wrapper_rs(ode_sys, y0, t0, dt, nsteps, method="epi", order=kwargs.get("order", 2))
+        y_res, t_res = integrate_wrapper_rs(ode_sys, y0, t0, dt, nsteps, method=str(method[0:-3]), **kwargs)
         y_res, t_res = np.asarray(y_res).squeeze(), np.asarray(t_res)
     else:
         try:

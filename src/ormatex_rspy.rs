@@ -198,11 +198,10 @@ fn integrate_wrapper_rs<'py>(
 {
     // process kwargs
     let kd = kwds.unwrap_or(PyDict::new(py));
-    let method: String = kd.as_ref().get_item("method").and_then(|item| item.extract::<String>()).unwrap_or(String::from("epi"));
+    let method: String = kd.as_ref().get_item("method").and_then(|item| item.extract::<String>()).unwrap_or(String::from("epi2"));
     let krylov_dim: usize = kd.as_ref().get_item("max_krylov_dim").and_then(|item| item.extract::<usize>()).unwrap_or(100);
     let iom: usize = kd.as_ref().get_item("iom").and_then(|item| item.extract::<usize>()).unwrap_or(2);
     let tol: f64 = kd.as_ref().get_item("tol").and_then(|item| item.extract::<f64>()).unwrap_or(1e-8);
-    let order: usize = kd.as_ref().get_item("order").and_then(|item| item.extract::<usize>()).unwrap_or(2);
     let osteps: usize = kd.as_ref().get_item("osteps").and_then(|item| item.extract::<usize>()).unwrap_or(1);
 
     let y = y0.as_array();
@@ -214,7 +213,7 @@ fn integrate_wrapper_rs<'py>(
             // epi integrator family is default
             let matexp_m = matexp_krylov::KrylovExpm::new(krylov_dim, Some(iom));
             ode_epirk::EpirkIntegrator::new(
-                t0, y0_mat.as_ref(), order, sys, matexp_m)
+                t0, y0_mat.as_ref(), method, sys, matexp_m)
         },
     };
 

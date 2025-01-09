@@ -16,6 +16,7 @@ Exponential integrators:
 - [x] EPI2 = EXPRB2 = EPIRK2
 - [x] EPI3
 - [ ] EPIRK4
+- [X] EXPRB3
 - [ ] EXPRB4  (exponential rosenbrock order 4)
 
 Classic integrators:
@@ -68,7 +69,7 @@ Classic integrators:
 - scikit-fem
 - diffrax
 
-### Install
+### Python Only Install
 
 For a local development install, run:
 
@@ -181,21 +182,43 @@ For an optimized build run:
 
     cargo build --release
 
-### Examples
+### Build ORMATEX Python Bindings
+
+To use the rust-based ORMATEX integrators from a python interface, build the python-rust bindings with:
+
+    pip install maturin
+    maturin develop --release
+
+Ensure to use the `--release` flag for an optimized build.  Forgetting this flag will build in debug mode and will result in significantly degraded performance.
+
+### Python-Rust Examples
+
+After running the above `maturin develop --release` command from the directory containing this `README.md` file (the root ORMATEX project directory), the following example can be run:
+
+    cd examples
+    python ex_ormatex_rspy.py
+
+### Rust Examples
 
 Run the examples with
 
     cargo run --example ex_sys_1 --release
     cargo run --example ex_sys_2 --release
 
-Expected resulting images from running the first example of the Lotka-Volterra system integrated with EPIRK3:
+Expected resulting images from running the first example of the Lotka-Volterra system integrated with EPI3:
 
 ![plot](./docs/images/ex_sys__ex_1.png)
 
-Expected result from the Bateman system in the sectiond example integrated with EPIRK2:
+Expected result from the Bateman system in the second example integrated with EXPRB2:
 
 ![plot](./docs/images/ex_bateman.png)
 
+Authors
+========
+
+William Gurecky (gureckywl@ornl.gov)
+
+Konstantin Pieper (pieperk@ornl.gov)
 
 License
 ========

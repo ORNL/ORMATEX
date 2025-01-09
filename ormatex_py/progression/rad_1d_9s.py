@@ -275,18 +275,28 @@ if __name__ == "__main__":
     tf = dt * nsteps
     method = args.method
     if args.fine:
-        dt_fine = 1.0
+        # Compute ground-truth baseline solution
+        dt_fine = 0.5
         nsteps_fine = int(tf / dt_fine)
         t_res_fine, y_res_fine = integrate_wrapper.integrate(
-                ode_sys, y0, t0, dt_fine, nsteps_fine, "exprb3", max_krylov_dim=240, iom=2)
-
-    if method == "epi_rs":
+                ode_sys, y0, t0, dt_fine, nsteps_fine, "exprb3",
+                max_krylov_dim=240, iom=2)
+    if "_rs" in method:
+        # use a rust ormatex integrator
+        # NOTE: the rust integrators currently require
+        # converting jax types to np, so the wrapper does this
+        # conversion automatically but with some overhead.
+        # Despite this, on a multi-core CPU, the rust exp int
+        # impls are slightly faster than the JAX impl.
         y0 = np.asarray(y0).reshape((-1, 1))
         t_res, y_res = integrate_wrapper.integrate(
-                PySysWrapped(OdeSysNp(ode_sys)), y0, t0, dt, nsteps, "epi_rs", max_krylov_dim=200, iom=2)
+                PySysWrapped(OdeSysNp(ode_sys)), y0, t0, dt, nsteps,
+                method, max_krylov_dim=100, iom=2, osteps=20)
     else:
+        # use a python ormatex integrator
         t_res, y_res = integrate_wrapper.integrate(
-                ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=2)
+                ode_sys, y0, t0, dt, nsteps, method,
+                max_krylov_dim=200, iom=2)
 
     si = xs.argsort()
     sx = xs[si]
@@ -294,7 +304,7 @@ if __name__ == "__main__":
     fig, ax = plt.subplots(nrows=3, ncols=3, figsize=(15,8.5))
     plt.title(r"method: %s" % (method))
 
-    i = nsteps
+    i = -1
     t = t_res[i]
     yf = y_res[i]
     uf = stack_u(yf, n_species)

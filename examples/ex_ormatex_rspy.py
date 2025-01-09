@@ -38,13 +38,12 @@ class LotkaVolterra(OdeSys):
 def run_model():
     # Wrap the system for rust compatibility
     lv_sys = PySysWrapped(OdeSysNp(LotkaVolterra()))
-
     # Step the system forward using rust-based integrator
     t0 = 0.0
     y0 = np.array([[0.1, 0.2],]).T
     dt = 0.05
     nsteps = 400
-    t_out, y_out = integrate(lv_sys, y0, t0, dt, nsteps, method="epi_rs", order=2)
+    t_out, y_out = integrate(lv_sys, y0, t0, dt, nsteps, method="epi2_rs")
     return t_out, y_out
 
 if __name__ == "__main__":
