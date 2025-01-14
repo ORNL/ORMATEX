@@ -35,7 +35,7 @@ class LinOp(eqx.Module):
         return self._matvec(v)
 
     def matvec_npcompat(self, v: np.ndarray) -> np.ndarray:
-        return np.asarray(self._matvec(v))
+        return np.asarray(self._matvec(v)).flatten()
 
     @abstractmethod
     def _dense(self):
@@ -362,10 +362,11 @@ class OdeSysNp(OdeSys):
         # Alternatively, a pure numpy implementation is acceptable,
         # but JAX can be powerful for automatic differentiation
         # and GPU acceleration of the system model.
-        return np.asarray(self.inner._frhs(t, x, **kwargs))
+        inner_frhs = self.inner._frhs(t, x, **kwargs).reshape((-1, ), order='F')
+        return np.asarray(inner_frhs)
 
     def _fjac(self, t, x, **kwargs):
-        return self.inner._fjac(t, x, **kwargs)
+        return self.inner._fjac(t, x.flatten(), **kwargs)
 
 
 @dataclass
