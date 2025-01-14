@@ -14,12 +14,10 @@
 /// on the CPU.
 ///
 
-use numpy::ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayViewD, ArrayViewMutD, Zip};
 use numpy::{IntoPyArray, PyArray1, PyArray2,
-    PyReadonlyArray, PyReadonlyArray1, PyReadonlyArray2,
-    PyArrayDyn, PyReadonlyArrayDyn};
+    PyReadonlyArray, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
-use pyo3::{exceptions::PyRuntimeError, pymethods, pymodule, types::PyModule, PyResult, Python};
+use pyo3::{pymethods, pymodule, types::PyModule, PyResult, Python};
 use pyo3::types::{PyList, PyDict};
 use std::{error::Error, fmt};
 
@@ -31,6 +29,7 @@ use faer::dyn_stack::PodStack;
 
 use crate::ode_sys::*;
 use crate::ode_sys::*;
+use crate::arnoldi::arnoldi_lop;
 use crate::ode_bdf;
 use crate::ode_rk;
 use crate::ode_epirk;
@@ -242,6 +241,50 @@ fn integrate_wrapper_rs<'py>(
     (y_out_pylist, t_out_pylist)
 }
 
+/// Rust Arnoldi method binding for interop with python
+///
+/// * `py_linop` - python LinOp
+/// * `b` - numpy vector
+/// * `m` - max krylov iteration
+/// * `iom` - incomplete ortho depth
+///
+/// returns
+/// * `H` - Upper Hessenberge
+/// * `V` - orthonormal basis
+/// * `bkdwn` - iter where happy breakdown occured
+///
+#[pyfunction]
+fn arnoldi_rs<'py>(
+    py: Python<'py>,
+    py_linop: PyObject,
+    a_lo_scale: f64,
+    b: PyReadonlyArray2<f64>,
+    m: usize,
+    iom: usize,
+    )
+    -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>, usize)
+{
+    // create wrapper around python linop
+    let lop_wrapped = PyJaxJacLinOp::new(py_linop);
+
+    // convert b vec into fear mat
+    let b_ndarray = b.as_array();
+    let b_mat = b_ndarray.view().into_faer();
+
+    // run arnoldi
+    let (q, h, bkdwn) = arnoldi_lop(
+        lop_wrapped, a_lo_scale, b_mat.as_ref(), m, iom);
+
+    // convert faer mats into numpy arrays
+    let h_ndarray = h.as_ref().into_ndarray().to_owned();
+    let q_ndarray = q.as_ref().into_ndarray().to_owned();
+    (
+        q_ndarray.into_pyarray(py),
+        h_ndarray.into_pyarray(py),
+        bkdwn
+    )
+}
+
 #[pymodule]
 #[pyo3(name="ormatex")]
 fn ormatex<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()>
@@ -251,6 +294,9 @@ fn ormatex<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()>
 
     // Adds rust ormatex integrate method
     m.add_function(wrap_pyfunction!(integrate_wrapper_rs, m)?)?;
+
+    // Adds rust based arnoldi method
+    m.add_function(wrap_pyfunction!(arnoldi_rs, m)?)?;
 
     Ok(())
 }

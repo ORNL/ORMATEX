@@ -19,7 +19,11 @@ import equinox as eqx
 
 import skfem as fem
 
-from ormatex_py.ormatex import integrate_wrapper_rs, PySysWrapped
+try:
+    from ormatex_py.ormatex import PySysWrapped
+    HAS_ORMATEX_RUST = True
+except ImportError:
+    HAS_ORMATEX_RUST = False
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, OdeSysNp, MatrixLinOp
 from ormatex_py.ode_utils import stack_u, flatten_u
 from ormatex_py.progression.rad_1d_3s import plot_dt_jac_spec
