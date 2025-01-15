@@ -42,7 +42,7 @@ impl KrylovExpm {
         -> Mat<f64>
     {
         let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim, self.iom);
-        let phi_k = matexp_pade::phi((faer::scale(dt) * h.as_ref()).as_ref(), k);
+        let phi_k = matexp_pade::phi_ext((faer::scale(dt) * h.as_ref()).as_ref(), k);
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(phi_k.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
@@ -61,7 +61,7 @@ impl KrylovExpm {
         -> (Mat<f64>, Mat<f64>, Mat<f64>)
     {
         let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim, self.iom);
-        let phi_k = matexp_pade::phi((faer::scale(dt) * h.as_ref()).as_ref(), k);
+        let phi_k = matexp_pade::phi_ext((faer::scale(dt) * h.as_ref()).as_ref(), k);
         let id = faer::Mat::<f64>::identity(phi_k.nrows(), phi_k.ncols());
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(phi_k.nrows(), 1);
