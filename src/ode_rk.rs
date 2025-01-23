@@ -128,16 +128,16 @@ where
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&'a self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step(&self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
        self.step_rk(dt)
     }
 
-    fn time(&'a self) -> &'a Self::TimeType {
-        &self.t
+    fn time(&self) -> Self::TimeType {
+        self.t
     }
 
-    fn state(&'a self) -> &'a Self::SysStateType {
-        &self.y_hist[0]
+    fn state(&self) -> Self::SysStateType {
+        self.y_hist[0].to_owned()
     }
 
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>) {

@@ -15,17 +15,21 @@
 ///
 
 use numpy::{IntoPyArray, PyArray1, PyArray2,
-    PyReadonlyArray, PyReadonlyArray1, PyReadonlyArray2};
+            PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3::{pymethods, pymodule, types::PyModule, PyResult, Python};
 use pyo3::types::{PyList, PyDict};
-use std::{error::Error, fmt};
+use std::fmt;
 
 use faer::prelude::*;
 use faer_ext::*;
 use faer::Parallelism;
 use faer::linop::LinOp;
 use faer::dyn_stack::PodStack;
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use reborrow::{ReborrowMut, Reborrow};
 
 use crate::ode_sys::*;
 use crate::ode_sys::*;
@@ -181,6 +185,31 @@ impl OdeSys<'_> for PySysWrapped {
     }
 }
 
+/// Select ode solver
+fn select_solver<'a>(
+    sys: &'a PySysWrapped,
+    t0: f64,
+    y0_mat: MatRef<'_, f64>,
+    method: String,
+    krylov_dim: usize,
+    iom: usize)
+    -> Rc < RefCell<dyn IntegrateSys<'a, TimeType=f64, SysStateType=Mat<f64>> + 'a> >
+{
+    if method.as_str() == "bdf1" || method.as_str() == "backeuler" {
+        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 1, sys)))
+    }
+    else if method.as_str() == "bdf2" {
+        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 2, sys)))
+    }
+    else if method.as_str() == "cn" {
+        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 3, sys)))
+    }
+    // epi integrator family is default
+    let matexp_m = matexp_krylov::KrylovExpm::new(krylov_dim, Some(iom));
+    Rc::new( RefCell::new(ode_epirk::EpirkIntegrator::new(
+        t0, y0_mat, method, sys, matexp_m)))
+}
+
 
 #[pyfunction]
 #[pyo3(signature = (sys, y0, t0, dt, nsteps, **kwds))]
@@ -207,34 +236,29 @@ fn integrate_wrapper_rs<'py>(
     let y0_mat = y.view().into_faer();
 
     // setup the integrator
-    let mut sys_solver = match method.as_str() {
-        _ => {
-            // epi integrator family is default
-            let matexp_m = matexp_krylov::KrylovExpm::new(krylov_dim, Some(iom));
-            ode_epirk::EpirkIntegrator::new(
-                t0, y0_mat.as_ref(), method, sys, matexp_m)
-        },
-    };
+    let solver = select_solver(
+        sys, t0, y0_mat, method, krylov_dim, iom);
 
     // storage for results
     let mut y_out: Vec<Bound<PyArray2<f64>>> = Vec::with_capacity(nsteps);
     let mut t_out: Vec<f64> = Vec::with_capacity(nsteps);
 
     // integrate the sys
+    let borrowed_solver = solver.borrow();
     for i in 0..nsteps {
         if i % osteps == 0 {
-            let _y = sys_solver.state();
-            let _t = sys_solver.time();
+            let _y = borrowed_solver.state();
+            let _t = borrowed_solver.time();
             y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
-            t_out.push(_t.clone());
+            t_out.push(_t);
         }
-        let y_new = sys_solver.step(dt).unwrap();
-        sys_solver.accept_step(y_new);
+        let y_new = borrowed_solver.step(dt);
+        solver.borrow_mut().accept_step(y_new.unwrap());
     }
-    let _y = sys_solver.state();
-    let _t = sys_solver.time();
+    let _y = borrowed_solver.state();
+    let _t = borrowed_solver.time();
     y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
-    t_out.push(_t.clone());
+    t_out.push(_t);
     let y_out_pylist = PyList::new(py, y_out).unwrap();
     let t_out_pylist = PyList::new(py, t_out).unwrap();
 

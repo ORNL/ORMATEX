@@ -27,6 +27,7 @@ impl fmt::Display for StepError
 }
 
 
+#[derive(Clone)]
 pub struct StepResult<T, S> {
     // Current system time
     pub t: T,
@@ -56,13 +57,13 @@ pub trait IntegrateSys <'a>
 
     /// Step solution forward by dt, proposes a new state.
     /// This may outright fail due to numerical issue
-    fn step(&'a self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
+    fn step(&self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
 
     /// Get current time
-    fn time(&'a self) -> &'a Self::TimeType;
+    fn time(&self) -> Self::TimeType;
 
     /// Get current system state
-    fn state(&'a self) -> &'a Self::SysStateType;
+    fn state(&self) -> Self::SysStateType;
 
     /// Accepts the proposed new time and state.
     /// Records accepted state into solution history.
@@ -193,7 +194,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
         // compute optional shift
         match self.gamma {
             Some(gamma) => { out += faer::scale(gamma) * rhs.as_ref() },
-            (_) => { },
+            _ => { },
         }
     }
 
@@ -326,7 +327,7 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
         // compute optional shift
         match self.gamma {
             Some(gamma) => { j_v += faer::scale(gamma) * rhs.as_ref() },
-            (_) => { },
+            _ => { },
         }
 
         // (gamma*I + scale*J) * v

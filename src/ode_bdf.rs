@@ -51,7 +51,7 @@ where
         }
     }
 
-    fn _nonlin_gfn(&'a self, t: f64, y: MatRef<f64>, dt: f64, order: usize) -> Mat<f64> {
+    fn _nonlin_gfn(&self, t: f64, y: MatRef<f64>, dt: f64, order: usize) -> Mat<f64> {
         // current state
         let y0 = self.y_hist[0].as_ref();
         match order {
@@ -63,7 +63,7 @@ where
         }
     }
 
-    fn _nonlin_gfn_jac(&'a self, t: f64, y: MatRef<f64>, dt: f64, order: usize) -> ShiftedLinOp<'_> {
+    fn _nonlin_gfn_jac(&self, t: f64, y: MatRef<f64>, dt: f64, order: usize) -> ShiftedLinOp<'_> {
         let gamma = 1.0;
         let scale = match order {
             // bdf1
@@ -76,7 +76,7 @@ where
     }
 
     /// BDF1
-    fn step_order_1(&'a self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_1(&self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -94,7 +94,7 @@ where
             { -dt*self.sys.frhs(t+dt, y) - y0.as_ref() + y.as_ref() };
 
         // Create jacobian of gfn
-        let gfn_jac = |t: f64, y: MatRef<'_, f64>| -> ShiftedLinOp<'a> {
+        let gfn_jac = |t: f64, y: MatRef<'_, f64>| -> ShiftedLinOp<'_> {
             self.sys.fjac_shifted(t+dt, y, scale, Some(gamma))
         };
 
@@ -108,7 +108,7 @@ where
     }
 
     /// BDF2
-    fn step_order_2(&'a self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_2(&self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -116,7 +116,7 @@ where
         let gfn = |t: f64, y: MatRef<'_, f64>| -> Mat<f64>
             { self._nonlin_gfn(t, y, dt, self.order) };
 
-        let gfn_jac = |t: f64, y: MatRef<'_, f64>| -> ShiftedLinOp<'a> {
+        let gfn_jac = |t: f64, y: MatRef<'_, f64>| -> ShiftedLinOp<'_> {
             self._nonlin_gfn_jac(t, y, dt, self.order)
         };
 
@@ -129,7 +129,7 @@ where
     }
 
     /// Crank-Nicholson
-    fn step_cn(&'a self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_cn(&self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -144,7 +144,7 @@ where
             { -dt*0.5*self.sys.frhs(t+dt, y) -dt*0.5*self.sys.frhs(t, y0.as_ref()) - y0.as_ref() + y.as_ref() };
 
         // Create jacobian of gfn
-        let gfn_jac = |t: f64, y: MatRef<'_, f64>| -> ShiftedLinOp<'a> {
+        let gfn_jac = |t: f64, y: MatRef<'_, f64>| -> ShiftedLinOp<'_> {
             self.sys.fjac_shifted(t+dt, y, scale, Some(gamma))
         };
 
@@ -165,7 +165,7 @@ where
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&'a self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step(&self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
         match self.order {
             1 => self.step_order_1(dt),
             2 => {
@@ -181,12 +181,12 @@ where
        }
     }
 
-    fn time(&'a self) -> &'a Self::TimeType {
-        &self.t
+    fn time(&self) -> Self::TimeType {
+        self.t
     }
 
-    fn state(&'a self) -> &'a Self::SysStateType {
-        &self.y_hist[0]
+    fn state(&self) -> Self::SysStateType {
+        self.y_hist[0].to_owned()
     }
 
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>) {
@@ -204,9 +204,6 @@ where
 
 #[cfg(test)]
 mod test_bdf {
-    use assert_approx_eq::assert_approx_eq;
-    use faer::assert_matrix_eq;
-    use crate::ode_utils::{lv_sys_rhs, lv_sys_jac};
     use crate::ode_test_common::*;
 
     // bring everything from above (parent) module into scope

@@ -1,7 +1,6 @@
 /// Contains arnoldi iteration methods
 /// Provides arnoldi methods for both faer LinOp and faer SparseColMat
 use faer::prelude::*;
-use faer::sparse::*;
 use faer::linop::LinOp;
 use reborrow::ReborrowMut;
 use std::cmp;

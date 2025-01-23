@@ -17,7 +17,8 @@ except ImportError:
 
 def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     tic = time.perf_counter()
-    is_rs = method in ["exprb2_rs", "exprb3_rs", "epi2_rs", "epi3_rs"]
+    is_rs = method in ["exprb2_rs", "exprb3_rs", "epi2_rs", "epi3_rs",
+                       "bdf2_rs", "bdf1_rs", "backeuler_rs", "cn_rs"]
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
     is_rk = method in RKIntegrator._valid_methods.keys()

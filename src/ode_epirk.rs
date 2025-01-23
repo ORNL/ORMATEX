@@ -64,7 +64,7 @@ where
     }
 
     /// Computes remainder R(yr) = frhs(yr) - frhs(y0) - J_y0*(yr-y0)
-    fn remf(&'a self, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>) -> Mat<f64> {
+    fn remf(&self, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>) -> Mat<f64> {
         let y0 = self.y_hist[0].as_ref();
         let frhs_yr = self.sys.frhs(tr, yr);
 
@@ -79,7 +79,7 @@ where
     }
 
     /// EPI2
-    fn step_order_2(&'a self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_2(&self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -99,7 +99,7 @@ where
 
     /// EXPRB32
     /// Exponential Rosenroack order 3 with 2nd order embedded error estimate.
-    fn step_exprb32(&'a self, dt: f64)
+    fn step_exprb32(&self, dt: f64)
         -> Result<StepResult<f64, Mat<f64>>, StepError>
     {
         // current state
@@ -134,7 +134,7 @@ where
     /// From Gaudreault et. al.
     /// An efficient exponential time integration method for the numerical
     /// solution of the shallow water equations.
-    fn step_order_3(&'a self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_3(&self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -167,7 +167,7 @@ where
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&'a self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step(&self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
         match self.method.as_str() {
             "epi2" | "exprb2" => {
                 self.step_order_2(dt)
@@ -186,12 +186,12 @@ where
        }
     }
 
-    fn time(&'a self) -> &'a Self::TimeType {
-        &self.t
+    fn time(&self) -> Self::TimeType {
+        self.t
     }
 
-    fn state(&'a self) -> &'a Self::SysStateType {
-        &self.y_hist[0]
+    fn state(&self) -> Self::SysStateType {
+        self.y_hist[0].to_owned()
     }
 
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>) {
