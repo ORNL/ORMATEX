@@ -34,6 +34,9 @@ class LinOp(eqx.Module):
     def matvec(self, v: jax.Array) -> jax.Array:
         return self._matvec(v)
 
+    def matvec_npcompat(self, v: np.ndarray) -> np.ndarray:
+        return np.asarray(self._matvec(v)).flatten()
+
     @abstractmethod
     def _dense(self):
         raise NotImplementedError
@@ -57,7 +60,7 @@ class EyeLinOp(LinOp):
         return v
 
     def _dense(self):
-        return jnp.eye(n)
+        return jnp.eye(self.n)
 
 
 class DiagLinOp(LinOp):
@@ -172,7 +175,7 @@ class JacLinOp(LinOp):
             v: target vector to apply linop to
         """
         print("jit-compiling JacLinOp._matvec")
-        return self.fjac_u(v)
+        return self.fjac_u(v.reshape(self.u.shape))
 
     def _dense(self):
         """
@@ -345,6 +348,25 @@ class OdeSplitSys(OdeSys):
     def _fl(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         # the user must override this
         raise NotImplementedError
+
+
+class OdeSysNp(OdeSys):
+    inner: OdeSys
+
+    def __init__(self, inner):
+        super().__init__()
+        self.inner = inner
+
+    def _frhs(self, t, x, **kwargs):
+        # Convert jax array to numpy array for Rust compat
+        # Alternatively, a pure numpy implementation is acceptable,
+        # but JAX can be powerful for automatic differentiation
+        # and GPU acceleration of the system model.
+        inner_frhs = self.inner._frhs(t, x, **kwargs).reshape((-1, ), order='F')
+        return np.asarray(inner_frhs)
+
+    def _fjac(self, t, x, **kwargs):
+        return self.inner._fjac(t, x.flatten(), **kwargs)
 
 
 @dataclass

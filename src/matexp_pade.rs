@@ -1,6 +1,5 @@
 /// matrix exponential eval methods for dense faer Mats
 use faer::prelude::*;
-use faer::solvers::SolverCore;
 use libm::frexp;
 
 
@@ -49,6 +48,42 @@ pub fn phi(z: MatRef<f64>, k: usize) -> Mat<f64>
         }
         phi_k
     }
+}
+
+/// Computes phi_0, phi_1, ... phi_k  together
+/// using the more stable but expensive extension formula
+pub fn phi_ext(z: MatRef<f64>, k: usize) -> Mat<f64>
+{
+    let n = z.nrows();
+    let m = z.ncols();
+    assert!(n == m);
+
+    if k <= 1 {
+        return phi(z, k)
+    }
+
+    let z_ext: Mat<f64> = match k {
+        0 => z.to_owned(),
+        _ => {
+            let z_ext_k_nrows = n+(k-1)*n;
+            let z_ext_k_ncols = m;
+            let mut z_ext_k = Mat::zeros(z_ext_k_nrows, z_ext_k_ncols);
+            z_ext_k.get_mut(0..n, 0..m).copy_from(z);
+            // z_ext_k.get_mut(n.., 0..m).copy_from(zeros);
+            let z_ext_nrows = z_ext_k_nrows + n;
+            let z_ext_ncols = z_ext_k_ncols + k*n;
+            let mut z_ext = Mat::zeros(z_ext_nrows, z_ext_ncols);
+            z_ext.get_mut(0..z_ext_k_nrows, 0..z_ext_k_ncols)
+                .copy_from(z_ext_k);
+            z_ext.get_mut(0..z_ext_k_nrows, z_ext_k_ncols..)
+                .copy_from(Mat::<f64>::identity(k*n, k*n));
+            z_ext
+        }
+    };
+
+    let phi_ks = matexp(z_ext.as_ref(), 1.0);
+
+    phi_ks.get(0..n, phi_ks.ncols()-n..).to_owned()
 }
 
 /// From N. J. Higham. The Scaling and Squaring Method for the Matrix Exponential Revisited.
@@ -174,4 +209,27 @@ fn pade13(a: MatRef<f64>, a2: MatRef<f64>, a4: MatRef<f64>, a6: MatRef<f64>)
         a6*faer::scale(B13[6]) + a4*faer::scale(B13[4]) + a2*faer::scale(B13[2]) +
         ident.as_ref()*faer::scale(B13[0]);
     (u, v2)
+}
+
+
+#[cfg(test)]
+mod test_matexp_pade {
+    use crate::mat_utils::{random_mat_normal, mat_mat_approx_eq};
+
+    // bring everything from above (parent) module into scope
+    use super::*;
+
+    #[test]
+    fn test_phi_ext() {
+        // ensure the phi extension formula produces same as recurrance formula
+        // contruct a random mat
+        let dense_a: Mat<f64> = random_mat_normal(5, 5);
+
+        for k in 0 ..= 3 {
+            let phi_a = phi(dense_a.as_ref(), k);
+            let phi_ext_a = phi_ext(dense_a.as_ref(), k);
+            mat_mat_approx_eq(phi_a.as_ref(), phi_ext_a.as_ref(), 1e-10);
+        }
+    }
+
 }

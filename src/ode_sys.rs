@@ -27,6 +27,7 @@ impl fmt::Display for StepError
 }
 
 
+#[derive(Clone)]
 pub struct StepResult<T, S> {
     // Current system time
     pub t: T,
@@ -56,13 +57,13 @@ pub trait IntegrateSys <'a>
 
     /// Step solution forward by dt, proposes a new state.
     /// This may outright fail due to numerical issue
-    fn step(&'a self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
+    fn step(&self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
 
     /// Get current time
-    fn time(&'a self) -> &'a Self::TimeType;
+    fn time(&self) -> Self::TimeType;
 
     /// Get current system state
-    fn state(&'a self) -> &'a Self::SysStateType;
+    fn state(&self) -> Self::SysStateType;
 
     /// Accepts the proposed new time and state.
     /// Records accepted state into solution history.
@@ -105,6 +106,21 @@ pub fn apply_linop(lop: &impl LinOp<f64>, q: MatRef<f64>) -> Mat<f64> {
         PodStack::new(&mut _dummy_podstack)
         );
     out
+}
+
+
+/// Wrapper to shift a LinOp, A
+/// and applies
+/// [[ A,  B],
+///  [ 0,  K]]
+/// to a vector.
+/// Note: block matricies can be built in faer with
+/// mat.get_mut(1..5,3..6).copy_from(other.get(0..4, 0..3))
+pub struct ExtendedLinOp<'a> {
+    t: f64,
+    inner_lop: Box<dyn LinOp<f64> + 'a>,
+    B: faer::Mat<f64>,
+    K: faer::Mat<f64>,
 }
 
 
@@ -168,7 +184,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
         mut out: MatMut<f64>,
         rhs: MatRef<f64>,
         parallelism: Parallelism,
-        stack: PodStack<'_>,
+        stack: &mut PodStack,
         )
     {
         // compute unshifted jacobian vector product
@@ -178,7 +194,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
         // compute optional shift
         match self.gamma {
             Some(gamma) => { out += faer::scale(gamma) * rhs.as_ref() },
-            (_) => { },
+            _ => { },
         }
     }
 
@@ -192,7 +208,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
             out: MatMut<'_, f64>,
             rhs: MatRef<'_, f64>,
             parallelism: Parallelism,
-            stack: PodStack<'_>,
+            stack: &mut PodStack,
         ) {
         // Not implented error!
         panic!("Not Implemented");
@@ -293,7 +309,7 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
         mut out: MatMut<f64>,
         rhs: MatRef<f64>,
         parallelism: Parallelism,
-        stack: PodStack<'_>,
+        stack: &mut PodStack,
         )
     {
         // unused
@@ -311,7 +327,7 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
         // compute optional shift
         match self.gamma {
             Some(gamma) => { j_v += faer::scale(gamma) * rhs.as_ref() },
-            (_) => { },
+            _ => { },
         }
 
         // (gamma*I + scale*J) * v
@@ -328,7 +344,7 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
             out: MatMut<'_, f64>,
             rhs: MatRef<'_, f64>,
             parallelism: Parallelism,
-            stack: PodStack<'_>,
+            stack: &mut PodStack,
         ) {
         // Not implented error!
         panic!("Not Implemented");
