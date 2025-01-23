@@ -295,7 +295,7 @@ if __name__ == "__main__":
         y0 = np.asarray(y0).reshape((-1, 1))
         t_res, y_res = integrate_wrapper.integrate(
                 PySysWrapped(OdeSysNp(ode_sys)), y0, t0, dt, nsteps,
-                method, max_krylov_dim=100, iom=2, osteps=20)
+                method, max_krylov_dim=200, iom=2, osteps=20)
     else:
         # use a python ormatex integrator
         t_res, y_res = integrate_wrapper.integrate(

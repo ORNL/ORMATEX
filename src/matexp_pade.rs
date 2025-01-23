@@ -58,6 +58,10 @@ pub fn phi_ext(z: MatRef<f64>, k: usize) -> Mat<f64>
     let m = z.ncols();
     assert!(n == m);
 
+    if k <= 1 {
+        return phi(z, k)
+    }
+
     let z_ext: Mat<f64> = match k {
         0 => z.to_owned(),
         _ => {

@@ -14,7 +14,7 @@ rgas = 8.3145  # gas constant J/mol/K
 def mxf_liq_vapor_lin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.0, a=1.0):
     """
     Linear mass transfer.
-    Simplified form of mxf_liq_vapor_bubble_nonlin.
+    Simplified form of mxf_liq_vapor__nonlin.
 
     Args:
         u_a: species concentration in the aqueous phase (mol/cc)
@@ -26,7 +26,7 @@ def mxf_liq_vapor_lin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.0, 
         mass transfer rate in mol/cc/s
     """
     s = k * a * (k_g*u_g - k_a*u_a)
-    retus
+    return s
 
 @eqx.filter_jit
 def mxf_liq_vapor_nonlin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.0, k_s=1e-12):
