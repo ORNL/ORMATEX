@@ -9,11 +9,16 @@ from ormatex_py.ode_sys import OdeSys
 from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
 from ormatex_py.ode_explicit import RKIntegrator
 
+try:
+    from ormatex_py.ormatex import integrate_wrapper_rs, PySysWrapped
+    HAS_ORMATEX_RUST = True
+except ImportError:
+    HAS_ORMATEX_RUST = False
 
 def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
-
     tic = time.perf_counter()
-
+    is_rs = method in ["exprb2_rs", "exprb3_rs", "epi2_rs", "epi3_rs",
+                       "bdf2_rs", "bdf1_rs", "backeuler_rs", "cn_rs"]
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
     is_rk = method in RKIntegrator._valid_methods.keys()
@@ -28,6 +33,15 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
 
         t_res, y_res = integrate_ormatex(sys_int, y0, t0, dt, nsteps, method=method,
                                          **kwargs)
+        #wait for computation of last step to finish
+        y_res[-1].block_until_ready()
+    elif is_rs:
+        # try to integrate with rust ormatex integrators
+        if not HAS_ORMATEX_RUST:
+            raise ImportError("import ormatex_py.ormatex failed. Rust ormatex bindings not found. Run: maturin develop")
+        assert isinstance(ode_sys, PySysWrapped)
+        y_res, t_res = integrate_wrapper_rs(ode_sys, y0, t0, dt, nsteps, method=str(method[0:-3]), **kwargs)
+        y_res, t_res = np.asarray(y_res).squeeze(), np.asarray(t_res)
     else:
         try:
             # try integrate the system with diffrax
@@ -36,8 +50,8 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
             print(e)
             raise AttributeError(f"no valid method {method} found")
 
-    #wait for computation of last step to finish
-    y_res[-1].block_until_ready()
+        #wait for computation of last step to finish
+        y_res[-1].block_until_ready()
     toc = time.perf_counter()
 
     print(f"Integrated system with {method} in {toc - tic:0.4f} seconds")

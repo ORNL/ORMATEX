@@ -10,18 +10,39 @@ from jax import numpy as jnp
 
 rgas = 8.3145  # gas constant J/mol/K
 
+@eqx.filter_jit
+def mxf_liq_vapor_lin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.0, a=1.0):
+    """
+    Linear mass transfer.
+    Simplified form of mxf_liq_vapor__nonlin.
+
+    Args:
+        u_a: species concentration in the aqueous phase (mol/cc)
+        u_g: species concentration in the gas phase (mol/cc)
+        k: mass transfer coeff (cm/s)
+        a: surface area per unit volume (cm^2/cm^3)
+
+    Returns:
+        mass transfer rate in mol/cc/s
+    """
+    s = k * a * (k_g*u_g - k_a*u_a)
+    return s
 
 @eqx.filter_jit
 def mxf_liq_vapor_nonlin(u_a: jax.Array, u_g: jax.Array, k=1e-2, k_g=1.0, k_a=1.0, k_s=1e-12):
     """
-    Nonlinear liquid to vapor species mass transfer.
+    Nonlinear species mass transfer.
     Simplified form of mxf_liq_vapor_bubble_ig.
 
     Args:
         u_a: species concentration in the aqueous phase (mol/cc)
         u_g: species concentration in the gas phase (mol/cc)
+        k: mass transfer coeff (cm/s)
+
+    Returns:
+        mass transfer rate in mol/cc/s
     """
-    s = k * (jnp.sqrt(jnp.clip(u_g, 1e-16, None)) + k_s) * (k_g*u_g - k_a*u_a)
+    s = k * (jnp.power(jnp.clip(u_g, 1e-16, None), 2/3.) + k_s) * (k_g*u_g - k_a*u_a)
     return s
 
 @eqx.filter_jit
@@ -52,6 +73,7 @@ def mxf_liq_vapor_bubble_ig(u_a: jax.Array, u_g: jax.Array, cvol: float, alpha_g
         k: mass transfer coefficient (cm/s)
         nb: bubble number density (#/cc)
         h: henry gas constant in (mol/J) or (mol/cc/Pa)
+        T: temperature (K)
 
     Returns:
         mass transfer rate in (mol/cc/s)

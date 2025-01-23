@@ -1,7 +1,6 @@
 /// Contains arnoldi iteration methods
 /// Provides arnoldi methods for both faer LinOp and faer SparseColMat
 use faer::prelude::*;
-use faer::sparse::*;
 use faer::linop::LinOp;
 use reborrow::ReborrowMut;
 use std::cmp;
@@ -35,11 +34,14 @@ fn arnoldi_inner_lop<T, L>(
     // dummy
     let mut _dummy_podstack: [u8;1] = [0u8;1];
 
+    // final iter check
+    let not_final_it: bool = k+1 < n;
+
     // incomplete orth depth
     let iom_depth = cmp::max(k as i32 - iom as i32 , 0) as usize;
 
     // breakdown tol
-    let eps = T::from(1e-14).unwrap();
+    let breakdown_tol = T::from(1e-12).unwrap();
 
     // Krylov vector
     let q_col: ColRef<T> = qs.rb_mut().col(k);
@@ -67,16 +69,16 @@ fn arnoldi_inner_lop<T, L>(
         h.write(k+1, norm_v);
     }
 
-    if k+1 < n && norm_v >= eps {
+    // check for happy breakdown
+    let breakdown_flag: bool = norm_v < breakdown_tol;
+
+    if not_final_it && !breakdown_flag {
         // if norm_v is zero this is a div by 0 err
         qv = qv * faer::scale(T::from(1.).unwrap()/norm_v);
         qs.col_mut(k+1).copy_from(qv.col(0));
     }
-    // breakdown, qv is the zero vector
-    if norm_v < eps {
-        return true
-    }
-    return false
+
+    return breakdown_flag
 }
 
 
@@ -99,22 +101,21 @@ pub fn arnoldi_lop<T, L>(
     T: faer::RealField + Float,
     L: LinOp<T>
 {
-    let mut hs = faer::Mat::zeros(n, n);
-    let mut qs = faer::Mat::zeros(b.nrows(), n);
-    let q0 = b * faer::scale(T::from(1.0).unwrap() / b.norm_l2());
+    let m = std::cmp::min(n, b.nrows());
+    let mut hs = faer::Mat::zeros(m, m);
+    let mut qs = faer::Mat::zeros(b.nrows(), m);
+    let norm_b = b.norm_l2();
+    let q0 = b * faer::scale(T::from(1.0).unwrap() / norm_b);
     qs.col_mut(0).copy_from(q0.col(0));
 
     let mut breakdown_n = 0;
 
-    for k in 0..n {
+    for k in 0..m {
         let breakdown_flag = arnoldi_inner_lop(
-            &a_lo, a_lo_scale, k, n, iom, hs.as_mut(), qs.as_mut());
+            &a_lo, a_lo_scale, k, m, iom, hs.as_mut(), qs.as_mut());
         breakdown_n += 1;
-        match breakdown_flag {
-            false => {},
-            true => {
-                break;
-            }
+        if breakdown_flag == true {
+            break
         }
     }
 
