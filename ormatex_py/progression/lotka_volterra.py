@@ -7,8 +7,14 @@ import numpy as np
 from jax import numpy as jnp
 
 from ormatex_py import integrate_wrapper
-from ormatex_py.ode_sys import OdeSplitSys, MatrixLinOp
+from ormatex_py.ode_sys import OdeSplitSys, OdeSys, MatrixLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
+try:
+    from ormatex_py.ormatex import PySysWrapped
+    HAS_ORMATEX_RUST = True
+except ImportError:
+    HAS_ORMATEX_RUST = False
+from ormatex_py.ode_sys import OdeSysNp
 
 try:
     import matplotlib.pyplot as plt
@@ -57,7 +63,6 @@ class LotkaVolterra(OdeSplitSys):
 
 def main(method='epi3', do_plot=True):
     # setup lotka voltera system
-    lv_sys = LotkaVolterra()
     t_end = 20.0
     y0 = jnp.array([0.1, 0.2])
 
@@ -68,7 +73,7 @@ def main(method='epi3', do_plot=True):
     tf = dt * nsteps
     step_ctrl = diffrax.ConstantStepSize()
     solver = diffrax.Dopri5()
-    diffrax_lv_sys = diffrax.ODETerm(lv_sys)
+    diffrax_lv_sys = diffrax.ODETerm(LotkaVolterra())
     res = diffrax.diffeqsolve(
             diffrax_lv_sys,
             solver,
@@ -78,6 +83,12 @@ def main(method='epi3', do_plot=True):
             max_steps=nsteps,
             )
     t_gold, y_gold = res.ts, res.ys
+
+    if "_rs" in method:
+        y0 = np.asarray(y0).reshape((-1, 1))
+        lv_sys = PySysWrapped(OdeSysNp(LotkaVolterra()))
+    else:
+        lv_sys = LotkaVolterra()
 
     # sweep over time step size and integrate
     dt_list = [0.01, 0.0125, 0.02, 0.025, 0.05, 0.125]
@@ -89,7 +100,7 @@ def main(method='epi3', do_plot=True):
         t0 = 0.0
         nsteps = int(t_end/dt)
 
-        t_res, y_res = integrate_wrapper.integrate(lv_sys, y0, t0, dt, nsteps, method, max_krylov_dim=10, iom=5)
+        t_res, y_res = integrate_wrapper.integrate(lv_sys, y0, t0, dt, nsteps, method=method, max_krylov_dim=10, iom=5)
         t_res = jnp.asarray(t_res)
         y_res = jnp.asarray(y_res)
         t_list.append(t_res)
