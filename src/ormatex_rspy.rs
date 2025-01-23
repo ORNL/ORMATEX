@@ -244,7 +244,7 @@ fn integrate_wrapper_rs<'py>(
     let mut t_out: Vec<f64> = Vec::with_capacity(nsteps);
 
     // integrate the sys
-    let borrowed_solver = solver.borrow();
+    let mut borrowed_solver = solver.borrow_mut();
     for i in 0..nsteps {
         if i % osteps == 0 {
             let _y = borrowed_solver.state();
@@ -253,7 +253,7 @@ fn integrate_wrapper_rs<'py>(
             t_out.push(_t);
         }
         let y_new = borrowed_solver.step(dt);
-        solver.borrow_mut().accept_step(y_new.unwrap());
+        borrowed_solver.accept_step(y_new.unwrap());
     }
     let _y = borrowed_solver.state();
     let _t = borrowed_solver.time();
