@@ -95,7 +95,7 @@ Imports
 
 Define the system
 
-    class LotkaVolterra(OdeSys):
+    class LotkaVolterraAD(OdeSys):
         alpha: float
         beta: float
         delta: float
@@ -117,7 +117,7 @@ Define the system
 Initialize the system and integrate
 
     method = 'epi3'
-    sys = LotkaVolterra()
+    sys = LotkaVolterraAD()
     y0 = jnp.array([0.1, 0.2])
     t0 = 0.0
     dt = 0.2
@@ -126,7 +126,7 @@ Initialize the system and integrate
 
 Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, automatic differentiation will be used.
 
-    class LotkaVolterra(OdeSplitSys):
+    class LotkaVolterra(OdeSys):
         alpha: float
         beta: float
         delta: float
