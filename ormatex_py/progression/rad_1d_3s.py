@@ -32,7 +32,6 @@ decay_lib = {
     'c_2':  ('none', 1.0e-3*10),
 }
 
-
 class RAD_SEM(OdeSplitSys):
     """
     Define ODE System associated to RAD problem

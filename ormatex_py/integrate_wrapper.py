@@ -22,6 +22,7 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
     is_rk = method in RKIntegrator._valid_methods.keys()
+    c_res = None
     if is_rb or is_split or is_rk:
         # init the time integrator
         if is_rb:
@@ -31,7 +32,7 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
         elif is_rk:
             sys_int = RKIntegrator(ode_sys, t0, y0, method=method, **kwargs)
 
-        t_res, y_res = integrate_ormatex(sys_int, y0, t0, dt, nsteps, method=method,
+        t_res, y_res, c_res = integrate_ormatex(sys_int, y0, t0, dt, nsteps, method=method,
                                          **kwargs)
         #wait for computation of last step to finish
         y_res[-1].block_until_ready()
@@ -55,7 +56,10 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     toc = time.perf_counter()
 
     print(f"Integrated system with {method} in {toc - tic:0.4f} seconds")
-    return t_res, y_res
+    if c_res is not None and "callback_fns" in kwargs.keys():
+        return t_res, y_res, c_res
+    else:
+        return t_res, y_res
 
 
 def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler", **kwargs):
@@ -109,6 +113,8 @@ def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2", **kwargs):
     Uses ormatex exponential integrators to step adv diff system forward
     """
     t_res, y_res = [t0,], [y0,]
+    callback_fn_dict = kwargs.get("callback_fns", {})
+    callback_res = {key: [] for key in callback_fn_dict.keys()}
     for i in range(nsteps):
         res = sys_int.step(dt)
         # log the results for plotting
@@ -117,4 +123,9 @@ def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2", **kwargs):
         # this would be where you could reject a step, if the
         # estimated err was too large
         sys_int.accept_step(res)
-    return t_res, y_res
+        # callbacks
+        for fn_name, cb_fn in callback_fn_dict.items():
+            # compute result of callback
+            cb_res = cb_fn(sys_int.sys, res.t, res.y)
+            callback_res[fn_name].append(cb_res)
+    return t_res, y_res, callback_res
