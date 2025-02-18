@@ -88,12 +88,14 @@ Examples are provided in the `ormatex_py/progression` directory.
 
 Imports
 
+    import jax
+    from jax import numpy as jnp
     from ormatex_py.ode_sys import OdeSys, MatrixLinOp
     from ormatex_py import integrate_wrapper
 
 Define the system
 
-    class LotkaVolterra(OdeSys):
+    class LotkaVolterraAD(OdeSys):
         alpha: float
         beta: float
         delta: float
@@ -115,7 +117,7 @@ Define the system
 Initialize the system and integrate
 
     method = 'epi3'
-    sys = LotkaVolterra()
+    sys = LotkaVolterraAD()
     y0 = jnp.array([0.1, 0.2])
     t0 = 0.0
     dt = 0.2
@@ -124,7 +126,7 @@ Initialize the system and integrate
 
 Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, automatic differentiation will be used.
 
-    class LotkaVolterra(OdeSplitSys):
+    class LotkaVolterra(OdeSys):
         alpha: float
         beta: float
         delta: float
@@ -229,7 +231,7 @@ License
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+   http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,

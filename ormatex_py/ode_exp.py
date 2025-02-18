@@ -8,7 +8,7 @@ from functools import partial
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k_ext
+from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all
 
 ##TODO:
 # - RB methods are only second and third order for f(t,y) = f(y) non-autonomous systems
@@ -16,7 +16,8 @@ from ormatex_py.matexp_phi import f_phi_k_ext
 #   see: https://doi.org/10.1137/080717717
 class ExpRBIntegrator(IntegrateSys):
 
-    _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3}
+    _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3,
+                      "exprb2_dense": 2}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
         self.method = method
@@ -119,6 +120,33 @@ class ExpRBIntegrator(IntegrateSys):
         return StepResult(t+dt, dt, y_new, y_err)
 
 
+    @jax.jit
+    def _step_exprb2_jit(t, yt, dt, sys):
+        print("jit-compiling exprb2_dense kernel")
+        fyt = sys.frhs(t, yt)
+
+        J = sys.fjac(t, yt).dense()
+        phi1J = f_phi_k_sq_all(dt*J, 1)[1]
+        #phi1J = f_phi_k_ext(dt*J, 1)
+        y_new = yt + dt * phi1J @ fyt
+        # no error est. avail
+        y_err = -1.
+        return y_new, y_err
+
+    def _step_exprb2_dense(self, dt: float) -> StepResult:
+        """
+        Exponential Euler,
+        computes the solution update by:
+        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t)
+        """
+        t = self.t
+        yt = self.y_hist[0]
+
+        y_new, y_err = ExpRBIntegrator._step_exprb2_jit(t, yt, dt, self.sys)
+
+        return StepResult(t+dt, dt, y_new, y_err)
+
+
     def step(self, dt: float) -> StepResult:
         if self.method == "exprb2":
             return self._step_exprb2(dt)
@@ -131,6 +159,8 @@ class ExpRBIntegrator(IntegrateSys):
                 return self._step_epi3(dt)
             else:
                 return self._step_epi2(dt)
+        elif self.method == "exprb2_dense":
+            return self._step_exprb2_dense(dt)
         else:
             raise NotImplementedError
 
@@ -268,7 +298,9 @@ class ExpSplitIntegrator(IntegrateSys):
 
             self._cached_phiLs = dict()
             for c, ks in cks:
-                phikLs = f_phi_k_ext(dt*c*L, max(ks), return_all=True)
+                # use scaling and modified squaring
+                phikLs = f_phi_k_sq_all(dt*c*L, max(ks))
+                #phikLs = f_phi_k_ext(dt*c*L, max(ks), return_all=True)
                 for k in ks:
                     self._cached_phiLs[(c,k)] = phikLs[k]
             self._cached_dt = dt
@@ -277,7 +309,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
     @jax.jit
     def _step_exp1_jit(t, yt, dt, sys, phiLs):
-        print("jit-compiling exp1 kernel")
+        print("jit-compiling exp1_dense kernel")
         fyt = sys.frhs(t, yt)
         y_new = yt + dt * phiLs[(1.,1)] @ fyt
         # no error est. avail
@@ -302,7 +334,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
     @partial(jax.jit, static_argnames=('c2', ))
     def _step_exp2_jit(t, yt, dt, sys, sys_lop, phiLs, c2):
-        print("jit-compiling exp2 kernel")
+        print("jit-compiling exp2_dense kernel")
         fyt = sys.frhs(t, yt)
         # 2nd stage
         t_2 = t + c2*dt
@@ -337,7 +369,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
     @partial(jax.jit, static_argnames=('c2', 'c3'))
     def _step_exp3_jit(t, yt, dt, sys, sys_lop, phiLs, c2, c3):
-        print("jit-compiling exp3 kernel")
+        print("jit-compiling exp3_dense kernel")
 
         fyt = sys.frhs(t, yt)
 
