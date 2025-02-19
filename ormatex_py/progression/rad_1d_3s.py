@@ -85,9 +85,9 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     print("dt*J", dtJ)
     eigdtJ = np.linalg.eig(dtJ)[0]
     plt.figure()
-    plt.scatter(-eigdtJ.real, eigdtJ.imag)
+    plt.scatter(-eigdtJ.real+1., eigdtJ.imag)
     plt.ylabel('Imaginary')
-    plt.xlabel('(-) Real')
+    plt.xlabel('(-)Real + 1')
     plt.xscale('log')
     plt.grid(alpha=0.5, ls='--')
     plt.title(r"$\Delta$t*Jac eigenvalues. $\Delta$t=%0.3e" % dt)
@@ -95,8 +95,10 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     plt.savefig(figname + ".png")
     plt.close()
     dtJnorm = np.linalg.norm(dtJ, ord=np.inf)
-    dtJeig = np.max(np.abs(eigdtJ))
-    print("CFL: %0.4f/%0.4f" % (dtJeig, dtJnorm))
+    dtJeig_max = np.max(np.abs(eigdtJ))
+    dtJeig_min = np.min(np.abs(eigdtJ))
+    print("CFL: %0.4f/%0.4f" % (dtJeig_max, dtJnorm))
+    return dtJeig_max, dtJeig_min
 
 def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu=1e-10):
     # create the mesh

@@ -68,6 +68,7 @@ def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler", **kw
     """
     import diffrax
     import optimistix
+    import lineax
     # thin wrapper around ode_sys for diffrax compat
     diffrax_ode_sys = diffrax.ODETerm(ode_sys)
     method_dict = {
@@ -87,10 +88,14 @@ def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler", **kw
         raise AttributeError(f"{method} not in diffrax")
 
     try:
-        root_finder=diffrax.VeryChord(
-                rtol=kwargs.get("rtol", 1e-10),
-                atol=kwargs.get("atol", 1e-10),
-                norm=optimistix.max_norm)
+        root_finder=optimistix.Newton(
+                rtol=kwargs.get("rtol", 1e-8),
+                atol=kwargs.get("atol", 1e-8),
+                linear_solver=lineax.GMRES(
+                    rtol=kwargs.get("lin_rtol", 1e-8),
+                    atol=kwargs.get("lin_atol", 1e-8),
+                    restart=2000, stagnation_iters=2000),
+                )
         solver = method_dict[method](root_finder=root_finder)
     except:
         solver = method_dict[method]()
