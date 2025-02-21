@@ -202,3 +202,23 @@ def test_kiops_fixedstep():
     vb = [test_b0, test_b1, test_b2]
     phipm_phi_combo = kiops_fixedsteps(test_a_lo, dt, vb, max_krylov_dim=10, iom=10, n_steps=1)
     assert jnp.allclose(phipm_phi_combo, base_phi_combo, atol=1e-6)
+
+def test_phi_badmat_1():
+    """
+    Test phi function evaluation on an ill conditioned matrix
+    """
+    # create problematic matrix
+    z = jnp.asarray([[-1.09184201e+01, 3.43078591e+02,-1.93289917e+00,-3.43070825e+02, -6.12955001e+01,-3.37517780e+02, 1.00000000e+00],
+                    [ 6.86152544e+02,-1.41916547e+08, 7.99798095e+05, 1.41913333e+08, 2.53550186e+07 , 1.39616326e+08, 0.00000000e+00],
+                    [ 0.00000000e+00, 9.70378373e+02,-1.41912046e+08, 8.00033415e+05, 1.39927532e+08 ,-2.11273868e+07, 0.00000000e+00],
+                    [ 0.00000000e+00, 0.00000000e+00, 7.99305627e+05,-4.51157505e+03, -7.88129051e+05, 1.18992554e+05, 0.00000000e+00],
+                    [ 0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 9.98359818e-08, -4.53835201e-06, 8.26712619e-07, 0.00000000e+00],
+                    [ 0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 8.26605711e-07 ,-1.41445064e-07, 0.00000000e+00],
+                    [ 0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00 , 0.00000000e+00, 0.00000000e+00]])
+
+    # expect our phi scaling and squaring impl to pass
+    assert not jnp.isnan(jnp.sum(f_phi_k_sq(z, 0)))
+    assert not jnp.isnan(jnp.sum(f_phi_k_sq(z, 1)))
+
+    # expect jax expm to fail
+    assert jnp.isnan(jnp.sum(jax.scipy.linalg.expm(z)))
