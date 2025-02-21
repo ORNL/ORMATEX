@@ -184,7 +184,6 @@ def f_phi_k_appl(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
         z_ext = jnp.block([ [z, B, jnp.zeros((N, (k-1)*M))],
                             [jnp.zeros(((k-1)*M, N+M)), jnp.eye((k-1)*M)],
                             [jnp.zeros((M, N+k*M))] ])
-        # phi_k_ext = jax.scipy.linalg.expm(z_ext)
         phi_k_ext = f_phi_k_sq(z_ext, k=0)
         phi_kb = phi_k_ext[:N,-M:].reshape(b.shape)
     else:
