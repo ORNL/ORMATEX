@@ -217,8 +217,13 @@ def test_phi_badmat_1():
                     [ 0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00 , 0.00000000e+00, 0.00000000e+00]])
 
     # expect our phi scaling and squaring impl to pass
-    assert not jnp.isnan(jnp.sum(f_phi_k_sq(z, 0)))
-    assert not jnp.isnan(jnp.sum(f_phi_k_sq(z, 1)))
+    phi_0 = f_phi_k_sq(z, 0)
+    phi_1 = f_phi_k_sq(z, 1)
+    assert not jnp.isnan(jnp.sum(phi_0))
+    assert not jnp.isnan(jnp.sum(phi_1))
+    # check phi_1 = z^-1 (phi_0 - I)
+    phi_0_calc = phi_1 @ z + jnp.eye(len(z))
+    assert jnp.allclose(phi_0, phi_0_calc, rtol=1e-5, atol=1e-5)
 
     # expect jax expm to fail
     assert jnp.isnan(jnp.sum(jax.scipy.linalg.expm(z)))
