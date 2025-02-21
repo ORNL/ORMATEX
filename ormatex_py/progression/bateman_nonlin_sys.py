@@ -151,7 +151,8 @@ if __name__ == "__main__":
     t0 = 0.0
     dt = 5.0
     nsteps = 800
-    t_res, y_res = integrate_wrapper.integrate(bateman_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=2)
+    res = integrate_wrapper.integrate(bateman_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=2)
+    t_res, y_res = res.t_res, res.y_res
     t_res = np.asarray(t_res)
     y_res = np.asarray(y_res)
     print(y_res)

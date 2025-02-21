@@ -283,9 +283,10 @@ if __name__ == "__main__":
         # Compute ground-truth baseline solution
         dt_fine = 0.5
         nsteps_fine = int(tf / dt_fine)
-        t_res_fine, y_res_fine = integrate_wrapper.integrate(
+        res_fine = integrate_wrapper.integrate(
                 ode_sys, y0, t0, dt_fine, nsteps_fine, "exprb3",
                 max_krylov_dim=240, iom=2)
+        t_res_fine, y_res_fine = res_fine.t_res, res_fine.y_res
     if "_rs" in method:
         # use a rust ormatex integrator
         # NOTE: the rust integrators currently require
@@ -294,14 +295,16 @@ if __name__ == "__main__":
         # Despite this, on a multi-core CPU, the rust exp int
         # impls are slightly faster than the JAX impl.
         y0 = np.asarray(y0).reshape((-1, 1))
-        t_res, y_res = integrate_wrapper.integrate(
+        res = integrate_wrapper.integrate(
                 PySysWrapped(OdeSysNp(ode_sys)), y0, t0, dt, nsteps,
                 method, max_krylov_dim=200, iom=2, osteps=20)
+        t_res, y_res = res.t_res, res.y_res
     else:
         # use a python ormatex integrator
-        t_res, y_res = integrate_wrapper.integrate(
+        res = integrate_wrapper.integrate(
                 ode_sys, y0, t0, dt, nsteps, method,
                 max_krylov_dim=200, iom=2)
+        t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
     sx = xs[si]

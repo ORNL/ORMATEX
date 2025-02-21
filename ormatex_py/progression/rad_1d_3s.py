@@ -165,8 +165,9 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     y_true = np.asarray(profile_true)
 
     # integrate the system
-    t_res, y_res = integrate_wrapper.integrate(
+    res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10)
+    t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
     sx = xs[si]
