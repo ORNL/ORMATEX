@@ -100,7 +100,8 @@ def main(method='epi3', do_plot=True):
         t0 = 0.0
         nsteps = int(t_end/dt)
 
-        t_res, y_res = integrate_wrapper.integrate(lv_sys, y0, t0, dt, nsteps, method=method, max_krylov_dim=10, iom=5)
+        res = integrate_wrapper.integrate(lv_sys, y0, t0, dt, nsteps, method=method, max_krylov_dim=10, iom=5)
+        t_res, y_res = res.t_res, res.y_res
         t_res = jnp.asarray(t_res)
         y_res = jnp.asarray(y_res)
         t_list.append(t_res)

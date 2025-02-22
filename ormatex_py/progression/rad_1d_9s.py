@@ -218,6 +218,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-nsteps", help="basis order", type=int, default=100)
+    parser.add_argument("-multi_plot", help="multiple plots", action='store_true', default=False)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-fine", help="compare to fine step solution", default=False, action='store_true')
@@ -282,9 +283,10 @@ if __name__ == "__main__":
         # Compute ground-truth baseline solution
         dt_fine = 0.5
         nsteps_fine = int(tf / dt_fine)
-        t_res_fine, y_res_fine = integrate_wrapper.integrate(
+        res_fine = integrate_wrapper.integrate(
                 ode_sys, y0, t0, dt_fine, nsteps_fine, "exprb3",
                 max_krylov_dim=240, iom=2)
+        t_res_fine, y_res_fine = res_fine.t_res, res_fine.y_res
     if "_rs" in method:
         # use a rust ormatex integrator
         # NOTE: the rust integrators currently require
@@ -293,14 +295,16 @@ if __name__ == "__main__":
         # Despite this, on a multi-core CPU, the rust exp int
         # impls are slightly faster than the JAX impl.
         y0 = np.asarray(y0).reshape((-1, 1))
-        t_res, y_res = integrate_wrapper.integrate(
+        res = integrate_wrapper.integrate(
                 PySysWrapped(OdeSysNp(ode_sys)), y0, t0, dt, nsteps,
                 method, max_krylov_dim=200, iom=2, osteps=20)
+        t_res, y_res = res.t_res, res.y_res
     else:
         # use a python ormatex integrator
-        t_res, y_res = integrate_wrapper.integrate(
+        res = integrate_wrapper.integrate(
                 ode_sys, y0, t0, dt, nsteps, method,
                 max_krylov_dim=200, iom=2)
+        t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
     sx = xs[si]
@@ -343,6 +347,46 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig('reac_adv_diff_s9.png', dpi=160)
     plt.close()
+
+    if args.multi_plot:
+        # plot results at multiple time steps
+        for i in range(0, len(t_res)):
+            fig, ax = plt.subplots(nrows=3, ncols=3, figsize=(15,8.5))
+            plt.title(r"method: %s" % (method))
+            t = t_res[i]
+            yf = y_res[i]
+            uf = stack_u(yf, n_species)
+            # fine solution
+            if args.fine:
+                i_fine = nsteps_fine
+                t_fine = t_res_fine[i_fine]
+                yf_fine = y_res_fine[i_fine]
+                uf_fine = stack_u(yf_fine, n_species)
+
+            for n in range(0, n_species):
+                us = uf[:, n]
+                # fig row,col
+                fr, fc = n%3, int(n/3)
+                ax[fr, fc].axvspan(0.0, 1.0, alpha=0.3, color='red')
+                ax[fr, fc].axvspan(3.8, 4.2, alpha=0.3, color='blue')
+                ax[fr, fc].plot(sx, us[si], label=r't=%0.4f, $u_{%s}$' % (t, str(n)))
+                if args.fine:
+                    us_fine = uf_fine[:, n]
+                    rel_diff = (us[si] - us_fine[si]) / jnp.mean(us_fine)
+                    mae = jnp.mean(jnp.abs(rel_diff))
+                    ax[fr, fc].plot(sx, us_fine[si], ls='--', label='t=%0.4f, baseln $u_{%s}$' % (t_fine, str(n)))
+                    ax[fr, fc].set_title(r"%s, $\Delta t=$%0.2e, Rel.Err=%0.3e" % (method, dt, mae))
+                ax[fr, fc].set_ylabel(r"$u_{%d}$ [mol/cc]" % n)
+                ax[fr, fc].legend()
+                ax[fr, fc].grid(ls='--')
+
+            # TODO: mark reactor boundaries on the plot
+            # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
+            # ax[0].set_yscale('log')
+            # ax[0].set_xlabel("location [m]")
+            plt.tight_layout()
+            plt.savefig('rad_1d_9s_out/reac_adv_diff_s12_%d.png' % i, dpi=160)
+            plt.close()
 
     # plot eigvals of Jac
     plot_dt_jac_spec(ode_sys, y_res[-1], t=0., dt=dt, figname="reac_adv_diff_s9_eigplot")

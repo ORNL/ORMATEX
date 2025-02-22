@@ -1,5 +1,5 @@
 import numpy as np
-
+from dataclasses import dataclass
 import time
 
 import jax
@@ -15,13 +15,29 @@ try:
 except ImportError:
     HAS_ORMATEX_RUST = False
 
+
+@dataclass
+class IntegrateResult:
+    """
+    Storage for ORMATEX integration results
+    """
+    t_res: list
+    y_res: list
+    callback_res: dict
+    err_code: int
+
+
 def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
+    """
+    High level interface to all time integration methods in ORMATEX.
+    """
     tic = time.perf_counter()
     is_rs = method in ["exprb2_rs", "exprb3_rs", "epi2_rs", "epi3_rs",
                        "bdf2_rs", "bdf1_rs", "backeuler_rs", "cn_rs"]
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
     is_rk = method in RKIntegrator._valid_methods.keys()
+    c_res = {}
     if is_rb or is_split or is_rk:
         # init the time integrator
         if is_rb:
@@ -31,14 +47,14 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
         elif is_rk:
             sys_int = RKIntegrator(ode_sys, t0, y0, method=method, **kwargs)
 
-        t_res, y_res = integrate_ormatex(sys_int, y0, t0, dt, nsteps, method=method,
+        t_res, y_res, c_res = integrate_ormatex(sys_int, y0, t0, dt, nsteps, method=method,
                                          **kwargs)
         #wait for computation of last step to finish
         y_res[-1].block_until_ready()
     elif is_rs:
         # try to integrate with rust ormatex integrators
         if not HAS_ORMATEX_RUST:
-            raise ImportError("import ormatex_py.ormatex failed. Rust ormatex bindings not found. Run: maturin develop")
+            raise ImportError("import ormatex_py.ormatex failed. Rust ormatex bindings not found. Run: maturin develop --release")
         assert isinstance(ode_sys, PySysWrapped)
         y_res, t_res = integrate_wrapper_rs(ode_sys, y0, t0, dt, nsteps, method=str(method[0:-3]), **kwargs)
         y_res, t_res = np.asarray(y_res).squeeze(), np.asarray(t_res)
@@ -55,7 +71,7 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     toc = time.perf_counter()
 
     print(f"Integrated system with {method} in {toc - tic:0.4f} seconds")
-    return t_res, y_res
+    return IntegrateResult(t_res, y_res, c_res, 0)
 
 
 def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler", **kwargs):
@@ -64,6 +80,7 @@ def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler", **kw
     """
     import diffrax
     import optimistix
+    import lineax
     # thin wrapper around ode_sys for diffrax compat
     diffrax_ode_sys = diffrax.ODETerm(ode_sys)
     method_dict = {
@@ -83,10 +100,14 @@ def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler", **kw
         raise AttributeError(f"{method} not in diffrax")
 
     try:
-        root_finder=diffrax.VeryChord(
-                rtol=kwargs.get("rtol", 1e-10),
-                atol=kwargs.get("atol", 1e-10),
-                norm=optimistix.max_norm)
+        root_finder=optimistix.Newton(
+                rtol=kwargs.get("rtol", 1e-8),
+                atol=kwargs.get("atol", 1e-8),
+                linear_solver=lineax.GMRES(
+                    rtol=kwargs.get("lin_rtol", 1e-8),
+                    atol=kwargs.get("lin_atol", 1e-8),
+                    restart=2000, stagnation_iters=2000),
+                )
         solver = method_dict[method](root_finder=root_finder)
     except:
         solver = method_dict[method]()
@@ -109,7 +130,14 @@ def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2", **kwargs):
     Uses ormatex exponential integrators to step adv diff system forward
     """
     t_res, y_res = [t0,], [y0,]
+    callback_before_step = kwargs.get("callback_before_step", None)
+    callback_after_step_accept = kwargs.get("callback_after_step_accept", None)
+    callback_after_step_reject = kwargs.get("callback_after_step_reject", None)
+    callback_res = {"callback_before_step": [], "callback_after_step_accept": []}
     for i in range(nsteps):
+        if callable(callback_before_step):
+            callback_res["callback_before_step"].append(
+                    callback_before_step(sys_int.sys, t_res[-1], y_res[-1]))
         res = sys_int.step(dt)
         # log the results for plotting
         t_res.append(res.t)
@@ -117,4 +145,8 @@ def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2", **kwargs):
         # this would be where you could reject a step, if the
         # estimated err was too large
         sys_int.accept_step(res)
-    return t_res, y_res
+        # callbacks
+        if callable(callback_after_step_accept):
+            callback_res["callback_after_step_accept"].append(
+                    callback_after_step_accept(sys_int.sys, t_res[-1], y_res[-1]))
+    return t_res, y_res, callback_res

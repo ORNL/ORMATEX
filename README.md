@@ -153,6 +153,33 @@ Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, au
                 ])
             return MatrixLinOp(jac)
 
+#### Integrator Quick Reference
+
+The following integrators are available through the common high level `integrate_wrapper.integrate` interface.
+Different integrators can be specified through the `method` keyword argument.
+
+| method | order | Impl Notes | kwargs | description | Reference |
+| -------|-------|------------|--------|-------------|-----------|
+|exprb2| 2 | JAX/python | max\_krylov\_dim, iom | Exponential Rosenbrock order 2| https://doi.org/10.1137/080717717 |
+|exprb3| 3 | JAX/python | max\_krylov\_dim, iom | Exponential Rosenbrock order 3| https://doi.org/10.1137/080717717 |
+|epi3| 3 | JAX/python | max\_krylov\_dim, iom | Exponential Propagation Iterative order 3| https://doi.org/10.1137/110849961 |
+|rk4 | 4 | JAX/python | | Explicit RK4  | |
+|implicit\_euler| 1 | JAX/diffrax |  | Backward Euler | |
+|implicit\_esdirk3| 3 | JAX/diffrax | | explicit singly diagonal implicit order 3 | |
+|dopri5 | 5 | JAX/diffrax | | Explicit Dormand-Prince order 5  | |
+|exprb2\_rs| 2 | Rust | max\_krylov\_dim, iom | Exponential Rosenbrock order 2| https://doi.org/10.1137/080717717 |
+|exprb3\_rs| 3 | Rust | max\_krylov\_dim, iom | Exponential Rosenbrock order 3| https://doi.org/10.1137/080717717 |
+|epi3\_rs| 3 | Rust | max\_krylov\_dim, iom | Exponential Propagation Iterative order 3| https://doi.org/10.1137/110849961 |
+|bdf1\_rs| 1 | Rust |  | Backward Euler | |
+|bdf2\_rs| 2 | Rust |  | Backward difference formula 2| |
+|cn\_rs| 2 | Rust |  | Crank-Nicolson | |
+|rk1\_rs| 1 | Rust |  | Forward Euler | |
+|rk4\_rs| 4 | Rust |  | Explicit RK4 | |
+
+Adaptive time stepping is a work in progress. A step size controller will be optionally specified through this interface in the future.
+
+The Rust-based integrators can be accessed through the common python `integrate_wrapper.integrate` interface after the Rust-Python bindings are built and installed following the instructions below.  Alternatively, the Rust integrator implementations can be used directly from a Rust-based program.
+
 # Rust Setup
 
 Download rustup: https://www.rust-lang.org/tools/install

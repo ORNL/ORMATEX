@@ -32,7 +32,6 @@ decay_lib = {
     'c_2':  ('none', 1.0e-3*10),
 }
 
-
 class RAD_SEM(OdeSplitSys):
     """
     Define ODE System associated to RAD problem
@@ -88,7 +87,7 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     plt.figure()
     plt.scatter(-eigdtJ.real+1., eigdtJ.imag)
     plt.ylabel('Imaginary')
-    plt.xlabel('(-) Real + 1')
+    plt.xlabel('(-)Real + 1')
     plt.xscale('log')
     plt.grid(alpha=0.5, ls='--')
     plt.title(r"$\Delta$t*Jac eigenvalues. $\Delta$t=%0.3e" % dt)
@@ -166,8 +165,9 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     y_true = np.asarray(profile_true)
 
     # integrate the system
-    t_res, y_res = integrate_wrapper.integrate(
+    res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10)
+    t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
     sx = xs[si]

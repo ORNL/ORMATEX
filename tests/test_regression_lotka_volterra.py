@@ -29,13 +29,15 @@ def test_lotka_volterra():
             t0 = 0.0
             tf = 20.0
             nsteps = int(tf/dt)
-            t_true, y_true = integrate_wrapper.integrate(
+            res_true = integrate_wrapper.integrate(
                     sys, y0, t0, dt, nsteps, "rk4")
+            t_true, y_true = res_true.t_res, res_true.y_res
 
             # compute ormatex result
             y0 = jnp.array([0.1, 0.2])
-            t_res, y_res = integrate_wrapper.integrate(
+            res = integrate_wrapper.integrate(
                     sys, y0, t0, dt, nsteps, method, max_krylov_dim=10, iom=5)
+            t_res, y_res = res.t_res, res.y_res
             t_res = np.asarray(t_res)
             y_res = np.asarray(y_res)
             diff = y_res - y_true
