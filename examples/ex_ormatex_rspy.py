@@ -43,8 +43,8 @@ def run_model():
     y0 = np.array([[0.1, 0.2],]).T
     dt = 0.05
     nsteps = 400
-    t_out, y_out = integrate(lv_sys, y0, t0, dt, nsteps, method="epi2_rs")
-    return t_out, y_out
+    res = integrate(lv_sys, y0, t0, dt, nsteps, method="epi2_rs")
+    return res.t_res, res.y_res
 
 if __name__ == "__main__":
     import matplotlib.pylab as plt
