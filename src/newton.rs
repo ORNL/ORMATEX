@@ -1,7 +1,7 @@
 /// Newtons methods for implicit methods
 use faer::prelude::*;
 use crate::ode_sys::*;
-use faer::linop::LinOp;
+use faer::matrix_free::LinOp;
 use faer_gmres::gmres;
 
 

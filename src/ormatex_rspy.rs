@@ -23,9 +23,10 @@ use std::fmt;
 
 use faer::prelude::*;
 use faer_ext::*;
-use faer::Parallelism;
-use faer::linop::LinOp;
+use faer::Par;
+use faer::matrix_free::LinOp;
 use faer::dyn_stack::PodStack;
+use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -82,14 +83,14 @@ impl fmt::Debug for PyJaxJacLinOp {
     }
 }
 impl LinOp<f64> for PyJaxJacLinOp {
-    fn apply_req(
+    fn apply_scratch(
             &self,
             rhs_ncols: usize,
-            parallelism: Parallelism,
-        ) -> Result<faer::dyn_stack::StackReq, faer::dyn_stack::SizeOverflow> {
+            parallelism: Par,
+        ) -> StackReq {
         let _ = parallelism;
         let _ = rhs_ncols;
-        Ok(faer::dyn_stack::StackReq::empty())
+        StackReq::empty()
     }
 
     /// Number of rows in the linop
@@ -108,8 +109,8 @@ impl LinOp<f64> for PyJaxJacLinOp {
         &self,
         mut out: MatMut<f64>,
         rhs: MatRef<f64>,
-        parallelism: Parallelism,
-        stack: &mut PodStack,
+        parallelism: Par,
+        stack: &mut MemStack,
         )
     {
         // unused
@@ -135,8 +136,8 @@ impl LinOp<f64> for PyJaxJacLinOp {
             &self,
             out: MatMut<'_, f64>,
             rhs: MatRef<'_, f64>,
-            parallelism: Parallelism,
-            stack: &mut PodStack,
+            parallelism: Par,
+            stack: &mut MemStack,
         ) {
         // Not implented error!
         panic!("Not Implemented");

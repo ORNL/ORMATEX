@@ -3,7 +3,7 @@
 use faer::prelude::*;
 use crate::matexp_krylov::KrylovExpm;
 use crate::ode_sys::*;
-use faer::linop::LinOp;
+use faer::matrix_free::LinOp;
 use faer::dyn_stack::PodStack;
 use std::marker::PhantomData;
 use std::collections::VecDeque;
@@ -87,7 +87,7 @@ where
         // setup jacobian linear operator evaluated at y0
         let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
         let fy0 = self.sys.frhs(t, y0);
-        let fy0_dt = fy0.as_ref() * faer::scale(dt);
+        let fy0_dt = fy0.as_ref() * faer::Scale(dt);
         let y_new = y0.as_ref() +
             self.expm.apply_phi_linop(
                 sys_jac_lop.as_ref(),
@@ -109,7 +109,7 @@ where
         // setup jacobian linear operator evaluated at y0
         let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
         let fy0 = self.sys.frhs(t, y0);
-        let fy0_dt = fy0.as_ref() * faer::scale(dt);
+        let fy0_dt = fy0.as_ref() * faer::Scale(dt);
         let t_2 = t + dt;
         let y_2 = y0.as_ref() +
             self.expm.apply_phi_linop(
@@ -144,12 +144,12 @@ where
         let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
 
         let fy0 = self.sys.frhs(t, y0);
-        let fy0_dt = fy0.as_ref() * faer::scale(dt);
+        let fy0_dt = fy0.as_ref() * faer::Scale(dt);
         let y1 = y0.as_ref() +
             self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, fy0_dt.as_ref(), 1);
 
-        let rn_dt = self.remf(tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref()) * faer::scale(dt);
-        let y_new = y1.as_ref() + faer::scale(2.0/3.0)*
+        let rn_dt = self.remf(tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref()) * faer::Scale(dt);
+        let y_new = y1.as_ref() + faer::Scale(2.0/3.0)*
             self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, rn_dt.as_ref(), 2);
 
         // estimate error in the step

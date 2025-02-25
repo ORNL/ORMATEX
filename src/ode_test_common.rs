@@ -2,7 +2,7 @@
 use faer::prelude::*;
 use crate::ode_sys::*;
 use crate::ode_utils::{lv_sys_rhs, lv_sys_jac, bateman_sys_rhs};
-use faer::linop::LinOp;
+use faer::matrix_free::LinOp;
 use std::marker::PhantomData;
 
 /// System with quadratic rhs for testing

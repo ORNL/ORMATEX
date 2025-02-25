@@ -2,9 +2,7 @@
 use faer::prelude::*;
 use crate::ode_sys::*;
 use crate::newton::*;
-use faer::linop::LinOp;
 use std::marker::PhantomData;
-use faer_gmres::gmres;
 use std::collections::VecDeque;
 
 

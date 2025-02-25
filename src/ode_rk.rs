@@ -2,7 +2,6 @@
 use faer::prelude::*;
 use faer::sparse::*;
 use std::collections::VecDeque;
-use faer::linop::LinOp;
 use std::marker::PhantomData;
 use crate::ode_sys::*;
 
@@ -108,14 +107,14 @@ where
         for i in 0..self.order-1 {
             let mut y_delta = y0.to_owned();
             for j in 0..i+1 {
-                y_delta = y_delta.as_ref() + faer::scale(dt * self.bt.a[i][j]) * k[j].as_ref();
+                y_delta = y_delta.as_ref() + faer::Scale(dt * self.bt.a[i][j]) * k[j].as_ref();
             }
             let k_i = self.sys.frhs(t + (dt * self.bt.c[i]), y_delta.as_ref());
             k.push(k_i);
         }
         let mut acc = y0.to_owned();
         for i in 0..self.order {
-            acc = acc.as_ref() + faer::scale(dt * self.bt.b[i]) * k[i].as_ref();
+            acc = acc.as_ref() + faer::Scale(dt * self.bt.b[i]) * k[i].as_ref();
         }
         Ok(StepResult::new(t+dt, dt, acc, None))
     }
