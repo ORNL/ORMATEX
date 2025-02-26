@@ -155,7 +155,6 @@ where
 #[cfg(test)]
 mod test_rk {
     use assert_approx_eq::assert_approx_eq;
-    use faer::assert_matrix_eq;
     use crate::ode_test_common::*;
 
     // bring everything from above (parent) module into scope
