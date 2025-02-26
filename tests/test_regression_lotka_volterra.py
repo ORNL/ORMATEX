@@ -37,7 +37,7 @@ def test_lotka_volterra():
             y0 = jnp.array([0.1, 0.2])
             res = integrate_wrapper.integrate(
                     sys, y0, t0, dt, nsteps, method, max_krylov_dim=10, iom=5)
-            t_res, y_res = res.t_res, res.y_res
+            t_res, y_res = res.t, res.y
             t_res = np.asarray(t_res)
             y_res = np.asarray(y_res)
             diff = y_res - y_true

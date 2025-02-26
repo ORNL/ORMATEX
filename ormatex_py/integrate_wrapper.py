@@ -21,10 +21,22 @@ class IntegrateResult:
     """
     Storage for ORMATEX integration results
     """
-    t_res: list
-    y_res: list
+    t: list
+    y: list
     callback_res: dict
     err_code: int
+
+    @property
+    def t_res(self):
+        return self.t
+
+    @property
+    def y_res(self):
+        return self.y
+
+    @property
+    def cb(self):
+        return self.callback_res
 
 
 def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
