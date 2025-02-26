@@ -120,13 +120,13 @@ impl LinOp<f64> for PyJaxJacLinOp {
         // compute jacobian vector product in python
         let j_v = Python::with_gil(|py| {
             // convert MatRef to PyArray
-            let x_slice = rhs.col(0).try_as_slice().unwrap();
+            let x_slice = rhs.col(0).try_as_col_major().unwrap().as_slice();
             let x_np = x_slice.to_vec().into_pyarray(py);
             let j_v_py = self.py_linop.call_method(py, "matvec_npcompat", (x_np,), None).unwrap();
             let inner_bound = j_v_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
             let inner: PyReadonlyArray1<f64> = inner_bound.extract().unwrap();
             let slice_view = inner.as_slice().unwrap();
-            faer::col::from_slice(slice_view).as_2d().to_owned()
+            faer::col::ColRef::from_slice(slice_view).as_mat().to_owned()
         });
 
         out.copy_from(j_v);
@@ -162,7 +162,7 @@ impl OdeSys<'_> for PySysWrapped {
             let frhs_x_arr_bound = frhs_x_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
             let inner: PyReadonlyArray1<f64> = frhs_x_arr_bound.extract().unwrap();
             let slice_view = inner.as_slice().unwrap();
-            let frhs_x_mat = faer::col::from_slice(slice_view).as_2d().to_owned();
+            let frhs_x_mat = faer::col::ColRef::from_slice(slice_view).as_mat().to_owned();
             frhs_x_mat
         })
     }
@@ -298,7 +298,7 @@ fn arnoldi_rs<'py>(
 
     // run arnoldi
     let (q, h, bkdwn) = arnoldi_lop(
-        lop_wrapped, a_lo_scale, b_mat.as_ref(), m, iom);
+        &lop_wrapped, a_lo_scale, b_mat.as_ref(), m, iom);
 
     // convert faer mats into numpy arrays
     let h_ndarray = h.as_ref().into_ndarray().to_owned();

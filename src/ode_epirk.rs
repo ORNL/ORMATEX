@@ -5,6 +5,7 @@ use crate::matexp_krylov::KrylovExpm;
 use crate::ode_sys::*;
 use faer::matrix_free::LinOp;
 use faer::dyn_stack::PodStack;
+use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use std::marker::PhantomData;
 use std::collections::VecDeque;
 
@@ -68,12 +69,13 @@ where
         let y0 = self.y_hist[0].as_ref();
         let frhs_yr = self.sys.frhs(tr, yr);
 
-        let mut _dummy_podstack: [u8;1] = [0u8;1];
         let mut jac_yd = faer::Mat::zeros(y0.nrows(), 1);
-        sys_jac_lop_y0.apply(jac_yd.as_mut(),
-                          (yr.as_ref()-y0.as_ref()).as_ref(),
-                          faer::get_global_parallelism(),
-                          PodStack::new(&mut _dummy_podstack));
+        sys_jac_lop_y0.apply(
+            jac_yd.as_mut(),
+            (yr.as_ref()-y0.as_ref()).as_ref(),
+            faer::get_global_parallelism(),
+            MemStack::new(&mut MemBuffer::new(StackReq::empty()))
+        );
 
         frhs_yr - frhs_y0 - jac_yd
     }
@@ -124,7 +126,7 @@ where
             sys_jac_lop.as_ref(), dt, r_2.as_ref(), 3);
 
         // err est
-        let y_err = (y_new.as_ref() - y_2.as_ref()).norm_l1().abs();
+        let y_err = (y_new.as_ref() - y_2.as_ref()).as_ref().norm_l1().abs();
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, Some(y_err)))
@@ -153,7 +155,7 @@ where
             self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, rn_dt.as_ref(), 2);
 
         // estimate error in the step
-        let y_err = (y_new.as_ref() - y1.as_ref()).norm_l1().abs();
+        let y_err = (y_new.as_ref() - y1.as_ref()).as_ref().norm_l1().abs();
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, Some(y_err)))

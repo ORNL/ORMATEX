@@ -2,6 +2,7 @@
 /// Provides arnoldi methods for both faer LinOp and faer SparseColMat
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
+use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer_traits::RealField;
 use reborrow::ReborrowMut;
 use std::cmp;
@@ -19,8 +20,8 @@ use num_traits::Float;
 /// * `iom` - incomplete ortho depth
 /// * `hs` - upper hessenberg
 /// * `qs` - orthonormal basis of kyrlov subspace
-fn arnoldi_inner_lop<T, L>(
-    a_lo: L,
+fn arnoldi_inner_lop<T>(
+    a_lo: &dyn LinOp<T>,
     a_lo_scale: T,
     k: usize,
     n: usize,
@@ -30,7 +31,6 @@ fn arnoldi_inner_lop<T, L>(
 ) -> bool
     where
     T: RealField + Float,
-    L: LinOp<T>
 {
     // dummy
     let mut _dummy_podstack: [u8;1] = [0u8;1];
@@ -50,9 +50,9 @@ fn arnoldi_inner_lop<T, L>(
     // let mut qv: Mat<T> = a_lo * q_col;
     let mut qv: Mat<T> = faer::Mat::zeros(q_col.nrows(), 1);
     a_lo.apply(qv.as_mut(),
-               q_col.as_2d().as_ref(),
+               q_col.as_mat().as_ref(),
                faer::get_global_parallelism(),
-               PodStack::new(&mut _dummy_podstack));
+               MemStack::new(&mut MemBuffer::new(StackReq::empty())));
     qv = qv * faer::Scale(a_lo_scale);
 
     // let mut h = Vec::with_capacity(k + 2);
@@ -62,7 +62,7 @@ fn arnoldi_inner_lop<T, L>(
         let qci: ColRef<T> = qs.rb_mut().col(i);
         let ht = qv.col(0).transpose() * qci;
         h[i] = ht;
-        qv = qv - (qci.as_2d() * faer::Scale(ht));
+        qv = qv - (qci.as_mat() * faer::Scale(ht));
     }
 
     let norm_v = qv.norm_l2();
@@ -91,8 +91,8 @@ fn arnoldi_inner_lop<T, L>(
 /// * `b` - initial vector in [b, Ab, A^2b, ...]
 /// * `n` - max krylov iteration
 /// * `iom` - incomplete ortho depth
-pub fn arnoldi_lop<T, L>(
-    a_lo: L,
+pub fn arnoldi_lop<T>(
+    a_lo: &dyn LinOp<T>,
     a_lo_scale: T,
     b: MatRef<T>,
     n: usize,
@@ -100,7 +100,6 @@ pub fn arnoldi_lop<T, L>(
 ) -> (Mat<T>, Mat<T>, usize)
     where
     T: RealField + Float,
-    L: LinOp<T>
 {
     let m = std::cmp::min(n, b.nrows());
     let mut hs = faer::Mat::zeros(m, m);
@@ -113,7 +112,7 @@ pub fn arnoldi_lop<T, L>(
 
     for k in 0..m {
         let breakdown_flag = arnoldi_inner_lop(
-            &a_lo, a_lo_scale, k, m, iom, hs.as_mut(), qs.as_mut());
+            a_lo, a_lo_scale, k, m, iom, hs.as_mut(), qs.as_mut());
         breakdown_n += 1;
         if breakdown_flag == true {
             break
@@ -161,7 +160,7 @@ mod test_arnoldi {
         // arnoldi with linear op
         let iom = 1000;
         let kd = 10;
-        let (q, h, brkdwn) = arnoldi_lop(test_a.as_ref(), 1.0, q0.as_ref(), kd, iom);
+        let (q, h, brkdwn) = arnoldi_lop(&test_a.as_ref(), 1.0, q0.as_ref(), kd, iom);
         println!("arnoldi linop: \n {:?}", q);
         // brkdwn flag < 0 means method terminated without breakdown (no div by zero detected)
         // assert!(brkdwn < 0);

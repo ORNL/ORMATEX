@@ -68,7 +68,7 @@ pub fn dense_to_sprs<T>(a: MatRef<T>) -> SparseColMat<usize, T>
     for i in 0..a.nrows() {
         for j in 0..a.ncols() {
             if a[(i, j)].abs() != T::from(0.0).unwrap() {
-                a_triplets.push((i, j, a[(i, j)]));
+                a_triplets.push(faer::sparse::Triplet::new(i, j, a[(i, j)]));
             }
         }
     }
@@ -108,7 +108,7 @@ impl <'a, T> LinOp<T> for JacobianRhsLinOp<'a, T>
 {
     fn apply_linop_to_vec(&self, t: T, x: MatRef<T>, w: MatRef<T>, s: Option<T>) -> Mat<T> {
         let x_norm_l1 = x.norm_l1();
-        if x_norm_l1 == self.x_tmp.borrow().norm_l1() {
+        if x_norm_l1 == self.x_tmp.borrow().as_ref().norm_l1() {
             // we can reuse prior frhs eval
         }
         else {
@@ -225,7 +225,7 @@ pub fn arnoldi<T>(a: SparseColMatRef<usize, T>, b: MatRef<T>, n: usize) -> (Mat<
     for (c, hvec) in (&hs).into_iter().enumerate() {
         h_len = hvec.len();
         for h_i in 0..h_len {
-            h_triplets.push((h_i, c, hvec[h_i]));
+            h_triplets.push(faer::sparse::Triplet::new(h_i, c, hvec[h_i]));
         }
     }
     let h_sprs = SparseColMat::<usize, T>::try_new_from_triplets(
@@ -320,7 +320,7 @@ pub fn arnoldi_lo<T>(a_lo: &MatrixLinOp<T>, t: T, a_lo_scale: T, b: MatRef<T>, n
     for (c, hvec) in (&hs).into_iter().enumerate() {
         h_len = hvec.len();
         for h_i in 0..h_len {
-            h_triplets.push((h_i, c, hvec[h_i]));
+            h_triplets.push(faer::sparse::Triplet::new(h_i, c, hvec[h_i]));
         }
     }
     let h_sprs = SparseColMat::<usize, T>::try_new_from_triplets(
@@ -395,7 +395,7 @@ pub fn sparse_ident<T>(dim: usize) -> SparseColMat<usize, T>
 {
     let mut ident_triplets = Vec::with_capacity(dim);
     for i in 0..dim {
-        ident_triplets.push((i, i, T::from(1.0).unwrap()));
+        ident_triplets.push(faer::sparse::Triplet::new(i, i, T::from(1.0).unwrap()));
     }
     let ident = SparseColMat::<usize, T>::try_new_from_triplets(dim, dim, &ident_triplets).unwrap();
     ident
