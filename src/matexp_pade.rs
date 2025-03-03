@@ -1,5 +1,6 @@
 /// matrix exponential eval methods for dense faer Mats
 use faer::prelude::*;
+use faer::linalg::solvers::{Solve, DenseSolveCore};
 use libm::frexp;
 
 
@@ -7,7 +8,7 @@ use libm::frexp;
 pub fn matexp(a: MatRef<f64>, dt: f64) -> Mat<f64>
 {
     // Calc A*t
-    let a_t = a * faer::scale(dt);
+    let a_t = a * faer::Scale(dt);
     let (u, v, alpha) = matexp_pade(a_t.as_ref());
     let denom = v.as_ref() - u.as_ref();
     let numer = u.as_ref() + v.as_ref();
@@ -44,7 +45,7 @@ pub fn phi(z: MatRef<f64>, k: usize) -> Mat<f64>
         let id = faer::Mat::<f64>::identity(z.nrows(), z.ncols());
         for i in 1..=k {
             phi_k = z_inv.as_ref() * (phi_k.as_ref() -
-                faer::scale(1.0/((1..i).product::<usize>() as f64))*id.as_ref());
+                faer::Scale(1.0/((1..i).product::<usize>() as f64))*id.as_ref());
         }
         phi_k
     }
@@ -58,9 +59,9 @@ pub fn phi_ext(z: MatRef<f64>, k: usize) -> Mat<f64>
     let m = z.ncols();
     assert!(n == m);
 
-    if k <= 1 {
-        return phi(z, k)
-    }
+//     if k <= 1 {
+//         return phi(z, k)
+//     }
 
     let z_ext: Mat<f64> = match k {
         0 => z.to_owned(),
@@ -129,7 +130,7 @@ pub fn matexp_pade(a: MatRef<f64>) -> (Mat<f64>, Mat<f64>, isize) {
             alpha = 0;
         }
         let scale = (2.0 as f64).powf(alpha as f64);
-        let a_scaled = a * faer::scale(1. / scale as f64);
+        let a_scaled = a * faer::Scale(1. / scale as f64);
         let a2_scaled = a_scaled.as_ref() * a_scaled.as_ref();
         let a4_scaled = a2_scaled.as_ref() * a2_scaled.as_ref();
         let a6_scaled = a4_scaled.as_ref() * a2_scaled.as_ref();
@@ -151,29 +152,29 @@ fn pade3(a: MatRef<f64>, a2: MatRef<f64>)
         -> (Mat<f64>, Mat<f64>) {
     const B3: [f64; 4] = [120.0, 60.0, 12.0, 1.0];
     let ident: Mat<f64> = faer::Mat::identity(a.ncols(), a.nrows());
-    let temp = a2 * faer::scale(B3[3]) + ident.as_ref() * faer::scale(B3[1]);
+    let temp = a2 * faer::Scale(B3[3]) + ident.as_ref() * faer::Scale(B3[1]);
     let u = a * temp;
-    let v = a2 * faer::scale(B3[2]) + ident.as_ref() * faer::scale(B3[0]);
+    let v = a2 * faer::Scale(B3[2]) + ident.as_ref() * faer::Scale(B3[0]);
     (u, v)
 }
 fn pade5(a: MatRef<f64>, a2: MatRef<f64>, a4: MatRef<f64>)
         -> (Mat<f64>, Mat<f64>) {
     const B5: [f64; 6] = [30240.0, 15120.0, 3360.0, 420.0, 30.0, 1.0];
     let ident: Mat<f64> = faer::Mat::identity(a.ncols(), a.nrows());
-    let temp = a4 * faer::scale(B5[5]) + a2 * faer::scale(B5[3]) + ident.as_ref()*faer::scale(B5[1]);
+    let temp = a4 * faer::Scale(B5[5]) + a2 * faer::Scale(B5[3]) + ident.as_ref()*faer::Scale(B5[1]);
     let u = a * temp;
-    let v = a4 * faer::scale(B5[4]) + a2 * faer::scale(B5[2]) + ident.as_ref() * faer::scale(B5[0]);
+    let v = a4 * faer::Scale(B5[4]) + a2 * faer::Scale(B5[2]) + ident.as_ref() * faer::Scale(B5[0]);
     (u, v)
 }
 fn pade7(a: MatRef<f64>, a2: MatRef<f64>, a4: MatRef<f64>, a6: MatRef<f64>)
         -> (Mat<f64>, Mat<f64>) {
     const B7: [f64; 8] = [17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.];
     let ident: Mat<f64> = faer::Mat::identity(a.ncols(), a.nrows());
-    let temp = a6 * faer::scale(B7[7]) + a4 * faer::scale(B7[5]) +
-        a2 * faer::scale(B7[3]) + ident.as_ref() * faer::scale(B7[1]);
+    let temp = a6 * faer::Scale(B7[7]) + a4 * faer::Scale(B7[5]) +
+        a2 * faer::Scale(B7[3]) + ident.as_ref() * faer::Scale(B7[1]);
     let u = a * temp;
-    let v = a6 * faer::scale(B7[6]) + a4 * faer::scale(B7[4]) + a2 * faer::scale(B7[2]) +
-        ident.as_ref() * faer::scale(B7[0]);
+    let v = a6 * faer::Scale(B7[6]) + a4 * faer::Scale(B7[4]) + a2 * faer::Scale(B7[2]) +
+        ident.as_ref() * faer::Scale(B7[0]);
     (u, v)
 }
 fn pade9(a: MatRef<f64>, a2: MatRef<f64>, a4: MatRef<f64>, a6: MatRef<f64>, a8: MatRef<f64>)
@@ -183,11 +184,11 @@ fn pade9(a: MatRef<f64>, a2: MatRef<f64>, a4: MatRef<f64>, a6: MatRef<f64>, a8: 
                            110880.,      3960.,       90.,
                            1.];
     let ident: Mat<f64> = faer::Mat::identity(a.ncols(), a.nrows());
-    let temp = a8 * faer::scale(B9[9]) + a6 * faer::scale(B9[7]) + a4*faer::scale(B9[5])
-        + a2*faer::scale(B9[3]) + ident.as_ref() * faer::scale(B9[1]);
+    let temp = a8 * faer::Scale(B9[9]) + a6 * faer::Scale(B9[7]) + a4*faer::Scale(B9[5])
+        + a2*faer::Scale(B9[3]) + ident.as_ref() * faer::Scale(B9[1]);
     let u = a * temp;
-    let v = a8 * faer::scale(B9[8]) + a6 * faer::scale(B9[6]) + a4*faer::scale(B9[4]) +
-        a2*faer::scale(B9[2]) + ident.as_ref() * faer::scale(B9[0]);
+    let v = a8 * faer::Scale(B9[8]) + a6 * faer::Scale(B9[6]) + a4*faer::Scale(B9[4]) +
+        a2*faer::Scale(B9[2]) + ident.as_ref() * faer::Scale(B9[0]);
     (u, v)
 }
 fn pade13(a: MatRef<f64>, a2: MatRef<f64>, a4: MatRef<f64>, a6: MatRef<f64>)
@@ -199,15 +200,15 @@ fn pade13(a: MatRef<f64>, a2: MatRef<f64>, a4: MatRef<f64>, a6: MatRef<f64>)
                             40840800.,          960960.,            16380.,
                             182.,               1.];
     let ident: Mat<f64> = faer::Mat::identity(a.ncols(), a.nrows());
-    let v1 = a6*faer::scale(B13[13]) + a4*faer::scale(B13[11]) + a2*faer::scale(B13[9]);
+    let v1 = a6*faer::Scale(B13[13]) + a4*faer::Scale(B13[11]) + a2*faer::Scale(B13[9]);
     let temp = a6 * v1.as_ref() +
-        a6*faer::scale(B13[7]) + a4*faer::scale(B13[5]) + a2*faer::scale(B13[3]) +
-        ident.as_ref()*faer::scale(B13[1]);
+        a6*faer::Scale(B13[7]) + a4*faer::Scale(B13[5]) + a2*faer::Scale(B13[3]) +
+        ident.as_ref()*faer::Scale(B13[1]);
     let u = a * temp;
-    let temp2 = a6*faer::scale(B13[12]) + a4*faer::scale(B13[10]) + a2*faer::scale(B13[8]);
+    let temp2 = a6*faer::Scale(B13[12]) + a4*faer::Scale(B13[10]) + a2*faer::Scale(B13[8]);
     let v2 = a6 * temp2 +
-        a6*faer::scale(B13[6]) + a4*faer::scale(B13[4]) + a2*faer::scale(B13[2]) +
-        ident.as_ref()*faer::scale(B13[0]);
+        a6*faer::Scale(B13[6]) + a4*faer::Scale(B13[4]) + a2*faer::Scale(B13[2]) +
+        ident.as_ref()*faer::Scale(B13[0]);
     (u, v2)
 }
 

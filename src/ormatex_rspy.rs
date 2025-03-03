@@ -23,9 +23,10 @@ use std::fmt;
 
 use faer::prelude::*;
 use faer_ext::*;
-use faer::Parallelism;
-use faer::linop::LinOp;
+use faer::Par;
+use faer::matrix_free::LinOp;
 use faer::dyn_stack::PodStack;
+use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -82,14 +83,14 @@ impl fmt::Debug for PyJaxJacLinOp {
     }
 }
 impl LinOp<f64> for PyJaxJacLinOp {
-    fn apply_req(
+    fn apply_scratch(
             &self,
             rhs_ncols: usize,
-            parallelism: Parallelism,
-        ) -> Result<faer::dyn_stack::StackReq, faer::dyn_stack::SizeOverflow> {
+            parallelism: Par,
+        ) -> StackReq {
         let _ = parallelism;
         let _ = rhs_ncols;
-        Ok(faer::dyn_stack::StackReq::empty())
+        StackReq::empty()
     }
 
     /// Number of rows in the linop
@@ -108,8 +109,8 @@ impl LinOp<f64> for PyJaxJacLinOp {
         &self,
         mut out: MatMut<f64>,
         rhs: MatRef<f64>,
-        parallelism: Parallelism,
-        stack: &mut PodStack,
+        parallelism: Par,
+        stack: &mut MemStack,
         )
     {
         // unused
@@ -119,13 +120,13 @@ impl LinOp<f64> for PyJaxJacLinOp {
         // compute jacobian vector product in python
         let j_v = Python::with_gil(|py| {
             // convert MatRef to PyArray
-            let x_slice = rhs.col(0).try_as_slice().unwrap();
+            let x_slice = rhs.col(0).try_as_col_major().unwrap().as_slice();
             let x_np = x_slice.to_vec().into_pyarray(py);
             let j_v_py = self.py_linop.call_method(py, "matvec_npcompat", (x_np,), None).unwrap();
             let inner_bound = j_v_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
             let inner: PyReadonlyArray1<f64> = inner_bound.extract().unwrap();
             let slice_view = inner.as_slice().unwrap();
-            faer::col::from_slice(slice_view).as_2d().to_owned()
+            faer::col::ColRef::from_slice(slice_view).as_mat().to_owned()
         });
 
         out.copy_from(j_v);
@@ -135,8 +136,8 @@ impl LinOp<f64> for PyJaxJacLinOp {
             &self,
             out: MatMut<'_, f64>,
             rhs: MatRef<'_, f64>,
-            parallelism: Parallelism,
-            stack: &mut PodStack,
+            parallelism: Par,
+            stack: &mut MemStack,
         ) {
         // Not implented error!
         panic!("Not Implemented");
@@ -161,7 +162,7 @@ impl OdeSys<'_> for PySysWrapped {
             let frhs_x_arr_bound = frhs_x_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
             let inner: PyReadonlyArray1<f64> = frhs_x_arr_bound.extract().unwrap();
             let slice_view = inner.as_slice().unwrap();
-            let frhs_x_mat = faer::col::from_slice(slice_view).as_2d().to_owned();
+            let frhs_x_mat = faer::col::ColRef::from_slice(slice_view).as_mat().to_owned();
             frhs_x_mat
         })
     }
@@ -297,7 +298,7 @@ fn arnoldi_rs<'py>(
 
     // run arnoldi
     let (q, h, bkdwn) = arnoldi_lop(
-        lop_wrapped, a_lo_scale, b_mat.as_ref(), m, iom);
+        &lop_wrapped, a_lo_scale, b_mat.as_ref(), m, iom);
 
     // convert faer mats into numpy arrays
     let h_ndarray = h.as_ref().into_ndarray().to_owned();

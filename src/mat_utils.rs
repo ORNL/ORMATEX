@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use faer::prelude::*;
 use faer::sparse::*;
+use faer_traits::RealField;
 use num_traits::Float;
 use rand::prelude::*;
 use rand_distr::{StandardNormal, Uniform};
@@ -10,7 +11,7 @@ use rand_distr::{StandardNormal, Uniform};
 pub fn random_mat_normal<T>(n_rows: usize, n_cols: usize)
     -> Mat<T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     let omega: Mat<T> = Mat::from_fn(
         n_rows,
@@ -27,7 +28,7 @@ pub fn random_mat_normal<T>(n_rows: usize, n_cols: usize)
 pub fn random_mat_uniform<T>(n_rows: usize, n_cols: usize, lb: f64, ub: f64)
     -> Mat<T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     let uni_dist = Uniform::new(lb, ub);
     let omega: Mat<T> = Mat::from_fn(
@@ -44,14 +45,14 @@ pub fn random_mat_uniform<T>(n_rows: usize, n_cols: usize, lb: f64, ub: f64)
 // Helper function to ensure two matrix are almost equal
 pub fn mat_mat_approx_eq<T>(a: MatRef<T>, b: MatRef<T>, tol: T)
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     use assert_approx_eq::assert_approx_eq;
     assert_eq!(a.ncols(), b.ncols());
     assert_eq!(a.nrows(), b.nrows());
     for j in 0..a.ncols() {
         for i in 0..a.nrows() {
-            assert_approx_eq!(a.read(i, j), b.read(i, j), tol);
+            assert_approx_eq!(a[(i, j)], b[(i, j)], tol);
         }
     }
 }
@@ -60,14 +61,14 @@ pub fn mat_mat_approx_eq<T>(a: MatRef<T>, b: MatRef<T>, tol: T)
 // For testing ONLY
 pub fn dense_to_sprs<T>(a: MatRef<T>) -> SparseColMat<usize, T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     // create triplets
     let mut a_triplets = Vec::new();
     for i in 0..a.nrows() {
         for j in 0..a.ncols() {
-            if a.read(i, j).abs() != T::from(0.0).unwrap() {
-                a_triplets.push((i, j, a.read(i, j)));
+            if a[(i, j)].abs() != T::from(0.0).unwrap() {
+                a_triplets.push(faer::sparse::Triplet::new(i, j, a[(i, j)]));
             }
         }
     }
@@ -78,7 +79,7 @@ pub fn dense_to_sprs<T>(a: MatRef<T>) -> SparseColMat<usize, T>
 /// Linear Operator
 pub trait LinOp<T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     fn apply_linop_to_vec(&self, t: T, x: MatRef<T>, w: MatRef<T>, s: Option<T>) -> Mat<T>;
 }
@@ -89,7 +90,7 @@ pub trait LinOp<T>
 #[derive(Clone)]
 pub struct JacobianRhsLinOp<'a, T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     /// Function ref to RHS of the system
     frhs: &'a dyn Fn(T, MatRef<T>) -> Mat<T>,
@@ -103,11 +104,11 @@ pub struct JacobianRhsLinOp<'a, T>
 
 impl <'a, T> LinOp<T> for JacobianRhsLinOp<'a, T>
     where
-    T: faer::RealField + Float + faer::SimpleEntity
+    T: RealField + Float
 {
     fn apply_linop_to_vec(&self, t: T, x: MatRef<T>, w: MatRef<T>, s: Option<T>) -> Mat<T> {
         let x_norm_l1 = x.norm_l1();
-        if x_norm_l1 == self.x_tmp.borrow().norm_l1() {
+        if x_norm_l1 == self.x_tmp.borrow().as_ref().norm_l1() {
             // we can reuse prior frhs eval
         }
         else {
@@ -120,16 +121,16 @@ impl <'a, T> LinOp<T> for JacobianRhsLinOp<'a, T>
         // let mut jw: Mat<T> = a * w_col;
         let eps = T::from(0.5e-8).unwrap() * x_norm_l1;
         let ieps = T::from(1.0).unwrap() / eps;
-        let x_pert = x + faer::scale(eps) * w.as_ref();
+        let x_pert = x + faer::Scale(eps) * w.as_ref();
         let scaler = s.unwrap_or(T::from(1.0).unwrap());
-        let Jw: Mat<T> = faer::scale(scaler) * ((self.frhs)(t, x_pert.as_ref()) - (self.fx_tmp.borrow().as_ref()))
-            * faer::scale(ieps);
+        let Jw: Mat<T> = faer::Scale(scaler) * ((self.frhs)(t, x_pert.as_ref()) - (self.fx_tmp.borrow().as_ref()))
+            * faer::Scale(ieps);
         Jw
     }
 }
 impl <'a, T> JacobianRhsLinOp <'a, T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     pub fn new(frhs: &'a dyn Fn(T, MatRef<T>) -> Mat<T>, dim: usize) -> Self {
         Self {
@@ -143,13 +144,13 @@ impl <'a, T> JacobianRhsLinOp <'a, T>
 /// Wrapper around a sparse matrix ref to apply it to a vec
 pub struct JacobianMatLinOp<'a, T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     a_mat: SparseColMatRef<'a, usize, T>,
 }
 impl <'a, T> JacobianMatLinOp <'a, T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     pub fn new(a_mat: SparseColMatRef<'a, usize, T>) -> Self {
         Self {
@@ -159,10 +160,10 @@ impl <'a, T> JacobianMatLinOp <'a, T>
 }
 impl <'a, T> LinOp<T> for JacobianMatLinOp<'a, T>
     where
-    T: faer::RealField + Float + faer::SimpleEntity
+    T: RealField + Float
 {
     fn apply_linop_to_vec(&self, t: T, x: MatRef<T>, w: MatRef<T>, s: Option<T>) -> Mat<T> {
-        self.a_mat * w * faer::scale(s.unwrap_or(T::from(1.0).unwrap()))
+        self.a_mat * w * faer::Scale(s.unwrap_or(T::from(1.0).unwrap()))
     }
 }
 
@@ -170,7 +171,7 @@ impl <'a, T> LinOp<T> for JacobianMatLinOp<'a, T>
 #[derive(Clone)]
 pub enum MatrixLinOp<'a, T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     Lop(&'a dyn LinOp<T>),
     MatLop(SparseColMatRef<'a, usize, T>),
@@ -179,13 +180,13 @@ pub enum MatrixLinOp<'a, T>
 
 impl <'a, T> LinOp<T> for MatrixLinOp<'a, T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     fn apply_linop_to_vec(&self, t: T, x: MatRef<T>, w: MatRef<T>, s: Option<T>) -> Mat<T> {
         match self {
             MatrixLinOp::Lop(inner_lop) => inner_lop.apply_linop_to_vec(t, x, w, s),
-            MatrixLinOp::MatLop(inner_lop) => inner_lop * w * faer::scale(s.unwrap_or(T::from(1.0).unwrap())),
-            MatrixLinOp::FMatLop(inner_lop) => (inner_lop)(t, x) * w * faer::scale(s.unwrap_or(T::from(1.0).unwrap()))
+            MatrixLinOp::MatLop(inner_lop) => inner_lop * w * faer::Scale(s.unwrap_or(T::from(1.0).unwrap())),
+            MatrixLinOp::FMatLop(inner_lop) => (inner_lop)(t, x) * w * faer::Scale(s.unwrap_or(T::from(1.0).unwrap()))
         }
     }
 }
@@ -202,11 +203,11 @@ impl <'a, T> LinOp<T> for MatrixLinOp<'a, T>
 /// * `n`: desired krylov dimension
 pub fn arnoldi<T>(a: SparseColMatRef<usize, T>, b: MatRef<T>, n: usize) -> (Mat<T>, SparseColMat<usize, T>)
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     let mut hs = Vec::with_capacity(n);
     let mut vs = Vec::with_capacity(n);
-    let q0 = b.to_owned() * faer::scale(T::from(1.0).unwrap() / b.norm_l2());
+    let q0 = b.to_owned() * faer::Scale(T::from(1.0).unwrap() / b.norm_l2());
     vs.push(q0);
 
     for k in 0..n {
@@ -224,7 +225,7 @@ pub fn arnoldi<T>(a: SparseColMatRef<usize, T>, b: MatRef<T>, n: usize) -> (Mat<
     for (c, hvec) in (&hs).into_iter().enumerate() {
         h_len = hvec.len();
         for h_i in 0..h_len {
-            h_triplets.push((h_i, c, hvec[h_i]));
+            h_triplets.push(faer::sparse::Triplet::new(h_i, c, hvec[h_i]));
         }
     }
     let h_sprs = SparseColMat::<usize, T>::try_new_from_triplets(
@@ -235,7 +236,7 @@ pub fn arnoldi<T>(a: SparseColMatRef<usize, T>, b: MatRef<T>, n: usize) -> (Mat<
     let mut q_out: Mat<T> = faer::Mat::zeros(vs[0].nrows(), vs.len());
     for j in 0..q_out.ncols() {
         for i in 0..q_out.nrows() {
-            q_out.write(i, j, vs[j].read(i, 0));
+            q_out[(i, j)] = vs[j][(i, 0)];
         }
     }
 
@@ -249,7 +250,7 @@ fn arnoldi_inner<T>(
     n: usize,
 ) -> (Vec<T>, Mat<T>)
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     // Krylov vector
     let q_col: MatRef<T> = q[k].as_ref();
@@ -262,14 +263,14 @@ fn arnoldi_inner<T>(
     for i in 0..=k {
         let qci: MatRef<T> = q[i].as_ref();
         let ht = qv.transpose() * qci;
-        h.push( ht.read(0, 0) );
-        qv = qv - (qci * faer::scale(h[i]));
+        h.push( ht[(0, 0)] );
+        qv = qv - (qci * faer::Scale(h[i]));
     }
     if k+1 < n {
         let norm_v = qv.norm_l2();
         // println!("norm v={:?}", &norm_v);
         h.push(norm_v);
-        qv = qv * faer::scale(T::from(1.).unwrap()/h[k + 1]);
+        qv = qv * faer::Scale(T::from(1.).unwrap()/h[k + 1]);
     }
     return (h, qv);
 }
@@ -278,11 +279,11 @@ fn arnoldi_inner<T>(
 /// Arnoldi iteration with linear operator A
 pub fn arnoldi_lo<T>(a_lo: &MatrixLinOp<T>, t: T, a_lo_scale: T, b: MatRef<T>, n: usize) -> (Mat<T>, SparseColMat<usize, T>, i32)
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     let mut hs = Vec::with_capacity(n);
     let mut vs = Vec::with_capacity(n);
-    let q0 = b.to_owned() * faer::scale(T::from(1.0).unwrap() / b.norm_l2());
+    let q0 = b.to_owned() * faer::Scale(T::from(1.0).unwrap() / b.norm_l2());
     vs.push(q0);
 
     let mut breakdown_n = -1;
@@ -306,7 +307,7 @@ pub fn arnoldi_lo<T>(a_lo: &MatrixLinOp<T>, t: T, a_lo_scale: T, b: MatRef<T>, n
                 breakdown_n = k as i32;
                 break;
                 // if k+1 < n {
-                //     vs.push(b.as_ref() * faer::scale(T::from(0.0).unwrap()));
+                //     vs.push(b.as_ref() * faer::Scale(T::from(0.0).unwrap()));
                 // }
             }
         }
@@ -319,7 +320,7 @@ pub fn arnoldi_lo<T>(a_lo: &MatrixLinOp<T>, t: T, a_lo_scale: T, b: MatRef<T>, n
     for (c, hvec) in (&hs).into_iter().enumerate() {
         h_len = hvec.len();
         for h_i in 0..h_len {
-            h_triplets.push((h_i, c, hvec[h_i]));
+            h_triplets.push(faer::sparse::Triplet::new(h_i, c, hvec[h_i]));
         }
     }
     let h_sprs = SparseColMat::<usize, T>::try_new_from_triplets(
@@ -336,7 +337,7 @@ pub fn arnoldi_lo<T>(a_lo: &MatrixLinOp<T>, t: T, a_lo_scale: T, b: MatRef<T>, n
     let mut q_out: Mat<T> = faer::Mat::zeros(vs[0].nrows(), vs.len());
     for j in 0..q_out.ncols() {
         for i in 0..q_out.nrows() {
-            q_out.write(i, j, vs[j].read(i, 0));
+            q_out[(i, j)] = vs[j][(i, 0)];
         }
     }
 
@@ -354,7 +355,7 @@ fn arnoldi_inner_lo<T>(
     n: usize,
 ) -> Result<(Vec<T>, Mat<T>), Vec<T>>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     // breakdown tol
     let eps = T::from(1e-14).unwrap();
@@ -370,14 +371,14 @@ fn arnoldi_inner_lo<T>(
     for i in 0..=k {
         let qci: MatRef<T> = q[i].as_ref();
         let ht = qv.transpose() * qci;
-        h.push( ht.read(0, 0) );
-        qv = qv - (qci * faer::scale(h[i]));
+        h.push( ht[(0, 0)] );
+        qv = qv - (qci * faer::Scale(h[i]));
     }
     let norm_v = qv.norm_l2();
     if k+1 < n && norm_v >= eps {
         h.push(norm_v);
         // if norm_v is zero this is a div by 0 err
-        qv = qv * faer::scale(T::from(1.).unwrap()/norm_v);
+        qv = qv * faer::Scale(T::from(1.).unwrap()/norm_v);
     }
     // breakdown, qv is the zero vector
     if norm_v < eps {
@@ -390,11 +391,11 @@ fn arnoldi_inner_lo<T>(
 /// sparse identity
 pub fn sparse_ident<T>(dim: usize) -> SparseColMat<usize, T>
     where
-    T: faer::RealField + Float
+    T: RealField + Float
 {
     let mut ident_triplets = Vec::with_capacity(dim);
     for i in 0..dim {
-        ident_triplets.push((i, i, T::from(1.0).unwrap()));
+        ident_triplets.push(faer::sparse::Triplet::new(i, i, T::from(1.0).unwrap()));
     }
     let ident = SparseColMat::<usize, T>::try_new_from_triplets(dim, dim, &ident_triplets).unwrap();
     ident
@@ -404,7 +405,6 @@ pub fn sparse_ident<T>(dim: usize) -> SparseColMat<usize, T>
 #[cfg(test)]
 mod test_matexp_rs {
     use assert_approx_eq::assert_approx_eq;
-    use faer::assert_matrix_eq;
 
     // bring everything from above (parent) module into scope
     use super::*;
@@ -417,7 +417,7 @@ mod test_matexp_rs {
 
         // pick a starting vector and normalize it
         let mut q0: Mat<f64> = random_mat_normal(10, 1);
-        q0 = q0.as_ref() * faer::scale(1.0 / q0.norm_l2());
+        q0 = q0.as_ref() * faer::Scale(1.0 / q0.norm_l2());
 
         // arnoldi
         let (q, h) = arnoldi(test_a.as_ref(), q0.as_ref(), 10);
@@ -453,7 +453,7 @@ mod test_matexp_rs {
 
         // pick a starting vector and normalize it
         let mut q0: Mat<f64> = random_mat_normal(5, 1);
-        q0 = q0.as_ref() * faer::scale(1.0 / q0.norm_l2());
+        q0 = q0.as_ref() * faer::Scale(1.0 / q0.norm_l2());
 
         // arnoldi
         let (q, h) = arnoldi(test_a.as_ref(), q0.as_ref(), 5);
@@ -492,7 +492,7 @@ mod test_matexp_rs {
             [0.0,],
             [0.0,],
         ];
-        q0 = q0.as_ref() * faer::scale(1.0 / q0.norm_l2());
+        q0 = q0.as_ref() * faer::Scale(1.0 / q0.norm_l2());
 
         // arnoldi
         let (q, h) = arnoldi(test_a.as_ref(), q0.as_ref(), 5);
@@ -521,7 +521,7 @@ mod test_matexp_rs {
 
         // pick a starting vector and normalize it
         let mut q0: Mat<f64> = random_mat_normal(10, 1);
-        q0 = q0.as_ref() * faer::scale(1.0 / q0.norm_l2());
+        q0 = q0.as_ref() * faer::Scale(1.0 / q0.norm_l2());
 
         // base arnoldi
         let (q_base, h_base) = arnoldi(test_a.as_ref(), q0.as_ref(), 10);

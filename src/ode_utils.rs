@@ -31,7 +31,7 @@ pub fn lv_sys_jac(t: f64, x: MatRef<f64>) -> SparseColMat<usize, f64> {
     let mut jac_triplets = Vec::new();
     for i in 0..jac.nrows() {
         for j in 0..jac.ncols() {
-            jac_triplets.push((i, j, jac[(i, j)]));
+            jac_triplets.push(faer::sparse::Triplet::new(i, j, jac[(i, j)]));
         }
     }
     let jac_sprs = SparseColMat::<usize, f64>::try_new_from_triplets(

@@ -27,6 +27,7 @@ debug:
     when: always
   script:
     - cargo clean
+    - cargo update
     - cargo build
     - cargo test -- --nocapture |& tee test.out
 
@@ -62,5 +63,6 @@ release:
     when: always
   script:
     - cargo clean
+    - cargo update
     - cargo build --release
     - cargo test --release |& tee test_rel.out

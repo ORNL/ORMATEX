@@ -3,9 +3,11 @@
 /// exponential integrators, implicit and explicit integrators
 ///
 use faer::prelude::*;
-use faer::linop::LinOp;
-use faer::Parallelism;
+use faer::matrix_free::LinOp;
+use faer::Par;
 use faer::dyn_stack::PodStack;
+use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
+use faer_traits::math_utils::abs;
 use std::ops::{Add, Sub};
 use std::{error::Error, fmt};
 
@@ -98,12 +100,11 @@ pub trait IntegrateSys <'a>
 /// and return the result.
 pub fn apply_linop(lop: &impl LinOp<f64>, q: MatRef<f64>) -> Mat<f64> {
     let mut out = faer::Mat::zeros(lop.nrows(), q.ncols());
-    let mut _dummy_podstack: [u8;1] = [0u8;1];
     lop.apply(
         out.as_mut(),
         q,
         faer::get_global_parallelism(),
-        PodStack::new(&mut _dummy_podstack)
+        MemStack::new(&mut MemBuffer::new(StackReq::empty()))
         );
     out
 }
@@ -150,14 +151,14 @@ impl <'a>  fmt::Debug for ShiftedLinOp <'a>  {
 }
 
 impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
-    fn apply_req(
+    fn apply_scratch(
             &self,
             rhs_ncols: usize,
-            parallelism: Parallelism,
-        ) -> Result<faer::dyn_stack::StackReq, faer::dyn_stack::SizeOverflow> {
+            parallelism: Par,
+        ) -> StackReq {
         let _ = parallelism;
         let _ = rhs_ncols;
-        Ok(faer::dyn_stack::StackReq::empty())
+        StackReq::empty()
     }
 
     /// Number of rows in the linop
@@ -183,8 +184,8 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
         &self,
         mut out: MatMut<f64>,
         rhs: MatRef<f64>,
-        parallelism: Parallelism,
-        stack: &mut PodStack,
+        parallelism: Par,
+        stack: &mut MemStack,
         )
     {
         // compute unshifted jacobian vector product
@@ -193,7 +194,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
 
         // compute optional shift
         match self.gamma {
-            Some(gamma) => { out += faer::scale(gamma) * rhs.as_ref() },
+            Some(gamma) => { out += faer::Scale(gamma) * rhs.as_ref() },
             _ => { },
         }
     }
@@ -207,8 +208,8 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
             &self,
             out: MatMut<'_, f64>,
             rhs: MatRef<'_, f64>,
-            parallelism: Parallelism,
-            stack: &mut PodStack,
+            parallelism: Par,
+            stack: &mut MemStack,
         ) {
         // Not implented error!
         panic!("Not Implemented");
@@ -275,14 +276,14 @@ impl <'a> fmt::Debug for FdJacLinOp <'a> {
 }
 
 impl <'a> LinOp<f64> for FdJacLinOp <'a> {
-    fn apply_req(
+    fn apply_scratch(
             &self,
             rhs_ncols: usize,
-            parallelism: Parallelism,
-        ) -> Result<faer::dyn_stack::StackReq, faer::dyn_stack::SizeOverflow> {
+            parallelism: Par,
+        ) -> StackReq {
         let _ = parallelism;
         let _ = rhs_ncols;
-        Ok(faer::dyn_stack::StackReq::empty())
+        StackReq::empty()
     }
 
     /// Number of rows in the linop
@@ -308,25 +309,25 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
         &self,
         mut out: MatMut<f64>,
         rhs: MatRef<f64>,
-        parallelism: Parallelism,
-        stack: &mut PodStack,
+        parallelism: Par,
+        stack: &mut MemStack,
         )
     {
         // unused
         _ = parallelism;
         _ = stack;
 
-        let x_norm_l1 = self.x.norm_l1();
+        let x_norm_l1 = self.x.norm_max().abs();
         let eps = 0.5e-8 * x_norm_l1;
         let ieps = self.scale * 1.0 / eps;
-        let x_pert = self.x.as_ref() + faer::scale(eps) * rhs.as_ref();
+        let x_pert = self.x.as_ref() + faer::Scale(eps) * rhs.as_ref();
 
         // compute unshifted jacobian vector product
-        let mut j_v =  (self.frhs.frhs(self.t, x_pert.as_ref()) - self.frhs_x.as_ref()) * faer::scale(ieps) ;
+        let mut j_v = (self.frhs.frhs(self.t, x_pert.as_ref())-self.frhs_x.as_ref())*faer::Scale(ieps);
 
         // compute optional shift
         match self.gamma {
-            Some(gamma) => { j_v += faer::scale(gamma) * rhs.as_ref() },
+            Some(gamma) => { j_v += faer::Scale(gamma) * rhs.as_ref() },
             _ => { },
         }
 
@@ -343,8 +344,8 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
             &self,
             out: MatMut<'_, f64>,
             rhs: MatRef<'_, f64>,
-            parallelism: Parallelism,
-            stack: &mut PodStack,
+            parallelism: Par,
+            stack: &mut MemStack,
         ) {
         // Not implented error!
         panic!("Not Implemented");

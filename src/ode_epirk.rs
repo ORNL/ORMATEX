@@ -3,8 +3,9 @@
 use faer::prelude::*;
 use crate::matexp_krylov::KrylovExpm;
 use crate::ode_sys::*;
-use faer::linop::LinOp;
+use faer::matrix_free::LinOp;
 use faer::dyn_stack::PodStack;
+use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use std::marker::PhantomData;
 use std::collections::VecDeque;
 
@@ -68,12 +69,13 @@ where
         let y0 = self.y_hist[0].as_ref();
         let frhs_yr = self.sys.frhs(tr, yr);
 
-        let mut _dummy_podstack: [u8;1] = [0u8;1];
         let mut jac_yd = faer::Mat::zeros(y0.nrows(), 1);
-        sys_jac_lop_y0.apply(jac_yd.as_mut(),
-                          (yr.as_ref()-y0.as_ref()).as_ref(),
-                          faer::get_global_parallelism(),
-                          PodStack::new(&mut _dummy_podstack));
+        sys_jac_lop_y0.apply(
+            jac_yd.as_mut(),
+            (yr.as_ref()-y0.as_ref()).as_ref(),
+            faer::get_global_parallelism(),
+            MemStack::new(&mut MemBuffer::new(StackReq::empty()))
+        );
 
         frhs_yr - frhs_y0 - jac_yd
     }
@@ -87,7 +89,7 @@ where
         // setup jacobian linear operator evaluated at y0
         let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
         let fy0 = self.sys.frhs(t, y0);
-        let fy0_dt = fy0.as_ref() * faer::scale(dt);
+        let fy0_dt = fy0.as_ref() * faer::Scale(dt);
         let y_new = y0.as_ref() +
             self.expm.apply_phi_linop(
                 sys_jac_lop.as_ref(),
@@ -109,7 +111,7 @@ where
         // setup jacobian linear operator evaluated at y0
         let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
         let fy0 = self.sys.frhs(t, y0);
-        let fy0_dt = fy0.as_ref() * faer::scale(dt);
+        let fy0_dt = fy0.as_ref() * faer::Scale(dt);
         let t_2 = t + dt;
         let y_2 = y0.as_ref() +
             self.expm.apply_phi_linop(
@@ -124,7 +126,7 @@ where
             sys_jac_lop.as_ref(), dt, r_2.as_ref(), 3);
 
         // err est
-        let y_err = (y_new.as_ref() - y_2.as_ref()).norm_l1().abs();
+        let y_err = (y_new.as_ref() - y_2.as_ref()).as_ref().norm_l1().abs();
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, Some(y_err)))
@@ -144,16 +146,16 @@ where
         let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
 
         let fy0 = self.sys.frhs(t, y0);
-        let fy0_dt = fy0.as_ref() * faer::scale(dt);
+        let fy0_dt = fy0.as_ref() * faer::Scale(dt);
         let y1 = y0.as_ref() +
             self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, fy0_dt.as_ref(), 1);
 
-        let rn_dt = self.remf(tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref()) * faer::scale(dt);
-        let y_new = y1.as_ref() + faer::scale(2.0/3.0)*
+        let rn_dt = self.remf(tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref()) * faer::Scale(dt);
+        let y_new = y1.as_ref() + faer::Scale(2.0/3.0)*
             self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, rn_dt.as_ref(), 2);
 
         // estimate error in the step
-        let y_err = (y_new.as_ref() - y1.as_ref()).norm_l1().abs();
+        let y_err = (y_new.as_ref() - y1.as_ref()).as_ref().norm_l1().abs();
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, Some(y_err)))

@@ -1,7 +1,7 @@
 // Krylov Matrix Exponential Methods
 //
 use faer::prelude::*;
-use faer::linop::LinOp;
+use faer::matrix_free::LinOp;
 use crate::arnoldi::arnoldi_lop;
 use crate::matexp_pade;
 
@@ -33,7 +33,7 @@ impl KrylovExpm {
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(matexp.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
-        return faer::scale(beta) * (q.as_ref() * matexp.as_ref() * unit_vec)
+        return faer::Scale(beta) * (q.as_ref() * matexp.as_ref() * unit_vec)
     }
 
     /// Computes phi_k(A*dt) * v0 where A is a LinOp
@@ -42,11 +42,11 @@ impl KrylovExpm {
         -> Mat<f64>
     {
         let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim, self.iom);
-        let phi_k = matexp_pade::phi_ext((faer::scale(dt) * h.as_ref()).as_ref(), k);
+        let phi_k = matexp_pade::phi_ext((faer::Scale(dt) * h.as_ref()).as_ref(), k);
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(phi_k.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
-        return faer::scale(beta) * (q.as_ref() * phi_k.as_ref() * unit_vec)
+        return faer::Scale(beta) * (q.as_ref() * phi_k.as_ref() * unit_vec)
     }
 
     /// Computes tripplet (phi_k(A*dt)*v0, phi_k(A*dt*2)*v0, phi_k(A*dt*3)*v0)
@@ -61,23 +61,23 @@ impl KrylovExpm {
         -> (Mat<f64>, Mat<f64>, Mat<f64>)
     {
         let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim, self.iom);
-        let phi_k = matexp_pade::phi_ext((faer::scale(dt) * h.as_ref()).as_ref(), k);
+        let phi_k = matexp_pade::phi_ext((faer::Scale(dt) * h.as_ref()).as_ref(), k);
         let id = faer::Mat::<f64>::identity(phi_k.nrows(), phi_k.ncols());
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(phi_k.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
         // compute unscaled phi_k_1 = phi_k(A*dt)*v0
-        let phi_k_1 = faer::scale(beta) * (q.as_ref() * phi_k.as_ref() * unit_vec.as_ref());
+        let phi_k_1 = faer::Scale(beta) * (q.as_ref() * phi_k.as_ref() * unit_vec.as_ref());
         // compute scaled phi_k_2 = phi_k(A*dt*2)*v0
-        let phi_2tau_h = (faer::scale(dt * 1./2.) * h.as_ref() * phi_k.as_ref() + id.as_ref()) * phi_k.as_ref();
+        let phi_2tau_h = (faer::Scale(dt * 1./2.) * h.as_ref() * phi_k.as_ref() + id.as_ref()) * phi_k.as_ref();
         let phi_k_2 = q.as_ref()
             * phi_2tau_h.as_ref()
-            * unit_vec.as_ref() * faer::scale(beta);
+            * unit_vec.as_ref() * faer::Scale(beta);
         // compute scaled phi_k_3 = phi_k(A*dt*3)*v0
         let phi_k_3 = q.as_ref()
-            * (faer::scale(2./3.) * (faer::scale(dt) * h.as_ref() * phi_k.as_ref() + id.as_ref())
-            * phi_2tau_h.as_ref() + faer::scale(1./3.) * phi_k.as_ref())
-            * unit_vec.as_ref() * faer::scale(beta);
+            * (faer::Scale(2./3.) * (faer::Scale(dt) * h.as_ref() * phi_k.as_ref() + id.as_ref())
+            * phi_2tau_h.as_ref() + faer::Scale(1./3.) * phi_k.as_ref())
+            * unit_vec.as_ref() * faer::Scale(beta);
         (phi_k_1, phi_k_2, phi_k_3)
     }
 }
