@@ -14,7 +14,7 @@ thiserror = "1.0"
 assert_approx_eq = "1.1.0"
 num-traits = "0.2.18"
 reborrow = "0.5.5"
-faer = {version = "0.21.4", features=["unstable",]}
+faer = {version = "0.21.7", features=["unstable",]}
 faer-traits = "0.21.0"
 libm = "0.2.8"
 rand = "0.8.5"
@@ -25,4 +25,4 @@ faer_gmres = "0.2.0"
 pyo3 = {version="0.23", features = ["extension-module"]}
 numpy = "0.23"
 ndarray = {version="0.16", features=["rayon"]}
-faer-ext = {git = "https://github.com/wgurecky/faer-ext", branch="nparray_scratch", features=["ndarray"]}
+faer-ext = {version="0.5", features=["ndarray"]}
