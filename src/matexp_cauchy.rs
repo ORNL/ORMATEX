@@ -169,7 +169,7 @@ impl CauchyExpm {
 
         // loop over poles
         // for k in 0..s {
-        //     let zk = self.theta[(k, 0)].powf(l as f64);
+        //     let zk = self.theta[(k, 0)].powu(l as u32);
         //     let tmp_a = zk * (a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref());
         //     let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
         //     let _qr_tmp_a = tmp_a.qr();
@@ -179,7 +179,7 @@ impl CauchyExpm {
         // same as above in parallel
         let out_v: Mat<c64> = (0..s).into_par_iter().map(|k| {
                 // let ck = Scale(self.alpha[(k, 0)]);
-                let zk = self.theta[(k, 0)].powf(l as f64);
+                let zk = self.theta[(k, 0)].powu(l as u32);
                 let tmp_a = Scale(zk) * (a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref());
                 let lu_tmp_a = tmp_a.partial_piv_lu();
                 let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
