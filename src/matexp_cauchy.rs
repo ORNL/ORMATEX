@@ -196,7 +196,7 @@ pub fn gen_parabolic_expm(order: usize) -> CauchyExpm
 
     let mut idx: usize = 0;
     for i in (1..=order).step_by(2) {
-        theta[(idx, 0)] = c64::new(3.14149*(i as f64) / (order as f64), 0.);
+        theta[(idx, 0)] = c64::new(std::f64::consts::PI*(i as f64) / (order as f64), 0.);
         idx += 1;
     }
 
