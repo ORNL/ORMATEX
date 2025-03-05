@@ -5,6 +5,7 @@ pub mod ode_epirk;
 pub mod newton;
 pub mod arnoldi;
 pub mod matexp_pade;
+pub mod matexp_cauchy;
 pub mod matexp_krylov;
 // for testing only
 pub mod ode_utils;

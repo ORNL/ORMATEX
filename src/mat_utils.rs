@@ -57,6 +57,38 @@ pub fn mat_mat_approx_eq<T>(a: MatRef<T>, b: MatRef<T>, tol: T)
     }
 }
 
+/// Only the real part of mat
+pub fn real_mat(a: MatRef<c64>) -> Mat<f64> {
+    let rm: Mat<f64> = Mat::from_fn(a.nrows(), a.ncols(), |i, j| {
+            a[(i, j)].re
+        }
+    );
+    rm
+}
+
+/// Convert mat to complex and scale by dt
+pub fn complex_mat_scale(a: MatRef<f64>, dt: f64) -> Mat<c64>
+{
+    let dim = a.nrows();
+    let a_dt: Mat<c64> = Mat::from_fn(dim, dim, |i, j| {
+        c64::from( a[(i, j)] ) * c64::from(dt)
+        }
+    );
+    a_dt
+}
+
+/// Take powers of a real matrix
+pub fn mat_pow<T>(a: MatRef<T>, p: usize) -> Mat<T>
+    where
+    T: RealField + Float
+{
+    let mut ap_out: Mat<T> = Mat::identity(a.nrows(), a.ncols());
+    for _i in 0..p {
+        ap_out = a.as_ref() * ap_out.as_ref();
+    }
+    ap_out
+}
+
 // Helper function to convert a dense mat to a sparse mat.
 // For testing ONLY
 pub fn dense_to_sprs<T>(a: MatRef<T>) -> SparseColMat<usize, T>
