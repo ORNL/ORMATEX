@@ -1,9 +1,7 @@
 /// Computes the matrix exponential and matexpv using contour integral appraoch
 use faer::prelude::*;
-use std::iter::StepBy;
 use rayon::prelude::*;
 use crate::mat_utils::{real_mat, complex_mat_scale, mat_pow};
-use faer::linalg::svd::pseudoinverse_from_svd;
 use faer::linalg::solvers::{Solve, DenseSolveCore};
 
 
@@ -45,22 +43,19 @@ impl CauchyExpm {
         // scaled a and conv. to complex
         let a_dt: Mat<c64> = complex_mat_scale(a, dt);
 
-        // the result
-        // let mut exp_a: Mat<c64> = Mat::zeros(dim, dim);
-
         // loop over poles
+        // let mut exp_a: Mat<c64> = Mat::zeros(dim, dim);
         // for k in 0..s {
         //     let tmp_a = a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref();
         //     // pseudo inverse used here as A may be only left invertible
-        //     let _tmp_a_svd = tmp_a.svd().unwrap();
-        //     exp_a = exp_a + _tmp_a_svd.inverse() * Scale(self.alpha[(k, 0)]);
+        //     let _tmp_a_qr = tmp_a.qr();
+        //     exp_a = exp_a + _tmp_a_qr.inverse() * Scale(self.alpha[(k, 0)]);
         // }
         // same as above in parallel
         let exp_a: Mat<c64> = (0..s).into_par_iter().map(|k| {
                 let tmp_a = a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref();
-                // pseudo inverse used here as A may be only left invertible
-                let _tmp_a_svd = tmp_a.svd().unwrap();
-                _tmp_a_svd.inverse() * Scale(self.alpha[(k, 0)])
+                let _tmp_a_qr = tmp_a.qr();
+                _tmp_a_qr.inverse() * Scale(self.alpha[(k, 0)])
             }).reduce_with(|a, b| a + b).unwrap();
 
         // take real components
@@ -70,13 +65,11 @@ impl CauchyExpm {
         rexp_a
     }
 
-    /// Computes phi_1(A*dt) for dense A using the extension formula in:
-    /// T. Schmelzer and L. Trefethen. Evaluating Matrix Functions for
-    /// Exponential Integrators via Caratheodory-Fejer Approximation
-    /// and Contour Integrals. Electronic Transactions on Numerical Analysis. v 29. 2007.
-    ///
-    pub fn phi_ext_dense_cauchy(&self, a: MatRef<f64>, bu: MatRef<f64>, dt: f64) -> Mat<f64>
+    /// Extension formula for computing higher order phi functions
+    fn _phi_ext(&self, a: MatRef<f64>, bu: MatRef<f64>, dt: f64) -> Mat<f64>
     {
+        let n = a.nrows();
+        let m = a.ncols();
         // compute extended matrix B
         // build by blocks
         // B = [[a, bu], [0, 0]]
@@ -87,27 +80,27 @@ impl CauchyExpm {
         // compute matexp of b_ext
         let phi_a_ext = self.matexp_dense_cauchy(b_ext.as_ref(), dt);
 
-        // extract phi_1
-        // phi_a_ext.get(0..n, m..).to_owned()
-        phi_a_ext
+        // extract phi_k+1
+        phi_a_ext.get(0..n, m..).to_owned()
     }
 
-    /// Computes phi_k(A*dt) for dense A using the extension formula repeatedly
+    /// Computes phi_1(A*dt) for dense A using the extension formula
+    /// T. Schmelzer and L. Trefethen. Evaluating Matrix Functions for
+    /// Exponential Integrators via Caratheodory-Fejer Approximation
+    /// and Contour Integrals. Electronic Transactions on Numerical Analysis. v 29. 2007.
     pub fn phik_dense_cauchy(&self, a: MatRef<f64>, dt: f64, k: usize) -> Mat<f64>
     {
-        // early return for phi0
-        if k == 0 {
-            return self.matexp_dense_cauchy(a, dt)
+        assert!(k <= 1);
+        match k {
+            0 => { self.matexp_dense_cauchy(a, dt) },
+            1 => {
+                let tmp_zn = mat_pow(a, k);
+                let tmp_znp = mat_pow(a, k-1);
+                let phi_k = self._phi_ext(tmp_zn.as_ref(), tmp_znp.as_ref(), dt);
+                phi_k
+            },
+            _ => panic!("Only supports phi_k for k<=1 currently"),
         }
-
-        let n = a.nrows();
-        let m = a.ncols();
-
-        // higher order phi functions
-        let tmp_zn = mat_pow(a, k);
-        let tmp_znp = mat_pow(a, k-1);
-        let phi_k = self.phi_ext_dense_cauchy(tmp_zn.as_ref(), tmp_znp.as_ref(), dt);
-        phi_k.get(0..n, m..).to_owned()
     }
 
     /// Computes exp(A*dt)*v0 for dense A
@@ -123,25 +116,22 @@ impl CauchyExpm {
         // scaled a and conv. to complex
         let a_dt: Mat<c64> = complex_mat_scale(a, dt);
 
-        // the result vector
-        // let mut out_v: Mat<c64> = Mat::zeros(dim, 1);
-
         // loop over poles
+        // let mut out_v: Mat<c64> = Mat::zeros(dim, 1);
         // for k in 0..s {
         //     let tmp_a = a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref();
         //     let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
-        //     let _qr_tmp_a = tmp_a.qr();
-        //     let _qr_tmp_a = tmp_a.partial_piv_lu();
+        //     let _lu_tmp_a = tmp_a.partial_piv_lu();
         //     // solve the dense linear system
-        //     out_v = out_v + _qr_tmp_a.solve(tmp_b.as_ref());
+        //     out_v = out_v + _lu_tmp_a.solve(tmp_b.as_ref());
         // }
         // same as above in parallel
         let out_v: Mat<c64> = (0..s).into_par_iter().map(|k| {
                 let tmp_a = a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref();
                 let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
-                let _qr_tmp_a = tmp_a.partial_piv_lu();
+                let _lu_tmp_a = tmp_a.partial_piv_lu();
                 // solve the dense linear system
-                _qr_tmp_a.solve(tmp_b.as_ref())
+                _lu_tmp_a.solve(tmp_b.as_ref())
             }).reduce_with(|a, b| a + b).unwrap();
 
         // take real components
@@ -151,7 +141,10 @@ impl CauchyExpm {
         r_v
     }
 
-    /// Computes phi_l(A*dt)*v0 for dense A
+    /// Computes phi_l(A*dt)*v0 for dense A using fixed poles for all phi_l
+    /// T. Schmelzer and L. Trefethen. Evaluating Matrix Functions for
+    /// Exponential Integrators via Caratheodory-Fejer Approximation
+    /// and Contour Integrals. Electronic Transactions on Numerical Analysis. v 29. 2007.
     pub fn phik_dense_apply_cauchy(&self, a: MatRef<f64>, dt: f64, v0: MatRef<f64>, l: usize) -> Mat<f64>
     {
         let s = self.theta.nrows();
@@ -164,27 +157,24 @@ impl CauchyExpm {
         // scaled a and conv. to complex
         let a_dt: Mat<c64> = complex_mat_scale(a, dt);
 
-        // the result vector
-        // let mut out_v: Mat<c64> = Mat::zeros(dim, 1);
-
         // loop over poles
+        // let mut out_v: Mat<c64> = Mat::zeros(dim, 1);
         // for k in 0..s {
         //     let zk = self.theta[(k, 0)].powu(l as u32);
         //     let tmp_a = zk * (a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref());
         //     let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
-        //     let _qr_tmp_a = tmp_a.qr();
+        //     let _lu_tmp_a = tmp_a.partial_piv_lu();
         //     // solve the dense linear system
-        //     out_v = out_v + _qr_tmp_a.solve(tmp_b.as_ref());
+        //     out_v = out_v + _lu_tmp_a.solve(tmp_b.as_ref());
         // }
         // same as above in parallel
         let out_v: Mat<c64> = (0..s).into_par_iter().map(|k| {
-                // let ck = Scale(self.alpha[(k, 0)]);
                 let zk = self.theta[(k, 0)].powu(l as u32);
                 let tmp_a = Scale(zk) * (a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref());
-                let lu_tmp_a = tmp_a.partial_piv_lu();
+                let _lu_tmp_a = tmp_a.partial_piv_lu();
                 let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
                 // solve the dense linear system
-                lu_tmp_a.solve(tmp_b.as_ref())
+                _lu_tmp_a.solve(tmp_b.as_ref())
             }).reduce_with(|a, b| a + b).unwrap();
 
         // take real components
@@ -232,13 +222,15 @@ pub fn gen_cram_expm(order: usize) -> CauchyExpm
 /// Generate expm and phi evaluator
 pub fn gen_parabolic_expm(order: usize) -> CauchyExpm
 {
+    assert!(order % 2 == 0);
     let mut theta: Mat<c64> = Mat::zeros(order/2, 1);
+    let mut theta_out: Mat<c64> = Mat::zeros(order/2, 1);
     let mut alpha: Mat<c64> = Mat::zeros(order/2, 1);
     let im1: c64 = c64::new(0., 1.);
     let order_im: c64 = c64::new(order as f64, 0.);
 
     let mut idx: usize = 0;
-    for i in (1..=order).step_by(2) {
+    for i in (1..order).step_by(2) {
         theta[(idx, 0)] = c64::new(std::f64::consts::PI*(i as f64) / (order as f64), 0.);
         idx += 1;
     }
@@ -246,18 +238,19 @@ pub fn gen_parabolic_expm(order: usize) -> CauchyExpm
     for i in 0..theta.nrows() {
         let phi = order_im * (
             c64::new(0.1309, 0.)
-            - c64::new(0.1194, 0.) * theta[(i, 0)]*theta[(i, 0)]
+            - c64::new(0.1194, 0.)*theta[(i, 0)].powu(2)
             + c64::new(0.25, 0.)*theta[(i, 0)]*im1);
         let phi_prime = order_im * (
-            - c64::new(2.0*0.1194, 0.) * theta[(i, 0)]
+            c64::new(-2.0*0.1194, 0.)*theta[(i, 0)]
             + c64::new(0.25, 0.)*im1);
         let a = (im1 / order_im) * (
             phi.exp()*phi_prime);
         alpha[(i, 0)] = a;
+        theta_out[(i, 0)] = phi;
     }
 
     let alpha_0_parabolic: c64 = c64::new(0., 0.);
-    CauchyExpm::new(theta.as_ref(), alpha.as_ref(), alpha_0_parabolic)
+    CauchyExpm::new(theta_out.as_ref(), alpha.as_ref(), alpha_0_parabolic)
 }
 
 
@@ -317,7 +310,7 @@ mod test_matexp_cauchy {
     }
 
     #[test]
-    fn test_cauchy_phik_apply() {
+    fn test_cauchy_cram_phik_apply() {
         // initialize
         let cram = gen_cram_expm(16);
 
@@ -338,9 +331,9 @@ mod test_matexp_cauchy {
         // compute phi_k(a*dt)*v0 using caratheodory-fejer aprroximation and contour integral
         // appraoch
         let cram_phi1_av = cram.phik_dense_apply_cauchy(test_a.as_ref(), dt, v0.as_ref(), 1);
-        mat_mat_approx_eq(pade_phi1_av.as_ref(), cram_phi1_av.as_ref(), 1e-12);
         println!("pade phi1(a*dt)*v0 {:?}", pade_phi1_av.as_ref());
         println!("cram phi1(a*dt)*v0 {:?}", cram_phi1_av.as_ref());
+        mat_mat_approx_eq(pade_phi1_av.as_ref(), cram_phi1_av.as_ref(), 1e-12);
 
         // higher order phi fns
         for k in 0..4 {
@@ -348,6 +341,33 @@ mod test_matexp_cauchy {
             let cram_phik_av = cram.phik_dense_apply_cauchy(test_a.as_ref(), dt, v0.as_ref(), k);
             // we expect some accuracy degredation for higher order phi functions
             mat_mat_approx_eq(pade_phik_av.as_ref(), cram_phik_av.as_ref(), 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_cauchy_parabolic_phik_apply() {
+        let parabolic = gen_parabolic_expm(32);
+        let test_a: Mat<f64> = mat![
+            [-1.0e00,  0.0e+00,  0.0e+00],
+            [ 1.0e00, -1.0e+02,  0.0e+00],
+            [ 0.0e00,  1.0e+02, -1.0e-02],
+        ];
+        let dt = 1.0;
+        let v0: Mat<f64> = mat![
+            [ 1.0e00],
+            [ 2.0e00],
+            [ 3.0e00],
+        ];
+        let pade_phi1_av = phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), 1)*v0.as_ref();
+        let parabolic_phi1_av = parabolic.phik_dense_apply_cauchy(test_a.as_ref(), dt, v0.as_ref(), 1);
+        println!("pade phi1(a*dt)*v0 {:?}", pade_phi1_av.as_ref());
+        println!("parabolic phi1(a*dt)*v0 {:?}", parabolic_phi1_av.as_ref());
+        mat_mat_approx_eq(pade_phi1_av.as_ref(), parabolic_phi1_av.as_ref(), 1e-10);
+        for k in 0..4 {
+            let pade_phik_av = phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), k)*v0.as_ref();
+            let parabolic_phik_av = parabolic.phik_dense_apply_cauchy(test_a.as_ref(), dt, v0.as_ref(), k);
+            // we expect some accuracy degredation for higher order phi functions
+            mat_mat_approx_eq(pade_phik_av.as_ref(), parabolic_phik_av.as_ref(), 1e-8);
         }
     }
 }
