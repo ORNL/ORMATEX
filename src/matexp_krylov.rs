@@ -10,21 +10,21 @@ use crate::matexp_pade::DensePhikvEvaluator;
 /// Krylov methods to compute Sparse Matrix Exponential
 /// and Phi functions
 pub struct KrylovExpm {
+    /// dense matrix exponential and phi function evaluator
+    expmv: Box<dyn DensePhikvEvaluator>,
     /// max krylov dim size
     krylov_dim: usize,
     /// incomplete ortho depth
     iom: usize,
-    /// dense matrix exponential and phi function evaluator
-    expmv: Box<dyn DensePhikvEvaluator>,
 }
 
 impl KrylovExpm {
     pub fn new(expmv: Box<dyn DensePhikvEvaluator>, krylov_dim: usize, iom_in: Option<usize>) -> Self {
         assert!(krylov_dim > 0);
         Self {
+            expmv,
             krylov_dim,
             iom: iom_in.unwrap_or(2),
-            expmv
         }
     }
 

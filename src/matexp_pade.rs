@@ -84,23 +84,14 @@ pub fn phi_ext(z: MatRef<f64>, k: usize) -> Mat<f64>
     let m = z.ncols();
     assert!(n == m);
 
-//     if k <= 1 {
-//         return phi(z, k)
-//     }
-
     let z_ext: Mat<f64> = match k {
         0 => z.to_owned(),
         _ => {
             let z_ext_k_nrows = n+(k-1)*n;
             let z_ext_k_ncols = m;
-            // let mut z_ext_k = Mat::zeros(z_ext_k_nrows, z_ext_k_ncols);
-            // z_ext_k.get_mut(0..n, 0..m).copy_from(z);
-            // z_ext_k.get_mut(n.., 0..m).copy_from(zeros);
             let z_ext_nrows = z_ext_k_nrows + n;
             let z_ext_ncols = z_ext_k_ncols + k*n;
             let mut z_ext = Mat::zeros(z_ext_nrows, z_ext_ncols);
-            // z_ext.get_mut(0..z_ext_k_nrows, 0..z_ext_k_ncols)
-            //     .copy_from(z_ext_k);
             z_ext.get_mut(0..n, 0..m)
                 .copy_from(z);
             z_ext.get_mut(0..z_ext_k_nrows, z_ext_k_ncols..)

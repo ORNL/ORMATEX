@@ -194,8 +194,9 @@ impl DensePhikvEvaluator for CauchyExpm {
 }
 
 
-
 /// Generate expm and phi evaluator
+/// Ref:  Pusa, M. Rational Approximations to the Matrix Exponential in Burnup Calculations.
+/// Nuclear Science and Engineering, 169(2), 155–167. https://doi.org/10.13182/NSE10-81
 pub fn gen_cram_expm(order: usize) -> CauchyExpm
 {
     let mut theta: Mat<c64> = Mat::zeros(order/2, 1);
