@@ -29,6 +29,8 @@ class ExpRBIntegrator(IntegrateSys):
         self.method = method
         if not self.method in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
+        if method == "exprb2_dense_cram" and HAS_ORMATEX_RUST:
+            self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs("cram", 16)
         order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, **kwargs)
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
@@ -151,9 +153,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _cram_rs(t, yt, dt, sys):
-        phik_v_evaluator = ormatex_rs.DensePhikvEvalRs("cram", 16)
-        # phik_v_evaluator = ormatex_rs.DensePhikvEvalRs("pade", 16)
+    def _cram_rs(self, t, yt, dt, sys):
         fyt = sys.frhs(t, yt)
         # rust bindings work with np arrays only
         J = np.asarray(sys.fjac(t, yt).dense())
@@ -161,10 +161,10 @@ class ExpRBIntegrator(IntegrateSys):
         fytt = jax.grad(sys.rhs, argnums=0)(t, yt)
         # check for nonautonomous system
         if jnp.linalg.norm(fytt, ord="inf") > 1e-6:
-            phi2_fytt = phik_v_evaluator.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2)
+            phi2_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2)
         else:
             phi2_fytt = 0.
-        phi1J_fyt = phik_v_evaluator.eval(J, dt, np.asarray(fyt).reshape(-1,1), 1)
+        phi1J_fyt = self.phikv_dense_rs.eval(J, dt, np.asarray(fyt).reshape(-1,1), 1)
         y_new = yt + dt * phi1J_fyt + (dt**2.0)*phi2_fytt
         y_err = -1.
         return y_new, y_err
