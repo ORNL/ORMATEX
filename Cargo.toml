@@ -24,5 +24,6 @@ faer_gmres = "0.2.0"
 # python binding deps
 pyo3 = {version="0.23", features = ["extension-module"]}
 numpy = "0.23"
+rayon = "*"
 ndarray = {version="0.16", features=["rayon"]}
 faer-ext = {version="0.5", features=["ndarray"]}
