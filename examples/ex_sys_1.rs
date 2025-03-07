@@ -26,7 +26,6 @@ pub fn main() {
     // let mut sys_solver = ode_rk::RkIntegrator::new(0.0, y0.as_ref(), 2, &test_sys);
     let iom = 2;
     let krylov_dim = 2;
-    let order = 3;
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
     let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     let mut sys_solver = ode_epirk::EpirkIntegrator::new(
