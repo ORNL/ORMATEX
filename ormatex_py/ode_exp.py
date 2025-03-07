@@ -23,7 +23,7 @@ except ImportError:
 class ExpRBIntegrator(IntegrateSys):
 
     _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3,
-                      "exprb2_dense": 2}
+                      "exprb2_dense": 2, "exprb2_dense_cram": 2}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
         self.method = method
@@ -157,7 +157,7 @@ class ExpRBIntegrator(IntegrateSys):
         fyt = sys.frhs(t, yt)
         # rust bindings work with np arrays only
         J = np.asarray(sys.fjac(t, yt).dense())
-        # deriv of rhs wrt time
+        # deriv of rhs wrt time at current time
         fytt = jax.grad(sys.rhs, argnums=0)(t, yt)
         # check for nonautonomous system
         if jnp.linalg.norm(fytt, ord="inf") > 1e-6:
