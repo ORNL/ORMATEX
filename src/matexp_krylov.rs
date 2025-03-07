@@ -4,23 +4,27 @@ use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use crate::arnoldi::arnoldi_lop;
 use crate::matexp_pade;
+use crate::matexp_pade::DensePhikvEvaluator;
+
 
 /// Krylov methods to compute Sparse Matrix Exponential
 /// and Phi functions
-#[derive(Debug)]
 pub struct KrylovExpm {
     /// max krylov dim size
     krylov_dim: usize,
     /// incomplete ortho depth
     iom: usize,
+    /// dense matrix exponential and phi function evaluator
+    expmv: Box<dyn DensePhikvEvaluator>,
 }
 
 impl KrylovExpm {
-    pub fn new(krylov_dim: usize, iom_in: Option<usize>) -> Self {
+    pub fn new(expmv: Box<dyn DensePhikvEvaluator>, krylov_dim: usize, iom_in: Option<usize>) -> Self {
         assert!(krylov_dim > 0);
         Self {
             krylov_dim,
             iom: iom_in.unwrap_or(2),
+            expmv
         }
     }
 
@@ -29,11 +33,12 @@ impl KrylovExpm {
         -> Mat<f64>
     {
         let (q, h, _b) = arnoldi_lop(a_lo, dt, v0.as_ref(), self.krylov_dim, self.iom);
-        let matexp = matexp_pade::matexp(h.as_ref(), 1.0);
         let beta = v0.norm_l2();
-        let mut unit_vec = faer::Mat::zeros(matexp.nrows(), 1);
+        let mut unit_vec = faer::Mat::zeros(v0.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
-        return faer::Scale(beta) * (q.as_ref() * matexp.as_ref() * unit_vec)
+        // let matexp = matexp_pade::matexp(h.as_ref(), 1.0);
+        // return faer::Scale(beta) * (q.as_ref() * matexp.as_ref() * unit_vec)
+        return faer::Scale(beta) * (q.as_ref() * self.expmv.phik_apply(h.as_ref(), 1.0, unit_vec.as_ref(), 0))
     }
 
     /// Computes phi_k(A*dt) * v0 where A is a LinOp
@@ -42,11 +47,12 @@ impl KrylovExpm {
         -> Mat<f64>
     {
         let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim, self.iom);
-        let phi_k = matexp_pade::phi_ext((faer::Scale(dt) * h.as_ref()).as_ref(), k);
         let beta = v0.norm_l2();
-        let mut unit_vec = faer::Mat::zeros(phi_k.nrows(), 1);
+        let mut unit_vec = faer::Mat::zeros(v0.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
-        return faer::Scale(beta) * (q.as_ref() * phi_k.as_ref() * unit_vec)
+        // let phi_k = matexp_pade::phi_ext((faer::Scale(dt) * h.as_ref()).as_ref(), k);
+        // return faer::Scale(beta) * (q.as_ref() * phi_k.as_ref() * unit_vec)
+        return faer::Scale(beta) * (q.as_ref() * self.expmv.phik_apply(h.as_ref(), dt, unit_vec.as_ref(), k))
     }
 
     /// Computes tripplet (phi_k(A*dt)*v0, phi_k(A*dt*2)*v0, phi_k(A*dt*3)*v0)

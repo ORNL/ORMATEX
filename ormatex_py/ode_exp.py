@@ -3,12 +3,18 @@ Exponential time integration methods
 """
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from functools import partial
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all
+try:
+    import ormatex_py.ormatex as ormatex_rs
+    HAS_ORMATEX_RUST = True
+except ImportError:
+    HAS_ORMATEX_RUST = False
 
 ##TODO:
 # - RB methods are only second and third order for f(t,y) = f(y) non-autonomous systems
@@ -124,7 +130,6 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2_jit(t, yt, dt, sys):
         print("jit-compiling exprb2_dense kernel")
         fyt = sys.frhs(t, yt)
-
         J = sys.fjac(t, yt).dense()
         phi1J = f_phi_k_sq_all(dt*J, 1)[1]
         #phi1J = f_phi_k_ext(dt*J, 1)
@@ -146,6 +151,33 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    def _cram_rs(t, yt, dt, sys):
+        phik_v_evaluator = ormatex_rs.DensePhikvEvalRs("cram", 16)
+        # phik_v_evaluator = ormatex_rs.DensePhikvEvalRs("pade", 16)
+        fyt = sys.frhs(t, yt)
+        # rust bindings work with np arrays only
+        J = np.asarray(sys.fjac(t, yt).dense())
+        # deriv of rhs wrt time
+        fytt = jax.grad(sys.rhs, argnums=0)(t, yt)
+        # check for nonautonomous system
+        if jnp.linalg.norm(fytt, ord="inf") > 1e-6:
+            phi2_fytt = phik_v_evaluator.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2)
+        else:
+            phi2_fytt = 0.
+        phi1J_fyt = phik_v_evaluator.eval(J, dt, np.asarray(fyt).reshape(-1,1), 1)
+        y_new = yt + dt * phi1J_fyt + (dt**2.0)*phi2_fytt
+        y_err = -1.
+        return y_new, y_err
+
+    def _step_exprb2_dense_cram(self, dt: float) -> StepResult:
+        """
+        Computes the solution update by:
+        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t)
+        """
+        t = self.t
+        yt = self.y_hist[0]
+        y_new, y_err = ExpRBIntegrator._cram_rs(t, yt, dt, self.sys)
+        return StepResult(t+dt, dt, y_new, y_err)
 
     def step(self, dt: float) -> StepResult:
         if self.method == "exprb2":
@@ -161,6 +193,8 @@ class ExpRBIntegrator(IntegrateSys):
                 return self._step_epi2(dt)
         elif self.method == "exprb2_dense":
             return self._step_exprb2_dense(dt)
+        elif self.method == "exprb2_dense_cram" and HAS_ORMATEX_RUST:
+            return self._step_exprb2_dense_cram(dt)
         else:
             raise NotImplementedError
 
