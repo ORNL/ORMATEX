@@ -80,8 +80,12 @@ where
         self
     }
 
-    /// Computes remainder R(yr) = frhs(yr) - frhs(y0) - J_y0*(yr-y0)
-    fn remf(&self, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>) -> Mat<f64> {
+    /// Computes remainder R(yr) = frhs(yr) - frhs(y0) - J_y0*(yr-y0) - v*t
+    /// where if v=d(Frhs)/dt is nonzero for nonautonomous systems
+    fn remf(&self, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>, v: Option<MatRef<f64>>)
+        -> Mat<f64>
+    {
+        let t = self.t_hist[0];
         let y0 = self.y_hist[0].as_ref();
         let frhs_yr = self.sys.frhs(tr, yr);
 
@@ -93,7 +97,9 @@ where
             MemStack::new(&mut MemBuffer::new(StackReq::empty()))
         );
 
-        frhs_yr - frhs_y0 - jac_yd
+        let dt = tr - t;
+        let vn_t = Scale(dt) * v.unwrap_or(Mat::zeros(yr.nrows(), yr.ncols()).as_ref());
+        frhs_yr - frhs_y0 - jac_yd - vn_t
     }
 
     /// Estimates the time drivative of frhs by finite difference
@@ -105,16 +111,16 @@ where
     }
 
     /// Correction for nonautonomous case
-    fn fphi2_v(&self, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> Mat<f64> {
-        let mut phi2_v = fy0.as_ref() * Scale(0.0);
+    fn fphi2_v(&self, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> (Mat<f64>, Mat<f64>) {
+        let mut phi2_v = Mat::zeros(fy0.nrows(), fy0.ncols());
         if self.tol_fdt < 0. {
-            return phi2_v
+            return (phi2_v,  Mat::zeros(fy0.nrows(), fy0.ncols()))
         }
         let v = self.frhs_fdt(fy0.as_ref(), 1e-8);
         if v.norm_max() > self.tol_fdt {
             phi2_v = Scale(dt.powi(2)) * self.expm.apply_phi_linop(sys_jac_lop, dt, v.as_ref(), 2);
         }
-        phi2_v
+        (phi2_v, v)
     }
 
     /// EPI2
@@ -130,7 +136,7 @@ where
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
 
         // correction for nonautonomous case
-        let phi2_v = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+        let (phi2_v, _) = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
 
         let y_new = y0.as_ref() + phi2_v +
             self.expm.apply_phi_linop(
@@ -156,16 +162,16 @@ where
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
 
         // correction for nonautonomous case
-        let phi2_v = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+        let (phi2_v, v) = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
 
         let t_2 = t + dt;
-        let y_2 = y0.as_ref() + phi2_v +
+        let y_2 = y0.as_ref() + phi2_v.as_ref() +
             self.expm.apply_phi_linop(
                 sys_jac_lop.as_ref(),
                 dt, fy0_dt.as_ref(), 1);
         // remainder fn
         let r_2 = self.remf(
-            t_2, y_2.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref());
+            t_2, y_2.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
 
         // compute final update
         let y_new = y_2.as_ref() + 2.*dt*self.expm.apply_phi_linop(
@@ -196,7 +202,8 @@ where
         let y1 = y0.as_ref() +
             self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, fy0_dt.as_ref(), 1);
 
-        let rn_dt = self.remf(tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref()) * faer::Scale(dt);
+        let rn_dt = faer::Scale(dt) * self.remf(
+            tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), None);
         let y_new = y1.as_ref() + faer::Scale(2.0/3.0)*
             self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, rn_dt.as_ref(), 2);
 

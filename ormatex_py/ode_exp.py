@@ -45,14 +45,18 @@ class ExpRBIntegrator(IntegrateSys):
         super().reset_ic(t0, y0)
 
     def _remf(self, tr: float, yr: jax.Array,
-              frhs_yt: jax.Array, sys_jac_lop_yt: LinOp):
+              frhs_yt: jax.Array, sys_jac_lop_yt: LinOp, v=0.0):
         """
-        Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt)
+        Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt) - v*(tr-t0)
+        where
+        v = d(frhs)/dt
         """
+        t = self.t_hist[0]
         yt = self.y_hist[0]
+        dt = tr - t
         frhs_yr = self.sys.frhs(tr, yr)
         jac_yd = sys_jac_lop_yt(yr - yt)
-        return frhs_yr - frhs_yt - jac_yd
+        return frhs_yr - frhs_yt - jac_yd - v*dt
 
     def _phi2v_nonauto(self, sys_jac_lop, dt):
         r"""
@@ -74,8 +78,8 @@ class ExpRBIntegrator(IntegrateSys):
             fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
             # check for nonautonomous system
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-                return (dt**2.)*phi_linop(sys_jac_lop, dt, fytt, 2, self.max_krylov_dim, self.iom)
-        return 0.
+                return (dt**2.)*phi_linop(sys_jac_lop, dt, fytt, 2, self.max_krylov_dim, self.iom), fytt
+        return 0., 0.
 
     def _step_exprb2(self, dt: float) -> StepResult:
         """
@@ -89,9 +93,10 @@ class ExpRBIntegrator(IntegrateSys):
         sys_jac_lop = self.sys.fjac(t, yt)
         fyt = self.sys.frhs(t, yt)
         fyt_dt = fyt * dt
+        phi2_v, _0 = self._phi2v_nonauto(sys_jac_lop, dt)
         y_new = yt \
             + phi_linop(sys_jac_lop, dt, fyt_dt, 1, self.max_krylov_dim, self.iom) \
-            + self._phi2v_nonauto(sys_jac_lop, dt)
+            + phi2_v
         # no error est. avail
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
@@ -141,12 +146,15 @@ class ExpRBIntegrator(IntegrateSys):
         sys_jac_lop = self.sys.fjac(t, yt)
         fyt = self.sys.frhs(t, yt)
 
+        # phi2_v is nonzero for nonautonomous systems
+        phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt)
+
         # 2nd stage
         t_2 = t + dt
         y_2 = yt \
             + dt*phi_linop(sys_jac_lop, dt, fyt, 1, self.max_krylov_dim, self.iom) \
-            + self._phi2v_nonauto(sys_jac_lop, dt)
-        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop)
+            + phi2_v
+        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=v)
 
         # compute final update
         y_new = y_2 + 2.*dt*phi_linop(sys_jac_lop, dt, r_2, 3,
@@ -276,14 +284,18 @@ class ExpSplitIntegrator(IntegrateSys):
         self._cached_dt = None
 
     def _remf(self, tr: float, yr: jax.Array,
-              frhs_yt: jax.Array, sys_lop: LinOp):
+              frhs_yt: jax.Array, sys_lop: LinOp, v=0.0):
         """
-        Computes remainder R(yr) = frhs(yr) - frhs(yt) - L*(yr-y0)
+        Computes remainder R(yr) = frhs(yr) - frhs(yt) - L*(yr-y0) - v*(tr-t0)
+        where
+        v = d(frhs)/dt
         """
+        t = self.t_hist[0]
         yt = self.y_hist[0]
+        dt = tr - t
         frhs_yr = self.sys.frhs(tr, yr)
         L_yd = sys_lop(yr - yt)
-        return frhs_yr - frhs_yt - L_yd
+        return frhs_yr - frhs_yt - L_yd - v*dt
 
     def _step_exp1(self, dt: float) -> StepResult:
         """
