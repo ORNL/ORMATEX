@@ -63,7 +63,7 @@ where
             method,
             sys,
             t: t0,
-            tol_fdt: 1.0e-6,
+            tol_fdt: -1.0,
             y_hist,
             t_hist,
             phantom: Default::default()
@@ -106,10 +106,13 @@ where
 
     /// Correction for nonautonomous case
     fn fphi2_v(&self, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> Mat<f64> {
+        let mut phi2_v = fy0.as_ref() * Scale(0.0);
+        if self.tol_fdt < 0. {
+            return phi2_v
+        }
         let v = self.frhs_fdt(fy0.as_ref(), 1e-8);
-        let mut phi2_v = v.as_ref() * Scale(0.0);
         if v.norm_max() > self.tol_fdt {
-            phi2_v = Scale(dt.powf(2.0)) * self.expm.apply_phi_linop(sys_jac_lop, dt, v.as_ref(), 2);
+            phi2_v = Scale(dt.powi(2)) * self.expm.apply_phi_linop(sys_jac_lop, dt, v.as_ref(), 2);
         }
         phi2_v
     }

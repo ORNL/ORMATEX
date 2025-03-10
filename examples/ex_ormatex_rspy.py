@@ -38,7 +38,7 @@ class LotkaVolterra(OdeSys):
         res = jnp.asarray([prey_t, pred_t])
         return jax.device_get(res).flatten()
 
-def run_model():
+def run_model(method="exprb2_rs", tol_fdt=1.0e-6):
     # Wrap the system for rust compatibility
     lv_sys = PySysWrapped(OdeSysNp(LotkaVolterra()))
     # Step the system forward using rust-based integrator
@@ -46,14 +46,21 @@ def run_model():
     y0 = np.array([[0.1, 0.2],]).T
     dt = 0.05
     nsteps = 1000
-    res = integrate(lv_sys, y0, t0, dt, nsteps, method="exprb2_rs", tol_fdt=1.0e-6)
-    # y0 = jnp.array([0.1, 0.2])
-    # res = integrate(LotkaVolterra(), y0, t0, dt, nsteps, method="implicit_esdirk3", tol_fdt=1.0e-6)
+    if "_rs" in method:
+        res = integrate(lv_sys, y0, t0, dt, nsteps, method=method, tol_fdt=tol_fdt)
+    else:
+        y0 = jnp.array(y0.flatten())
+        res = integrate(LotkaVolterra(), y0, t0, dt, nsteps, method=method, tol_fdt=tol_fdt)
     return res.t_res, res.y_res
 
 if __name__ == "__main__":
     import matplotlib.pylab as plt
-    t_out, y_out = run_model()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-method", help="Integration method", type=str, default="exprb2_rs")
+    parser.add_argument("-tol_fdt", help="Nonautonomous system check threshold", type=float, default=1.0e-6)
+    args = parser.parse_args()
+    t_out, y_out = run_model(args.method, args.tol_fdt)
     # Visualize results
     print(y_out)
     plt.figure()
@@ -61,6 +68,7 @@ if __name__ == "__main__":
     plt.plot(t_out, y_out[:, 1], label='pred')
     plt.plot(t_out, 0.4*(np.sin(t_out*0.2)+1.0), label='predator hunters')
     plt.grid(ls='--')
+    plt.title("Method: %s" % (args.method))
     plt.legend()
     plt.savefig("ormatex_rspy_lv.png")
     plt.close()

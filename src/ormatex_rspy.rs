@@ -244,7 +244,7 @@ fn integrate_wrapper_rs<'py>(
     let krylov_dim: usize = kd.as_ref().get_item("max_krylov_dim").and_then(|item| item.extract::<usize>()).unwrap_or(100);
     let iom: usize = kd.as_ref().get_item("iom").and_then(|item| item.extract::<usize>()).unwrap_or(2);
     let tol: f64 = kd.as_ref().get_item("tol").and_then(|item| item.extract::<f64>()).unwrap_or(1e-8);
-    let tol_fdt: f64 = kd.as_ref().get_item("tol_fdt").and_then(|item| item.extract::<f64>()).unwrap_or(1e-6);
+    let tol_fdt: f64 = kd.as_ref().get_item("tol_fdt").and_then(|item| item.extract::<f64>()).unwrap_or(-1.0);
     let osteps: usize = kd.as_ref().get_item("osteps").and_then(|item| item.extract::<usize>()).unwrap_or(1);
 
     let y = y0.as_array();

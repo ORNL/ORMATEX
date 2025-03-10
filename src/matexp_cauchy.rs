@@ -162,7 +162,7 @@ impl CauchyExpm {
         // loop over poles
         // let mut out_v: Mat<c64> = Mat::zeros(dim, 1);
         // for k in 0..s {
-        //     let zk = self.theta[(k, 0)].powu(l as u32);
+        //     let zk = self.theta[(k, 0)].powi(l as i32);
         //     let tmp_a = zk * (a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref());
         //     let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
         //     let _lu_tmp_a = tmp_a.partial_piv_lu();
@@ -171,7 +171,7 @@ impl CauchyExpm {
         // }
         // same as above in parallel
         let out_v: Mat<c64> = (0..s).into_par_iter().map(|k| {
-                let zk = self.theta[(k, 0)].powu(l as u32);
+                let zk = self.theta[(k, 0)].powi(l as i32);
                 let tmp_a = Scale(zk) * (a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref());
                 let _lu_tmp_a = tmp_a.partial_piv_lu();
                 let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
@@ -248,7 +248,7 @@ pub fn gen_parabolic_expm(order: usize) -> CauchyExpm
     for i in 0..theta.nrows() {
         let phi = order_im * (
             c64::new(0.1309, 0.)
-            - c64::new(0.1194, 0.)*theta[(i, 0)].powu(2)
+            - c64::new(0.1194, 0.)*theta[(i, 0)].powi(2)
             + c64::new(0.25, 0.)*theta[(i, 0)]*im1);
         let phi_prime = order_im * (
             c64::new(-2.0*0.1194, 0.)*theta[(i, 0)]
