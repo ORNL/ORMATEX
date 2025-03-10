@@ -1,6 +1,8 @@
 /// Exponential prop-iterative RK class of exponential integrators
 ///
 use faer::prelude::*;
+use num_traits::real::Real;
+use num_traits::Float;
 use crate::matexp_krylov::KrylovExpm;
 use crate::ode_sys::*;
 use faer::matrix_free::LinOp;
@@ -28,6 +30,9 @@ where
 
     /// Current time
     t: f64,
+
+    /// tol used to check max derivative for nonautonomous system
+    tol_fdt: f64,
 
     /// Storage for past system solution states
     y_hist: VecDeque<Mat<f64>>,
@@ -58,10 +63,21 @@ where
             method,
             sys,
             t: t0,
+            tol_fdt: 1.0e-6,
             y_hist,
             t_hist,
             phantom: Default::default()
         }
+    }
+
+    /// builder fn to set optional solver parameters
+    pub fn with_opt(mut self, option_str: String, option_val: f64) -> Self
+    {
+        match option_str.as_str() {
+            "tol_fdt" => { self.tol_fdt = option_val },
+            _ => panic!("bad option")
+        };
+        self
     }
 
     /// Computes remainder R(yr) = frhs(yr) - frhs(y0) - J_y0*(yr-y0)
@@ -80,17 +96,40 @@ where
         frhs_yr - frhs_y0 - jac_yd
     }
 
+    /// Estimates the time drivative of frhs by finite difference
+    fn frhs_fdt(&self, fy0: MatRef<f64>, del_t: f64) -> Mat<f64> {
+        let t = self.t;
+        let y0 = self.y_hist[0].as_ref();
+        let fy1 = self.sys.frhs(t+del_t, y0);
+        (fy1 - fy0) / Scale(del_t)
+    }
+
+    /// Correction for nonautonomous case
+    fn fphi2_v(&self, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> Mat<f64> {
+        let v = self.frhs_fdt(fy0.as_ref(), 1e-8);
+        let mut phi2_v = v.as_ref() * Scale(0.0);
+        if v.norm_max() > self.tol_fdt {
+            phi2_v = Scale(dt.powf(2.0)) * self.expm.apply_phi_linop(sys_jac_lop, dt, v.as_ref(), 2);
+        }
+        phi2_v
+    }
+
     /// EPI2
     fn step_order_2(&self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
 
+
         // setup jacobian linear operator evaluated at y0
         let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
         let fy0 = self.sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
-        let y_new = y0.as_ref() +
+
+        // correction for nonautonomous case
+        let phi2_v = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+
+        let y_new = y0.as_ref() + phi2_v +
             self.expm.apply_phi_linop(
                 sys_jac_lop.as_ref(),
                 dt, fy0_dt.as_ref(), 1);
@@ -112,8 +151,12 @@ where
         let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
         let fy0 = self.sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
+
+        // correction for nonautonomous case
+        let phi2_v = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+
         let t_2 = t + dt;
-        let y_2 = y0.as_ref() +
+        let y_2 = y0.as_ref() + phi2_v +
             self.expm.apply_phi_linop(
                 sys_jac_lop.as_ref(),
                 dt, fy0_dt.as_ref(), 1);
