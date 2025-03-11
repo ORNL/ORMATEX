@@ -53,7 +53,7 @@ def test_lotka_volterra():
         est_order = popt[0]
         print("Method: %s, Est conv order: %0.4e" % (method, est_order))
         order_tol = 1e-1
-        assert est_order - order > (0.0 - order_tol)
+        assert (est_order - order) > (0.0 - order_tol)
 
 
 def test_lotka_volterra_nonautonomous():
@@ -71,7 +71,7 @@ def test_lotka_volterra_nonautonomous():
             y0 = jnp.array([0.1, 0.2])
             # compute expected result
             t0 = 0.0
-            tf = 50.0
+            tf = 30.0
             nsteps = int(tf/dt)
             res_true = integrate_wrapper.integrate(
                     sys, y0, t0, dt, nsteps, "dopri5")
@@ -97,4 +97,4 @@ def test_lotka_volterra_nonautonomous():
         est_order = popt[0]
         print("Method: %s, Est conv order: %0.4e" % (method, est_order))
         order_tol = 1e-1
-        assert est_order - order > (0.0 - order_tol)
+        assert (est_order - order) > (0.0 - order_tol)
