@@ -75,6 +75,8 @@ class ExpRBIntegrator(IntegrateSys):
             t = self.t
             yt = self.y_hist[0]
             # deriv of rhs wrt time at current time
+            # TODO: reduce redundant computation, jacfwd re-evaluates frhs internally
+            # see: https://docs.jax.dev/en/latest/_autosummary/jax.linearize.html
             fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
             # check for nonautonomous system
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
