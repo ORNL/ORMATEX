@@ -16,6 +16,7 @@
 
 use numpy::{IntoPyArray, PyArray1, PyArray2,
             PyReadonlyArray1, PyReadonlyArray2};
+use numpy::ndarray::Array2;
 use pyo3::prelude::*;
 use pyo3::{pymethods, pymodule, types::PyModule, PyResult, Python};
 use pyo3::types::{PyList, PyDict};
@@ -39,6 +40,8 @@ use crate::ode_bdf;
 use crate::ode_rk;
 use crate::ode_epirk;
 use crate::matexp_krylov;
+use crate::matexp_pade::{PadeExpm, DensePhikvEvaluator};
+use crate::matexp_cauchy;
 
 /// Wrapper around python PySys object
 #[pyclass]
@@ -192,6 +195,7 @@ fn select_solver<'a>(
     t0: f64,
     y0_mat: MatRef<'_, f64>,
     method: String,
+    expmv_method: String,
     krylov_dim: usize,
     iom: usize)
     -> Rc < RefCell<dyn IntegrateSys<'a, TimeType=f64, SysStateType=Mat<f64>> + 'a> >
@@ -205,8 +209,14 @@ fn select_solver<'a>(
     else if method.as_str() == "cn" {
         return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 3, sys)))
     }
-    // epi integrator family is default
-    let matexp_m = matexp_krylov::KrylovExpm::new(krylov_dim, Some(iom));
+    // exp integrator family is default
+    let expmv: Box<dyn DensePhikvEvaluator> = match expmv_method.as_str() {
+        "cram" => { Box::new(matexp_cauchy::gen_cram_expm(16)) },
+        "parabolic" => { Box::new(matexp_cauchy::gen_parabolic_expm(24)) },
+        // pade is default
+        _ => { Box::new(PadeExpm::new(12)) },
+    };
+    let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     Rc::new( RefCell::new(ode_epirk::EpirkIntegrator::new(
         t0, y0_mat, method, sys, matexp_m)))
 }
@@ -228,6 +238,7 @@ fn integrate_wrapper_rs<'py>(
     // process kwargs
     let kd = kwds.unwrap_or(PyDict::new(py));
     let method: String = kd.as_ref().get_item("method").and_then(|item| item.extract::<String>()).unwrap_or(String::from("epi2"));
+    let expmv_method: String = kd.as_ref().get_item("expmv_method").and_then(|item| item.extract::<String>()).unwrap_or(String::from("pade"));
     let krylov_dim: usize = kd.as_ref().get_item("max_krylov_dim").and_then(|item| item.extract::<usize>()).unwrap_or(100);
     let iom: usize = kd.as_ref().get_item("iom").and_then(|item| item.extract::<usize>()).unwrap_or(2);
     let tol: f64 = kd.as_ref().get_item("tol").and_then(|item| item.extract::<f64>()).unwrap_or(1e-8);
@@ -238,7 +249,7 @@ fn integrate_wrapper_rs<'py>(
 
     // setup the integrator
     let solver = select_solver(
-        sys, t0, y0_mat, method, krylov_dim, iom);
+        sys, t0, y0_mat, method, expmv_method, krylov_dim, iom);
 
     // storage for results
     let mut y_out: Vec<Bound<PyArray2<f64>>> = Vec::with_capacity(nsteps);
@@ -310,12 +321,54 @@ fn arnoldi_rs<'py>(
     )
 }
 
+
+/// Python interface for computing dense phi_k(A*dt)*v0 products
+#[pyclass(unsendable)]
+pub struct DensePhikvEvalRs {
+    method: String,
+    order: usize,
+    evaluator: Box<dyn DensePhikvEvaluator>
+}
+
+#[pymethods]
+impl DensePhikvEvalRs {
+    #[new]
+    pub fn new(method: String, order: usize) -> Self {
+        let evaluator: Box<dyn DensePhikvEvaluator> = match method.as_str() {
+            "cram" => { Box::new(matexp_cauchy::gen_cram_expm(order)) },
+            "parabolic" => { Box::new(matexp_cauchy::gen_parabolic_expm(order)) },
+            // pade is default
+            _ => { Box::new(PadeExpm::new(order)) },
+        };
+        Self {
+            method,
+            order,
+            evaluator
+        }
+    }
+
+    pub fn eval(&self, py: Python<'_>, a_np: PyReadonlyArray2<f64>, dt: f64, v0_np: PyReadonlyArray2<f64>, k: usize)
+        -> Py<PyArray2<f64>>
+    {
+        let a_arr = a_np.as_array();
+        let a = a_arr.view().into_faer();
+        let v0_arr = v0_np.as_array();
+        let v0 = v0_arr.view().into_faer();
+        let phikv = self.evaluator.phik_apply(a, dt, v0, k);
+        let ndarray_phikv = phikv.as_ref().into_ndarray().to_owned();
+        ndarray_phikv.into_pyarray(py).to_owned().into()
+    }
+}
+
 #[pymodule]
 #[pyo3(name="ormatex")]
 fn ormatex<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()>
 {
     // Adds PySys wrapper
     m.add_class::<PySysWrapped>()?;
+
+    // Adds dense phi_k(A*dt)*v0 evaluator
+    m.add_class::<DensePhikvEvalRs>()?;
 
     // Adds rust ormatex integrate method
     m.add_function(wrap_pyfunction!(integrate_wrapper_rs, m)?)?;

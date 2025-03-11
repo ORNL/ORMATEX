@@ -2,9 +2,11 @@
 use faer::prelude::*;
 use rayon::prelude::*;
 use crate::mat_utils::{real_mat, complex_mat_scale, mat_pow};
+use crate::matexp_pade::DensePhikvEvaluator;
 use faer::linalg::solvers::{Solve, DenseSolveCore};
 
 
+#[derive(Debug)]
 pub struct CauchyExpm
 {
     /// poles
@@ -185,8 +187,16 @@ impl CauchyExpm {
     }
 }
 
+impl DensePhikvEvaluator for CauchyExpm {
+    fn phik_apply(&self, a: MatRef<f64>, dt: f64, v0: MatRef<f64>, k: usize) -> Mat<f64> {
+        self.phik_dense_apply_cauchy(a, dt, v0, k)
+    }
+}
+
 
 /// Generate expm and phi evaluator
+/// Ref:  Pusa, M. Rational Approximations to the Matrix Exponential in Burnup Calculations.
+/// Nuclear Science and Engineering, 169(2), 155–167. https://doi.org/10.13182/NSE10-81
 pub fn gen_cram_expm(order: usize) -> CauchyExpm
 {
     let mut theta: Mat<c64> = Mat::zeros(order/2, 1);
@@ -256,7 +266,7 @@ pub fn gen_parabolic_expm(order: usize) -> CauchyExpm
 
 #[cfg(test)]
 mod test_matexp_cauchy {
-    use crate::matexp_pade::{matexp, phi_ext, phi};
+    use crate::matexp_pade::{matexp, phi_ext};
     use crate::mat_utils::mat_mat_approx_eq;
 
     // bring everything from above (parent) module into scope

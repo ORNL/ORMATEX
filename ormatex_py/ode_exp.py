@@ -3,12 +3,18 @@ Exponential time integration methods
 """
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from functools import partial
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all
+try:
+    import ormatex_py.ormatex as ormatex_rs
+    HAS_ORMATEX_RUST = True
+except ImportError:
+    HAS_ORMATEX_RUST = False
 
 ##TODO:
 # - RB methods are only second and third order for f(t,y) = f(y) non-autonomous systems
@@ -17,12 +23,15 @@ from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all
 class ExpRBIntegrator(IntegrateSys):
 
     _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3,
-                      "exprb2_dense": 2}
+                      "exprb2_dense": 2, "exprb2_dense_cauchy": 2, "dense_cauchy": 1}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
         self.method = method
         if not self.method in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
+        if "dense_cauchy" in method and HAS_ORMATEX_RUST:
+            self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
+                    kwargs.get("expmv_method", "cram"), kwargs.get("expmv_order", 16))
         order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, **kwargs)
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
@@ -124,7 +133,6 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2_jit(t, yt, dt, sys):
         print("jit-compiling exprb2_dense kernel")
         fyt = sys.frhs(t, yt)
-
         J = sys.fjac(t, yt).dense()
         phi1J = f_phi_k_sq_all(dt*J, 1)[1]
         #phi1J = f_phi_k_ext(dt*J, 1)
@@ -134,7 +142,7 @@ class ExpRBIntegrator(IntegrateSys):
         return y_new, y_err
 
     def _step_exprb2_dense(self, dt: float) -> StepResult:
-        """
+        r"""
         Exponential Euler,
         computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t)
@@ -146,6 +154,46 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    def _step_exprb2_dense_cauchy(self, dt: float) -> StepResult:
+        r"""
+        Computes the solution update by:
+        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t)
+        where L is a dense matrix and computing varphi
+        using cauchy contour integral approach with quadrature rule
+        """
+        t = self.t
+        yt = self.y_hist[0]
+        # y_new, y_err = ExpRBIntegrator._cram_rs(t, yt, dt, self.sys)
+        fyt = self.sys.frhs(t, yt)
+        # rust bindings work with np arrays only
+        J = np.asarray(self.sys.fjac(t, yt).dense())
+        # deriv of rhs wrt time at current time
+        fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
+        # check for nonautonomous system
+        if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > 1e-6:
+            phi2_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2).flatten()
+        else:
+            phi2_fytt = 0.
+        phi1J_fyt = self.phikv_dense_rs.eval(J, dt, np.asarray(fyt).reshape(-1,1), 1).flatten()
+        y_new = yt + dt * jnp.asarray(phi1J_fyt) + (dt**2.0)*jnp.asarray(phi2_fytt)
+        y_err = -1.
+        return StepResult(t+dt, dt, y_new, y_err)
+
+    def _step_dense_cauchy(self, dt: float) -> StepResult:
+        r"""
+        Computes the solution update by:
+        y_{t+1} = \varphi_0(dt*L)*y0
+        where L is a dense matrix and computing varphi
+        using cauchy contour integral approach with quadrature rule
+        NOTE: Only useful for pure linear systems
+        """
+        t = self.t
+        yt = self.y_hist[0]
+        J = np.asarray(self.sys.fjac(t, yt).dense())
+        phi0J_yt = self.phikv_dense_rs.eval(J, dt, np.asarray(yt).reshape(-1,1), 0)
+        y_new = jnp.asarray(phi0J_yt.flatten())
+        y_err = -1.
+        return StepResult(t+dt, dt, y_new, y_err)
 
     def step(self, dt: float) -> StepResult:
         if self.method == "exprb2":
@@ -161,6 +209,10 @@ class ExpRBIntegrator(IntegrateSys):
                 return self._step_epi2(dt)
         elif self.method == "exprb2_dense":
             return self._step_exprb2_dense(dt)
+        elif self.method == "exprb2_dense_cauchy" and HAS_ORMATEX_RUST:
+            return self._step_exprb2_dense_cauchy(dt)
+        elif self.method == "dense_cauchy" and HAS_ORMATEX_RUST:
+            return self._step_dense_cauchy(dt)
         else:
             raise NotImplementedError
 
