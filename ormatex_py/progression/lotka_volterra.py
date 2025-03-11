@@ -60,6 +60,30 @@ class LotkaVolterra(OdeSplitSys):
             ])
         return MatrixLinOp(lop)
 
+@jax.jit
+def f_pred_hunt(t):
+    return 0.4*(jnp.sin(t*0.2)+1.0)
+
+class LotkaVolterraNonauto(OdeSys):
+    alpha: float
+    beta: float
+    delta: float
+    gamma: float
+
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.alpha = kwargs.get("alpha", 1.0)
+        self.beta = kwargs.get("beta", 1.0)
+        self.delta = kwargs.get("delta", 1.0)
+        self.gamma = kwargs.get("gamma", 1.0)
+
+    @jax.jit
+    def _frhs(self, t, x, **kwargs):
+        pred_hunt = f_pred_hunt(t)
+        prey_t = self.alpha * x[0] - self.beta * x[0] * x[1]
+        pred_t = self.delta * x[0] * x[1] - self.gamma * x[1] - pred_hunt*x[1]
+        return jnp.array([prey_t, pred_t])
+
 
 def main(method='epi3', do_plot=True):
     # setup lotka voltera system

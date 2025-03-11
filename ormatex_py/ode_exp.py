@@ -34,21 +34,54 @@ class ExpRBIntegrator(IntegrateSys):
                     kwargs.get("expmv_method", "cram"), kwargs.get("expmv_order", 16))
         order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, **kwargs)
+        # maximum krylov subspace dimension
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
+        # incomplete orthogonalization depth for mgs
         self.iom = kwargs.get("iom", 100)
+        # tolerence to detect nonautonomous systems, a negative value disables this check
+        self.tol_fdt = kwargs.get("tol_fdt", -1.)
 
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
 
     def _remf(self, tr: float, yr: jax.Array,
-              frhs_yt: jax.Array, sys_jac_lop_yt: LinOp):
+              frhs_yt: jax.Array, sys_jac_lop_yt: LinOp, v=0.0):
         """
-        Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt)
+        Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt) - v*(tr-t0)
+        where
+        v = d(frhs)/dt
         """
+        t = self.t_hist[0]
         yt = self.y_hist[0]
+        dt = tr - t
         frhs_yr = self.sys.frhs(tr, yr)
         jac_yd = sys_jac_lop_yt(yr - yt)
-        return frhs_yr - frhs_yt - jac_yd
+        return frhs_yr - frhs_yt - jac_yd - v*dt
+
+    def _phi2v_nonauto(self, sys_jac_lop, dt):
+        r"""
+        For rosenbrock exp integrators, this method computes
+        the correction term for nonautonomous systems.
+        :math:`\Delta t^2 \varphi_2(A \Delta t)v`
+        with
+        :math:`v=\frac{d \mathrm{frhs}}{dt}`
+        Ref:
+            Hochbruck, Marlis, Alexander Ostermann, and Julia Schweitzer.
+            Exponential Rosenbrock-type methods.
+            SIAM Journal on Numerical Analysis 47.1 (2009): 786-803.
+        """
+        # only compute rhs time derivative if requested
+        if self.tol_fdt >= 0:
+            t = self.t
+            yt = self.y_hist[0]
+            # deriv of rhs wrt time at current time
+            # TODO: reduce redundant computation, jacfwd re-evaluates frhs internally
+            # see: https://docs.jax.dev/en/latest/_autosummary/jax.linearize.html
+            fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
+            # check for nonautonomous system
+            if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
+                return (dt**2.)*phi_linop(sys_jac_lop, dt, fytt, 2, self.max_krylov_dim, self.iom), fytt
+        return 0., 0.
 
     def _step_exprb2(self, dt: float) -> StepResult:
         """
@@ -62,8 +95,10 @@ class ExpRBIntegrator(IntegrateSys):
         sys_jac_lop = self.sys.fjac(t, yt)
         fyt = self.sys.frhs(t, yt)
         fyt_dt = fyt * dt
-        y_new = yt + phi_linop(
-                sys_jac_lop, dt, fyt_dt, 1, self.max_krylov_dim, self.iom)
+        phi2_v, _0 = self._phi2v_nonauto(sys_jac_lop, dt)
+        y_new = yt \
+            + phi_linop(sys_jac_lop, dt, fyt_dt, 1, self.max_krylov_dim, self.iom) \
+            + phi2_v
         # no error est. avail
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
@@ -113,11 +148,15 @@ class ExpRBIntegrator(IntegrateSys):
         sys_jac_lop = self.sys.fjac(t, yt)
         fyt = self.sys.frhs(t, yt)
 
+        # phi2_v is nonzero for nonautonomous systems
+        phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt)
+
         # 2nd stage
         t_2 = t + dt
-        y_2 = yt + dt*phi_linop(sys_jac_lop, dt, fyt, 1,
-                                self.max_krylov_dim, self.iom)
-        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop)
+        y_2 = yt \
+            + dt*phi_linop(sys_jac_lop, dt, fyt, 1, self.max_krylov_dim, self.iom) \
+            + phi2_v
+        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=v)
 
         # compute final update
         y_new = y_2 + 2.*dt*phi_linop(sys_jac_lop, dt, r_2, 3,
@@ -165,17 +204,19 @@ class ExpRBIntegrator(IntegrateSys):
         yt = self.y_hist[0]
         # y_new, y_err = ExpRBIntegrator._cram_rs(t, yt, dt, self.sys)
         fyt = self.sys.frhs(t, yt)
-        # rust bindings work with np arrays only
         J = np.asarray(self.sys.fjac(t, yt).dense())
-        # deriv of rhs wrt time at current time
-        fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
+
         # check for nonautonomous system
-        if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > 1e-6:
-            phi2_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2).flatten()
-        else:
-            phi2_fytt = 0.
+        phi2_fytt = 0.
+        if self.tol_fdt >= 0.:
+            # deriv of rhs wrt time at current time
+            fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
+            if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
+                phi2_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2).flatten()
+                phi2_fytt = (dt**2.0)*jnp.asarray(phi2_fytt)
+
         phi1J_fyt = self.phikv_dense_rs.eval(J, dt, np.asarray(fyt).reshape(-1,1), 1).flatten()
-        y_new = yt + dt * jnp.asarray(phi1J_fyt) + (dt**2.0)*jnp.asarray(phi2_fytt)
+        y_new = yt + dt * jnp.asarray(phi1J_fyt) + phi2_fytt
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
@@ -245,14 +286,18 @@ class ExpSplitIntegrator(IntegrateSys):
         self._cached_dt = None
 
     def _remf(self, tr: float, yr: jax.Array,
-              frhs_yt: jax.Array, sys_lop: LinOp):
+              frhs_yt: jax.Array, sys_lop: LinOp, v=0.0):
         """
-        Computes remainder R(yr) = frhs(yr) - frhs(yt) - L*(yr-y0)
+        Computes remainder R(yr) = frhs(yr) - frhs(yt) - L*(yr-y0) - v*(tr-t0)
+        where
+        v = d(frhs)/dt
         """
+        t = self.t_hist[0]
         yt = self.y_hist[0]
+        dt = tr - t
         frhs_yr = self.sys.frhs(tr, yr)
         L_yd = sys_lop(yr - yt)
-        return frhs_yr - frhs_yt - L_yd
+        return frhs_yr - frhs_yt - L_yd - v*dt
 
     def _step_exp1(self, dt: float) -> StepResult:
         """

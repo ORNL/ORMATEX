@@ -197,7 +197,9 @@ fn select_solver<'a>(
     method: String,
     expmv_method: String,
     krylov_dim: usize,
-    iom: usize)
+    iom: usize,
+    tol_fdt: f64,
+    )
     -> Rc < RefCell<dyn IntegrateSys<'a, TimeType=f64, SysStateType=Mat<f64>> + 'a> >
 {
     if method.as_str() == "bdf1" || method.as_str() == "backeuler" {
@@ -218,7 +220,7 @@ fn select_solver<'a>(
     };
     let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     Rc::new( RefCell::new(ode_epirk::EpirkIntegrator::new(
-        t0, y0_mat, method, sys, matexp_m)))
+        t0, y0_mat, method, sys, matexp_m).with_opt(String::from("tol_fdt"), tol_fdt)))
 }
 
 
@@ -242,6 +244,7 @@ fn integrate_wrapper_rs<'py>(
     let krylov_dim: usize = kd.as_ref().get_item("max_krylov_dim").and_then(|item| item.extract::<usize>()).unwrap_or(100);
     let iom: usize = kd.as_ref().get_item("iom").and_then(|item| item.extract::<usize>()).unwrap_or(2);
     let tol: f64 = kd.as_ref().get_item("tol").and_then(|item| item.extract::<f64>()).unwrap_or(1e-8);
+    let tol_fdt: f64 = kd.as_ref().get_item("tol_fdt").and_then(|item| item.extract::<f64>()).unwrap_or(-1.0);
     let osteps: usize = kd.as_ref().get_item("osteps").and_then(|item| item.extract::<usize>()).unwrap_or(1);
 
     let y = y0.as_array();
@@ -249,7 +252,7 @@ fn integrate_wrapper_rs<'py>(
 
     // setup the integrator
     let solver = select_solver(
-        sys, t0, y0_mat, method, expmv_method, krylov_dim, iom);
+        sys, t0, y0_mat, method, expmv_method, krylov_dim, iom, tol_fdt);
 
     // storage for results
     let mut y_out: Vec<Bound<PyArray2<f64>>> = Vec::with_capacity(nsteps);

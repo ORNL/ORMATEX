@@ -227,7 +227,6 @@ def run_sweep():
     methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense",
                "exprb2_dense", "exprb2_dense_cauchy", "dense_cauchy",
                "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
-    # methods = ["exprb2_dense_cauchy", "dense_cauchy"]
     dts = [1., 2., 5., 10., 25., 50.]
     tf = 100.
     nspecies = 3
