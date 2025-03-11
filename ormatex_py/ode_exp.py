@@ -43,7 +43,7 @@ class ExpRBIntegrator(IntegrateSys):
         # incomplete orthogonalization depth for mgs
         self.iom = kwargs.get("iom", 100)
         # tolerence to detect nonautonomous systems, a negative value disables this check
-        self.tol_fdt = kwargs.get("tol_fdt", -1.)
+        self.tol_fdt = kwargs.get("tol_fdt", 0.)
 
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
