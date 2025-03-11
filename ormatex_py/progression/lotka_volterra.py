@@ -97,7 +97,7 @@ def main(method='epi3', do_plot=True):
     tf = dt * nsteps
     step_ctrl = diffrax.ConstantStepSize()
     solver = diffrax.Dopri5()
-    diffrax_lv_sys = diffrax.ODETerm(LotkaVolterra())
+    diffrax_lv_sys = diffrax.ODETerm(LotkaVolterraNonauto())
     res = diffrax.diffeqsolve(
             diffrax_lv_sys,
             solver,
@@ -110,9 +110,9 @@ def main(method='epi3', do_plot=True):
 
     if "_rs" in method:
         y0 = np.asarray(y0).reshape((-1, 1))
-        lv_sys = PySysWrapped(OdeSysNp(LotkaVolterra()))
+        lv_sys = PySysWrapped(OdeSysNp(LotkaVolterraNonauto()))
     else:
-        lv_sys = LotkaVolterra()
+        lv_sys = LotkaVolterraNonauto()
 
     # sweep over time step size and integrate
     dt_list = [0.01, 0.0125, 0.02, 0.025, 0.05, 0.125]
@@ -124,7 +124,7 @@ def main(method='epi3', do_plot=True):
         t0 = 0.0
         nsteps = int(t_end/dt)
 
-        res = integrate_wrapper.integrate(lv_sys, y0, t0, dt, nsteps, method=method, max_krylov_dim=10, iom=5)
+        res = integrate_wrapper.integrate(lv_sys, y0, t0, dt, nsteps, method=method, max_krylov_dim=10, iom=5, tol_fdt=0)
         t_res, y_res = res.t_res, res.y_res
         t_res = jnp.asarray(t_res)
         y_res = jnp.asarray(y_res)

@@ -164,7 +164,7 @@ class JacLinOp(LinOp):
         self.u = u
         self.frhs = frhs
         self.frhs_kwargs = frhs_kwargs
-        self.frhs_u, self.fjac_u = jax.linearize(partial(frhs, self.t, **self.frhs_kwargs), self.u)
+        self.frhs_u, self.fjac_u = jax.linearize(partial(frhs, **frhs_kwargs), self.t, self.u)
 
     @jax.jit
     def _matvec(self, v: jax.Array) -> jax.Array:
@@ -175,12 +175,21 @@ class JacLinOp(LinOp):
             v: target vector to apply linop to
         """
         print("jit-compiling JacLinOp._matvec")
-        return self.fjac_u(v.reshape(self.u.shape))
+        return self.fjac_u(0., v.reshape(self.u.shape))
+
+    @jax.jit
+    def _fdt(self) -> jax.Array:
+        """
+        Prototype for time derivative
+        """
+        print("jit-compiling JacLinOp._fdt")
+        return self.fjac_u(1., jnp.zeros(self.u.shape))
 
     def _dense(self):
         """
         Define the (dense) jacobian of frhs.
         """
+        #TODO: implement this correctly, add time tangent
         return jax.vmap(self.fjac_u, in_axes=(1), out_axes=1)(jnp.eye(self.u.shape[0]))
 
 
