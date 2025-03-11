@@ -29,9 +29,13 @@ class ExpRBIntegrator(IntegrateSys):
         self.method = method
         if not self.method in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
-        if "dense_cauchy" in method and HAS_ORMATEX_RUST:
-            self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
+        if "dense_cauchy" in method:
+            if HAS_ORMATEX_RUST:
+                self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
                     kwargs.get("expmv_method", "cram"), kwargs.get("expmv_order", 16))
+            else:
+                raise AttributeError(f"{self.method} requires the rust bindings, which were not found.")
+
         order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, **kwargs)
         # maximum krylov subspace dimension
