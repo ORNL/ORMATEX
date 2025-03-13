@@ -57,7 +57,7 @@ def run_model(method="exprb2_rs", tol_fdt=1.0e-6):
         res = integrate(LotkaVolterra(), y0, t0, dt, nsteps, method=method, tol_fdt=tol_fdt)
     y0 = jnp.array(y0.flatten())
     res_expected = integrate(LotkaVolterra(), y0, t0, dt, nsteps, method="dopri5")
-    return res.t, res.y, res_expected.t, res_expected.y
+    return np.asarray(res.t), np.asarray(res.y), res_expected.t, res_expected.y
 
 if __name__ == "__main__":
     import matplotlib.pylab as plt

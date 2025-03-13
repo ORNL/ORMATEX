@@ -149,7 +149,51 @@ class AugMatrixLinOp(LinOp):
         raise NotImplementedError
 
 
-class JacLinOp(LinOp):
+class SysJacLinOp(LinOp):
+    """
+    Extend base LinOp class with pure virtual method for
+    frhs time derivative.
+    """
+    @abstractmethod
+    def _fdt(self) -> jax.Array:
+        """
+        Prototype frhs time derivative
+        """
+        raise NotImplementedError
+
+
+class ExactJacLinOp(SysJacLinOp):
+    _a: eqx.Module
+    t: float
+    u: jax.Array
+    frhs: Callable
+    frhs_kwargs: dict
+    frhs_u: jax.Array
+    epst: float
+
+    def __init__(self, a: jax.Array, t: float, u: jax.Array, frhs: eqx.Module, frhs_kwargs: dict={}, **kwargs):
+        self._a = MatrixLinOp(a)
+        self.t = t
+        self.u = u
+        self.frhs = frhs
+        self.frhs_kwargs = frhs_kwargs
+        self.frhs_u = self.frhs(t, u, **self.frhs_kwargs)
+        self.epst = kwargs.get("epst", 1.0e-8)
+
+    @jax.jit
+    def _fdt(self) -> jax.Array:
+        return (self.frhs(self.t+self.epst, self.u, **self.frhs_kwargs) - self.frhs_u) / self.epst
+
+    def _matvec(self, b: jax.Array) -> jax.Array:
+        # delegate _matvec to owned MatrixLinOp
+        return self._a._matvec(b)
+
+    def _dense(self) -> jax.Array:
+        # delegate _dense to owned MatrixLinOp
+        return self._a._dense()
+
+
+class AdJacLinOp(SysJacLinOp):
     t: float
     u: jax.Array
     frhs: eqx.Module
@@ -174,7 +218,7 @@ class JacLinOp(LinOp):
         Args:
             v: target vector to apply linop to
         """
-        print("jit-compiling JacLinOp._matvec")
+        print("jit-compiling AdJacLinOp._matvec")
         return self.fjac_u(0., v.reshape(self.u.shape))
 
     @jax.jit
@@ -182,7 +226,7 @@ class JacLinOp(LinOp):
         """
         Prototype for time derivative
         """
-        print("jit-compiling JacLinOp._fdt")
+        print("jit-compiling AdJacLinOp._fdt")
         return self.fjac_u(1., jnp.zeros(self.u.shape))
 
     def _dense(self):
@@ -190,10 +234,10 @@ class JacLinOp(LinOp):
         Define the (dense) jacobian of frhs.
         """
         #TODO: implement this correctly, add time tangent
-        return jax.vmap(self.fjac_u, in_axes=(1), out_axes=1)(jnp.eye(self.u.shape[0]))
+        return jax.vmap(self._matvec, in_axes=(1), out_axes=1)(jnp.eye(self.u.shape[0]))
 
 
-class FdJacLinOp(LinOp):
+class FdJacLinOp(SysJacLinOp):
     t: float
     u: jax.Array
     frhs: Callable
@@ -244,6 +288,14 @@ class FdJacLinOp(LinOp):
         # shift j_v product
         j_v += self.gamma * v
         return j_v
+
+    @jax.jit
+    def _fdt(self) -> jax.Array:
+        """
+        Computes time derivative of the rhs by finite difference
+        """
+        print("jit-compiling FdJacLinOp._fdt")
+        return (self.frhs(self.t+self.eps, self.u, **self.frhs_kwargs) - self.frhs_u) / self.eps
 
     def _dense(self):
         raise NotImplementedError
@@ -308,7 +360,7 @@ class OdeSys(eqx.Module):
     def _fjac(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         # default implementation (autodiff Jacobian)
         print("jit-compiling ODESys._fjac")
-        return JacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
+        return AdJacLinOp(t, u, self.frhs, frhs_kwargs=kwargs)
 
     def _fm(self, t: float, u: jax.Array, **kwargs) -> LinOp:
         # default implementation (identity operator)

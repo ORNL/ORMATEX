@@ -43,7 +43,8 @@ class ExpRBIntegrator(IntegrateSys):
         # incomplete orthogonalization depth for mgs
         self.iom = kwargs.get("iom", 100)
         # tolerence to detect nonautonomous systems, a negative value disables this check
-        self.tol_fdt = kwargs.get("tol_fdt", 0.)
+        self.tol_fdt = kwargs.get("tol_fdt", 1.0e-8)
+        self.epst = kwargs.get("epst", 1.0e-8)
 
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
@@ -76,14 +77,7 @@ class ExpRBIntegrator(IntegrateSys):
         """
         # only compute rhs time derivative if requested
         if self.tol_fdt >= 0:
-            t = self.t
-            yt = self.y_hist[0]
             # deriv of rhs wrt time at current time
-            # TODO: reduce redundant computation, jacfwd re-evaluates frhs internally
-            # see: https://docs.jax.dev/en/latest/_autosummary/jax.linearize.html
-            #fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
-            #epst = 1e-6
-            #fytt = (self.sys.frhs(t + epst, yt) - self.sys.frhs(t, yt)) / epst
             fytt = sys_jac_lop._fdt()
             # check for nonautonomous system
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
@@ -217,7 +211,7 @@ class ExpRBIntegrator(IntegrateSys):
         phi2_fytt = 0.
         if self.tol_fdt >= 0.:
             # deriv of rhs wrt time at current time
-            fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
+            fytt = (self.sys.frhs(t+self.epst, yt) - fyt) / self.epst
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
                 phi2_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2).flatten()
                 phi2_fytt = (dt**2.0)*jnp.asarray(phi2_fytt)
