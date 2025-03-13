@@ -205,13 +205,14 @@ class ExpRBIntegrator(IntegrateSys):
         yt = self.y_hist[0]
         # y_new, y_err = ExpRBIntegrator._cram_rs(t, yt, dt, self.sys)
         fyt = self.sys.frhs(t, yt)
-        J = np.asarray(self.sys.fjac(t, yt).dense())
+        sys_jac_lop = self.sys.fjac(t, yt)
+        J = np.asarray(sys_jac_lop.dense())
 
         # check for nonautonomous system
         phi2_fytt = 0.
         if self.tol_fdt >= 0.:
             # deriv of rhs wrt time at current time
-            fytt = (self.sys.frhs(t+self.epst, yt) - fyt) / self.epst
+            fytt = sys_jac_lop._fdt()
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
                 phi2_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2).flatten()
                 phi2_fytt = (dt**2.0)*jnp.asarray(phi2_fytt)
