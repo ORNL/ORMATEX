@@ -44,7 +44,6 @@ class ExpRBIntegrator(IntegrateSys):
         self.iom = kwargs.get("iom", 100)
         # tolerence to detect nonautonomous systems, a negative value disables this check
         self.tol_fdt = kwargs.get("tol_fdt", 1.0e-8)
-        self.epst = kwargs.get("epst", 1.0e-8)
 
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
