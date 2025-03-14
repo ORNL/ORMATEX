@@ -6,7 +6,7 @@ import numpy as np
 from jax import numpy as jnp
 
 from ormatex_py import integrate_wrapper
-from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp, ExactJacLinOp
+from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp, CustomJacLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator
 
 try:
@@ -285,11 +285,11 @@ class TestBatemanSysJac(OdeSplitSys):
         res = self.bat_mat @ u
         return res
 
-    # define the Jacobian LinOp (comment out to use autograd)
-    def _fjac(self, t: float, u: jax.Array, **kwargs) -> ExactJacLinOp:
-        return ExactJacLinOp(self.bat_mat, t, u, self.frhs, frhs_kwargs=kwargs)
+    # manually define the Jacobian LinOp (comment out to use autograd)
+    def _fjac(self, t: float, u: jax.Array, **kwargs):
+        return CustomJacLinOp(t, u, self.frhs, self.bat_mat)
 
-    def _fl(self, t: float, u: jax.Array, **kwargs) -> MatrixLinOp:
+    def _fl(self, t: float, u: jax.Array, **kwargs):
         return MatrixLinOp(self.bat_mat)
 
 
