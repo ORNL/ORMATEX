@@ -63,8 +63,8 @@ def test_lotka_volterra_nonautonomous():
     """
     sys = LotkaVolterraNonauto()
     dt_list = [0.01, 0.0125, 0.02, 0.05]
-    methods = ["exprb2", "exprb3", "epi3", "exprb2_dense"]
-    methods_order = [2.0, 3.0, 3.0, 2.0]
+    methods = ["exprb2", "exprb3", "epi2", "epi3", "exprb2_dense"]
+    methods_order = [2.0, 3.0, 2.0, 3.0, 2.0]
     for method, order in zip(methods, methods_order):
         err_dt = []
         for dt in dt_list:
