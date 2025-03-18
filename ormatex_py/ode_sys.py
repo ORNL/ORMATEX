@@ -189,7 +189,8 @@ class CustomJacLinOp(SysJacLinOp):
         self._f_du = MatrixLinOp(f_du)
         self._f_dt = f_dt
         if f_dt is None:
-            self._f_dt = jnp.zeros((f_du.shape[1], ))
+            # if f_dt is not supplied, use finite difference fallback
+            self._f_dt = (self._frhs(self._t+self._eps, self._u) - self._frhs_u) / self._eps
 
     @jax.jit
     def _fdt(self) -> jax.Array:

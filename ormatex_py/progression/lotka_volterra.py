@@ -49,7 +49,8 @@ class LotkaVolterra(OdeSplitSys):
             [self.alpha - self.beta * x[1], - self.beta * x[0]],
             [self.delta * x[1], self.delta * x[0] - self.gamma]
             ])
-        return CustomJacLinOp(t, x, self.frhs, jac, frhs_kwargs=kwargs)
+        fdt = jnp.zeros(x.shape) # supply zero fdt, to avoid finite difference
+        return CustomJacLinOp(t, x, self.frhs, jac, fdt, frhs_kwargs=kwargs)
 
     # define a linear operator for testing
     @jax.jit

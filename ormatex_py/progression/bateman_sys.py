@@ -287,7 +287,8 @@ class TestBatemanSysJac(OdeSplitSys):
 
     # manually define the Jacobian LinOp (comment out to use autograd)
     def _fjac(self, t: float, u: jax.Array, **kwargs):
-        return CustomJacLinOp(t, u, self.frhs, self.bat_mat)
+        fdt = jnp.zeros(x.shape) # supply zero fdt, to avoid finite difference
+        return CustomJacLinOp(t, u, self.frhs, fdt, frhs_kwargs=kwargs)
 
     def _fl(self, t: float, u: jax.Array, **kwargs):
         return MatrixLinOp(self.bat_mat)
