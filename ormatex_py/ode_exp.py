@@ -16,10 +16,6 @@ try:
 except ImportError:
     HAS_ORMATEX_RUST = False
 
-##TODO:
-# - RB methods are only second and third order for f(t,y) = f(y) non-autonomous systems
-#   time dependent problems require a correction involving f'(t,y)
-#   see: https://doi.org/10.1137/080717717
 class ExpRBIntegrator(IntegrateSys):
 
     _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3,
@@ -52,8 +48,7 @@ class ExpRBIntegrator(IntegrateSys):
               frhs_yt: jax.Array, sys_jac_lop_yt: LinOp, v=0.0):
         """
         Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt) - v*(tr-t0)
-        where
-        v = d(frhs)/dt
+        where v = d(frhs)/dt
         """
         t = self.t_hist[0]
         yt = self.y_hist[0]
@@ -86,31 +81,58 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)
+        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)+
+            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
-        doi:
+        doi: https://doi.org/10.1137/080717717
         """
         t = self.t
         yt = self.y_hist[0]
         sys_jac_lop = self.sys.fjac(t, yt)
-        fyt = self.sys.frhs(t, yt)
-        fyt_dt = fyt * dt
+        fyt = sys_jac_lop._frhs_cached()
         phi2_v, _0 = self._phi2v_nonauto(sys_jac_lop, dt)
         y_new = yt \
-            + phi_linop(sys_jac_lop, dt, fyt_dt, 1, self.max_krylov_dim, self.iom) \
+            + phi_linop(sys_jac_lop, dt, dt*fyt, 1, self.max_krylov_dim, self.iom) \
             + phi2_v
         # no error est. avail
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
     # lowest order EPI multistep method is single step
-    _step_epi2 = _step_exprb2
+    # but implemented using KIOPS, which is different for nonhomogeneous
+    def _step_epi2(self, dt: float) -> StepResult:
+        """
+        Computes the solution update by:
+        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        doi:
+        """
+        t = self.t
+        yt = self.y_hist[0] # y_t
+
+        sys_jac_lop = self.sys.fjac(t, yt)
+        fyt = sys_jac_lop._frhs_cached()
+
+        # time derivative
+        fytt = sys_jac_lop._fdt()
+
+        # use kiops to save one call to arnoldi
+        vb0 = jnp.zeros(yt.shape)
+        y_update = kiops_fixedsteps(
+            sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt],
+            max_krylov_dim=self.max_krylov_dim, iom=self.iom)
+        y_new = yt + y_update
+        y_err = -1.0
+
+        return StepResult(t+dt, dt, y_new, y_err)
 
     def _step_epi3(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
-            (2/3)*dt*\varphi_2(dt*J_t)R(t, y_t, y_{t-1})
+            (2/3)*dt*\varphi_2(dt*J_t)R(t, y_t, y_{t-1}) +
+            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
         doi:
         """
@@ -120,14 +142,18 @@ class ExpRBIntegrator(IntegrateSys):
         tp = self.t_hist[1]
 
         sys_jac_lop = self.sys.fjac(t, yt)
-        fyt = self.sys.frhs(t, yt)
-        fyt_dt = fyt * dt
-        rn_dt = self._remf(tp, yp, fyt, sys_jac_lop) * dt
+        fyt = sys_jac_lop._frhs_cached()
 
-        # use kiops to save 1 call to arnoldi. almost 2x speedup
+        # time derivative
+        fytt = sys_jac_lop._fdt()
+
+        # residual
+        rn = self._remf(tp, yp, fyt, sys_jac_lop, fytt)
+
+        # use kiops to save 1 calls to arnoldi
         vb0 = jnp.zeros(yt.shape)
         y_update = kiops_fixedsteps(
-            sys_jac_lop, dt, [vb0, fyt_dt, (2./3.)*rn_dt],
+            sys_jac_lop, dt, [vb0, dt*fyt, dt*(2./3.)*rn + dt**2*fytt],
             max_krylov_dim=self.max_krylov_dim, iom=self.iom)
         y_new = yt + y_update
         y_err = -1.0
@@ -138,15 +164,16 @@ class ExpRBIntegrator(IntegrateSys):
         """
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
-            2*dt*\varphi_3(dt*J_t)R_2
+            2*dt*\varphi_3(dt*J_t)R_2 +
+            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
-        doi:
+        doi: https://doi.org/10.1137/080717717
         """
         t = self.t
         yt = self.y_hist[0] # y_t
 
         sys_jac_lop = self.sys.fjac(t, yt)
-        fyt = self.sys.frhs(t, yt)
+        fyt = sys_jac_lop._frhs_cached()
 
         # phi2_v is nonzero for nonautonomous systems
         phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt)
@@ -171,11 +198,15 @@ class ExpRBIntegrator(IntegrateSys):
     @jax.jit
     def _step_exprb2_jit(t, yt, dt, sys):
         print("jit-compiling exprb2_dense kernel")
-        fyt = sys.frhs(t, yt)
-        J = sys.fjac(t, yt).dense()
-        phi1J = f_phi_k_sq_all(dt*J, 1)[1]
-        #phi1J = f_phi_k_ext(dt*J, 1)
-        y_new = yt + dt * phi1J @ fyt
+
+        sys_jac_lop = sys.fjac(t, yt)
+        fyt = sys_jac_lop._frhs_cached()
+        fytt = sys_jac_lop._fdt()
+        J = sys_jac_lop.dense()
+
+        phi1J, phi2J = f_phi_k_sq_all(dt*J, 2)[1:]
+
+        y_new = yt + dt * (phi1J @ fyt + dt * phi2J @ fytt)
         # no error est. avail
         y_err = -1.
         return y_new, y_err
@@ -184,7 +215,7 @@ class ExpRBIntegrator(IntegrateSys):
         r"""
         Exponential Euler,
         computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t)
+        y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
         """
         t = self.t
         yt = self.y_hist[0]
@@ -196,15 +227,16 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2_dense_cauchy(self, dt: float) -> StepResult:
         r"""
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t)
+        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
         where L is a dense matrix and computing varphi
         using cauchy contour integral approach with quadrature rule
         """
         t = self.t
         yt = self.y_hist[0]
         # y_new, y_err = ExpRBIntegrator._cram_rs(t, yt, dt, self.sys)
-        fyt = self.sys.frhs(t, yt)
         sys_jac_lop = self.sys.fjac(t, yt)
+        fyt = sys_jac_lop._frhs_cached()
+
         J = np.asarray(sys_jac_lop.dense())
 
         # check for nonautonomous system
@@ -530,5 +562,3 @@ class ExpSplitIntegrator(IntegrateSys):
         self.t = s.t
         self.t_hist.appendleft(s.t)
         self.y_hist.appendleft(s.y)
-
-

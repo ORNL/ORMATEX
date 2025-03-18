@@ -7,7 +7,7 @@ import numpy as np
 from jax import numpy as jnp
 
 from ormatex_py import integrate_wrapper
-from ormatex_py.ode_sys import OdeSplitSys, OdeSys, MatrixLinOp, ExactJacLinOp
+from ormatex_py.ode_sys import OdeSplitSys, OdeSys, MatrixLinOp, CustomJacLinOp, FdJacLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
 try:
     from ormatex_py.ormatex import PySysWrapped
@@ -42,14 +42,15 @@ class LotkaVolterra(OdeSplitSys):
         pred_t = self.delta * x[0] * x[1] - self.gamma * x[1]
         return jnp.array([prey_t, pred_t])
 
-    # define the Jacobian LinOp (comment out to use autograd)
+    # manually define the Jacobian LinOp (comment out to use autograd)
     @jax.jit
     def _fjac(self, t, x, **kwargs):
         jac = jnp.array([
-            [self.alpha - self.beta * x[1], - self.beta*x[0]],
-            [self.delta*x[1], self.delta*x[0] - self.gamma]
+            [self.alpha - self.beta * x[1], - self.beta * x[0]],
+            [self.delta * x[1], self.delta * x[0] - self.gamma]
             ])
-        return ExactJacLinOp(jac, t, x, self.frhs, frhs_kwargs=kwargs)
+        fdt = jnp.zeros(x.shape) # supply zero fdt, to avoid finite difference
+        return CustomJacLinOp(t, x, self.frhs, jac, fdt, frhs_kwargs=kwargs)
 
     # define a linear operator for testing
     @jax.jit
@@ -62,9 +63,14 @@ class LotkaVolterra(OdeSplitSys):
 
 @jax.jit
 def f_pred_hunt(t):
-    return 0.4*(jnp.sin(t*0.2)+1.0)
+    return 0.4 * (jnp.sin(t*0.2) + 1.0)
 
-class LotkaVolterraNonauto(OdeSys):
+# manually define the time-derivative of f for testing
+@jax.jit
+def f_pred_hunt_dt(t):
+    return 0.4 * 0.2 * jnp.cos(t*0.2)
+
+class LotkaVolterraNonauto(OdeSplitSys):
     alpha: float
     beta: float
     delta: float
@@ -81,8 +87,30 @@ class LotkaVolterraNonauto(OdeSys):
     def _frhs(self, t, x, **kwargs):
         pred_hunt = f_pred_hunt(t)
         prey_t = self.alpha * x[0] - self.beta * x[0] * x[1]
-        pred_t = self.delta * x[0] * x[1] - self.gamma * x[1] - pred_hunt*x[1]
+        pred_t = self.delta * x[0] * x[1] - self.gamma * x[1] - pred_hunt * x[1]
         return jnp.array([prey_t, pred_t])
+
+    # manually define the Jacobian LinOp (comment out to use autograd)
+    @jax.jit
+    def _fjac(self, t, x, **kwargs):
+        pred_hunt = f_pred_hunt(t)
+        jac = jnp.array([
+            [self.alpha - self.beta * x[1], - self.beta * x[0]],
+            [self.delta * x[1], self.delta * x[0] - self.gamma - pred_hunt]
+            ])
+        pred_hunt_dt = f_pred_hunt_dt(t)
+        fdt = jnp.array([0, - pred_hunt_dt * x[1]])
+        return CustomJacLinOp(t, x, self.frhs, jac, fdt, frhs_kwargs=kwargs)
+        #return FdJacLinOp(t, x, self.frhs, frhs_kwargs=kwargs)
+
+    # define a linear operator for testing
+    @jax.jit
+    def _fl(self, t, x, **kwargs):
+        lop = jnp.array([
+            [self.alpha - self.beta*2, 0.],
+            [0., - self.gamma]
+            ])
+        return MatrixLinOp(lop)
 
 
 def main(method='epi3', do_plot=True, autonomous=True):
@@ -194,11 +222,11 @@ def main(method='epi3', do_plot=True, autonomous=True):
     return err_dt, np.exp(trendf(err_dt[:, 0], popt[0], popt[1])), lb
 
 
-def sweep_methods():
+def sweep_methods(autonomous=False):
     methods = ["epi3", "exprb2", "exprb3", "exp3_dense", "exp2_dense", "implicit_euler", "implicit_esdirk3"]
     plt.figure()
     for method in methods:
-        err_dt, err, lb = main(method, do_plot=False)
+        err_dt, err, lb = main(method, do_plot=False, autonomous=autonomous)
         plt.scatter(err_dt[:, 0], err_dt[:, 1])
         plt.plot(err_dt[:, 0], err, ls='--', label=lb)
     plt.legend()
@@ -220,11 +248,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-method", type=str, default="epi3")
     parser.add_argument("-sweep", help="run convergence sweep", action="store_true", default=False)
+    parser.add_argument("-nonautonomous", help="run nonautonomous system with external forcing", action="store_true", default=False)
     args = parser.parse_args()
     method = args.method
 
     # optionally run sweep over methods
     if args.sweep:
-        sweep_methods()
+        sweep_methods(autonomous=(not args.nonautonomous))
     else:
-        main(method)
+        main(method, autonomous=(not args.nonautonomous))

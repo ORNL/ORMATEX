@@ -152,8 +152,22 @@ class AugMatrixLinOp(LinOp):
 class SysJacLinOp(LinOp):
     """
     Extend base LinOp class with pure virtual method for
-    frhs time derivative.
+    frhs time derivative and frhs caching.
     """
+    _t: float
+    _u: jax.Array
+    _frhs: eqx.Module #type?
+    _frhs_kwargs: dict
+
+    def __init__(self, t, u, frhs: eqx.Module, frhs_kwargs: dict={}, **kwargs):
+        self._t = t
+        self._u = u
+        # TODO: store the function handle with applied kwargs, however using Partial here leads to jax errors.
+        # jax.tree_util.Partial(frhs, **frhs_kwargs)
+        # There is no use of kwargs yet, decide how this is supposed to work.
+        self._frhs = frhs
+        self._frhs_kwargs = frhs_kwargs
+
     @abstractmethod
     def _fdt(self) -> jax.Array:
         """
@@ -161,54 +175,72 @@ class SysJacLinOp(LinOp):
         """
         raise NotImplementedError
 
+    def _frhs_cached(self) -> jax.Array:
+        """
+        Prototype cached frhs evaluation: evaluate frhs
+        """
+        return self._frhs(self._t, self._u, **self._frhs_kwargs)
 
-class ExactJacLinOp(SysJacLinOp):
-    _a: eqx.Module
-    t: float
-    u: jax.Array
-    frhs: Callable
-    frhs_kwargs: dict
-    frhs_u: jax.Array
-    epst: float
 
-    def __init__(self, a: jax.Array, t: float, u: jax.Array, frhs: eqx.Module, frhs_kwargs: dict={}, **kwargs):
-        self._a = MatrixLinOp(a)
-        self.t = t
-        self.u = u
-        self.frhs = frhs
-        self.frhs_kwargs = frhs_kwargs
-        self.frhs_u = self.frhs(t, u, **self.frhs_kwargs)
-        self.epst = kwargs.get("epst", 1.0e-8)
+class CustomJacLinOp(SysJacLinOp):
+    _f_du: jax.Array
+    _f_dt: jax.Array
+
+    # for finite difference fallback
+    _frhs_u: jax.Array
+    _eps: float
+
+    def __init__(self, t, u, frhs: eqx.Module, f_du: jax.Array, f_dt: jax.Array=None, frhs_kwargs: dict={}, **kwargs):
+        super().__init__(t, u, frhs, frhs_kwargs, **kwargs)
+        self._f_du = MatrixLinOp(f_du)
+        self._f_dt = f_dt
+
+        if self._f_dt is None:
+            self._frhs_u = self._frhs(t, u, **self._frhs_kwargs)
+            self._eps = kwargs.get("eps", 0.5e-8)
+        else:
+            self._frhs_u = None
+            self._eps = None
 
     @jax.jit
     def _fdt(self) -> jax.Array:
-        return (self.frhs(self.t+self.epst, self.u, **self.frhs_kwargs) - self.frhs_u) / self.epst
+        if self._f_dt is None:
+            # if f_dt is not supplied, use finite difference fallback
+            eps = self._eps
+            f_dt = (self._frhs(self._t + eps, self._u, **self._frhs_kwargs) - self._frhs_u) / eps
+            return f_dt
+        else:
+            return self._f_dt
 
+    @jax.jit
     def _matvec(self, b: jax.Array) -> jax.Array:
         # delegate _matvec to owned MatrixLinOp
-        return self._a._matvec(b)
+        return self._f_du._matvec(b)
 
+    @jax.jit
     def _dense(self) -> jax.Array:
         # delegate _dense to owned MatrixLinOp
-        return self._a._dense()
+        return self._f_du._dense()
+
+    @jax.jit
+    def _frhs_cached(self) -> jax.Array:
+        """
+        Prototype cached frhs evaluation: evaluate frhs
+        """
+        if self._frhs_u is None:
+            return self._frhs(self._t, self._u, **self._frhs_kwargs)
+        else:
+            # for finite difference fallback
+            return self._frhs_u
 
 
 class AdJacLinOp(SysJacLinOp):
-    t: float
-    u: jax.Array
-    frhs: eqx.Module
-    # storage for rhs evaluated at u, computed in linerize call
-    # TODO: figure out how to eliminate this redundant computation
-    frhs_u: jax.Array
-    frhs_kwargs: dict
-    fjac_u: Callable
+    _frhs_u: jax.Array
+    _fjac_u: Callable
 
     def __init__(self, t, u, frhs: eqx.Module, frhs_kwargs: dict={}, **kwargs):
-        self.t = t
-        self.u = u
-        self.frhs = frhs
-        self.frhs_kwargs = frhs_kwargs
-        self.frhs_u, self.fjac_u = jax.linearize(partial(frhs, **frhs_kwargs), self.t, self.u)
+        super().__init__(t, u, frhs, frhs_kwargs, **kwargs)
+        self._frhs_u, self._fjac_u = jax.linearize(partial(self._frhs, **self._frhs_kwargs), self._t, self._u)
 
     @jax.jit
     def _matvec(self, v: jax.Array) -> jax.Array:
@@ -219,55 +251,53 @@ class AdJacLinOp(SysJacLinOp):
             v: target vector to apply linop to
         """
         print("jit-compiling AdJacLinOp._matvec")
-        return self.fjac_u(0., v.reshape(self.u.shape))
+        return self._fjac_u(0., v.reshape(self._u.shape))
 
     @jax.jit
     def _fdt(self) -> jax.Array:
         """
-        Prototype for time derivative
+        frhs time derivative
         """
         print("jit-compiling AdJacLinOp._fdt")
-        return self.fjac_u(1., jnp.zeros(self.u.shape))
+        return self._fjac_u(1., jnp.zeros(self._u.shape))
 
+    @jax.jit
+    def _frhs_cached(self) -> jax.Array:
+        """
+        cached frhs evaluation
+        """
+        return self._frhs_u
+
+    @jax.jit
     def _dense(self):
         """
         Define the (dense) jacobian of frhs.
         """
-        #TODO: implement this correctly, add time tangent
-        return jax.vmap(self._matvec, in_axes=(1), out_axes=1)(jnp.eye(self.u.shape[0]))
+        return jax.vmap(self._matvec, in_axes=(1), out_axes=1)(jnp.eye(self._u.shape[0]))
 
 
 class FdJacLinOp(SysJacLinOp):
-    t: float
-    u: jax.Array
-    frhs: Callable
     # storage for rhs evaluated at u, saves computation
     # on repeated calls to jvp
-    frhs_u: jax.Array
-    frhs_kwargs: dict
-    scale: float
-    gamma: float
-    eps: float
+    _frhs_u: jax.Array
+    _scale: float
+    _gamma: float
+    _eps: float
 
     def __init__(self, t, u, frhs: Callable, frhs_kwargs: dict={},
                  scale: float=1.0, gamma: float=0.0, **kwargs):
-        self.t = t
-        self.u = u
-        self.frhs = frhs
-        self.frhs_u = self.frhs(t, u, **frhs_kwargs)
-        self.frhs_kwargs = frhs_kwargs
-        # scale
-        self.scale = scale
-        # shift
-        self.gamma = gamma
-        self.eps = kwargs.get("eps", 0.5e-8)
+        super().__init__(t, u, frhs, frhs_kwargs, **kwargs)
+        self._frhs_u = self._frhs(t, u, **self._frhs_kwargs)
+        self._scale = scale
+        self._gamma = gamma # shift
+        self._eps = kwargs.get("eps", 0.5e-8)
 
     @property
     def shape(self) -> (int, int):
         """
         LinOp shape
         """
-        return (self.u.size, self.u.size)
+        return (self._u.size, self._u.size)
 
     @jax.jit
     def _matvec(self, v: jax.Array) -> jax.Array:
@@ -276,17 +306,17 @@ class FdJacLinOp(SysJacLinOp):
         Args:
             v: target vector to apply linop to
         """
-        u_norm_1 = jnp.linalg.norm(self.u, 1)
-        scaled_eps = self.eps * u_norm_1
-        ieps = self.scale / scaled_eps
-        u_pert = self.u + scaled_eps*v
+        u_norm_1 = jnp.linalg.norm(self._u, 1)
+        scaled_eps = self._eps * u_norm_1
+        ieps = self._scale / scaled_eps
+        u_pert = self._u + scaled_eps*v
 
         # compute the unshifted jac-vec product.
-        diff = self.frhs(self.t, u_pert, **self.frhs_kwargs) - self.frhs_u
+        diff = self._frhs(self._t, u_pert, **self._frhs_kwargs) - self._frhs_u
         j_v = (diff)*ieps
 
         # shift j_v product
-        j_v += self.gamma * v
+        j_v += self._gamma * v
         return j_v
 
     @jax.jit
@@ -295,7 +325,14 @@ class FdJacLinOp(SysJacLinOp):
         Computes time derivative of the rhs by finite difference
         """
         print("jit-compiling FdJacLinOp._fdt")
-        return (self.frhs(self.t+self.eps, self.u, **self.frhs_kwargs) - self.frhs_u) / self.eps
+        return (self._frhs(self._t+self._eps, self._u, **self._frhs_kwargs) - self._frhs_u) / self._eps
+
+    @jax.jit
+    def _frhs_cached(self) -> jax.Array:
+        """
+        cached frhs evaluation
+        """
+        return self._frhs_u
 
     def _dense(self):
         raise NotImplementedError
