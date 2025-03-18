@@ -29,9 +29,13 @@ class ExpRBIntegrator(IntegrateSys):
         self.method = method
         if not self.method in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
-        if "dense_cauchy" in method and HAS_ORMATEX_RUST:
-            self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
+        if "dense_cauchy" in method:
+            if HAS_ORMATEX_RUST:
+                self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
                     kwargs.get("expmv_method", "cram"), kwargs.get("expmv_order", 16))
+            else:
+                raise AttributeError(f"{self.method} requires the rust bindings, which were not found.")
+
         order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, **kwargs)
         # maximum krylov subspace dimension
@@ -39,7 +43,7 @@ class ExpRBIntegrator(IntegrateSys):
         # incomplete orthogonalization depth for mgs
         self.iom = kwargs.get("iom", 100)
         # tolerence to detect nonautonomous systems, a negative value disables this check
-        self.tol_fdt = kwargs.get("tol_fdt", -1.)
+        self.tol_fdt = kwargs.get("tol_fdt", 1.0e-8)
 
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
@@ -72,12 +76,8 @@ class ExpRBIntegrator(IntegrateSys):
         """
         # only compute rhs time derivative if requested
         if self.tol_fdt >= 0:
-            t = self.t
-            yt = self.y_hist[0]
             # deriv of rhs wrt time at current time
-            # TODO: reduce redundant computation, jacfwd re-evaluates frhs internally
-            # see: https://docs.jax.dev/en/latest/_autosummary/jax.linearize.html
-            fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
+            fytt = sys_jac_lop._fdt()
             # check for nonautonomous system
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
                 return (dt**2.)*phi_linop(sys_jac_lop, dt, fytt, 2, self.max_krylov_dim, self.iom), fytt
@@ -204,13 +204,14 @@ class ExpRBIntegrator(IntegrateSys):
         yt = self.y_hist[0]
         # y_new, y_err = ExpRBIntegrator._cram_rs(t, yt, dt, self.sys)
         fyt = self.sys.frhs(t, yt)
-        J = np.asarray(self.sys.fjac(t, yt).dense())
+        sys_jac_lop = self.sys.fjac(t, yt)
+        J = np.asarray(sys_jac_lop.dense())
 
         # check for nonautonomous system
         phi2_fytt = 0.
         if self.tol_fdt >= 0.:
             # deriv of rhs wrt time at current time
-            fytt = jax.jacfwd(self.sys.frhs, argnums=0)(t, yt)
+            fytt = sys_jac_lop._fdt()
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
                 phi2_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2).flatten()
                 phi2_fytt = (dt**2.0)*jnp.asarray(phi2_fytt)

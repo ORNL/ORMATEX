@@ -7,7 +7,7 @@ import numpy as np
 from jax import numpy as jnp
 
 from ormatex_py import integrate_wrapper
-from ormatex_py.ode_sys import OdeSplitSys, OdeSys, MatrixLinOp
+from ormatex_py.ode_sys import OdeSplitSys, OdeSys, MatrixLinOp, ExactJacLinOp
 from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
 try:
     from ormatex_py.ormatex import PySysWrapped
@@ -49,7 +49,7 @@ class LotkaVolterra(OdeSplitSys):
             [self.alpha - self.beta * x[1], - self.beta*x[0]],
             [self.delta*x[1], self.delta*x[0] - self.gamma]
             ])
-        return MatrixLinOp(jac)
+        return ExactJacLinOp(jac, t, x, self.frhs, frhs_kwargs=kwargs)
 
     # define a linear operator for testing
     @jax.jit
@@ -85,10 +85,16 @@ class LotkaVolterraNonauto(OdeSys):
         return jnp.array([prey_t, pred_t])
 
 
-def main(method='epi3', do_plot=True):
+def main(method='epi3', do_plot=True, autonomous=True):
     # setup lotka voltera system
     t_end = 20.0
     y0 = jnp.array([0.1, 0.2])
+
+    def gen_sys(autonomous=True):
+        if not autonomous:
+            return LotkaVolterraNonauto()
+        else:
+            return LotkaVolterra()
 
     # compute gold solution
     t0 = 0.0
@@ -97,7 +103,7 @@ def main(method='epi3', do_plot=True):
     tf = dt * nsteps
     step_ctrl = diffrax.ConstantStepSize()
     solver = diffrax.Dopri5()
-    diffrax_lv_sys = diffrax.ODETerm(LotkaVolterra())
+    diffrax_lv_sys = diffrax.ODETerm(gen_sys(autonomous))
     res = diffrax.diffeqsolve(
             diffrax_lv_sys,
             solver,
@@ -110,9 +116,9 @@ def main(method='epi3', do_plot=True):
 
     if "_rs" in method:
         y0 = np.asarray(y0).reshape((-1, 1))
-        lv_sys = PySysWrapped(OdeSysNp(LotkaVolterra()))
+        lv_sys = PySysWrapped(OdeSysNp(gen_sys(autonomous)))
     else:
-        lv_sys = LotkaVolterra()
+        lv_sys = gen_sys(autonomous)
 
     # sweep over time step size and integrate
     dt_list = [0.01, 0.0125, 0.02, 0.025, 0.05, 0.125]
@@ -124,7 +130,8 @@ def main(method='epi3', do_plot=True):
         t0 = 0.0
         nsteps = int(t_end/dt)
 
-        res = integrate_wrapper.integrate(lv_sys, y0, t0, dt, nsteps, method=method, max_krylov_dim=10, iom=5)
+        res = integrate_wrapper.integrate(
+                lv_sys, y0, t0, dt, nsteps, method=method, max_krylov_dim=10, iom=5, tol_fdt=0)
         t_res, y_res = res.t_res, res.y_res
         t_res = jnp.asarray(t_res)
         y_res = jnp.asarray(y_res)
