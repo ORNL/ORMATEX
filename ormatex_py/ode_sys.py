@@ -188,13 +188,16 @@ class CustomJacLinOp(SysJacLinOp):
         super().__init__(t, u, frhs, frhs_kwargs, **kwargs)
         self._f_du = MatrixLinOp(f_du)
         self._f_dt = f_dt
-        if f_dt is None:
-            # if f_dt is not supplied, use finite difference fallback
-            self._f_dt = (self._frhs(self._t+self._eps, self._u) - self._frhs_u) / self._eps
 
     @jax.jit
     def _fdt(self) -> jax.Array:
-        return self._f_dt
+        if self._f_dt is None:
+            # if f_dt is not supplied, use finite difference fallback
+            eps = jnp.sqrt(jnp.finfo(self._u.dtype).eps)
+            f_dt = (self._frhs(self._t + eps, self._u) - self._frhs(self._t, self._u)) / eps
+            return f_dt
+        else:
+            return self._f_dt
 
     @jax.jit
     def _matvec(self, b: jax.Array) -> jax.Array:
