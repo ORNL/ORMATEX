@@ -16,10 +16,6 @@ try:
 except ImportError:
     HAS_ORMATEX_RUST = False
 
-##TODO:
-# - RB methods are only second and third order for f(t,y) = f(y) non-autonomous systems
-#   time dependent problems require a correction involving f'(t,y)
-#   see: https://doi.org/10.1137/080717717
 class ExpRBIntegrator(IntegrateSys):
 
     _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3,
@@ -88,7 +84,7 @@ class ExpRBIntegrator(IntegrateSys):
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)+
             dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
-        doi:
+        doi: https://doi.org/10.1137/080717717
         """
         t = self.t
         yt = self.y_hist[0]
@@ -171,7 +167,7 @@ class ExpRBIntegrator(IntegrateSys):
             2*dt*\varphi_3(dt*J_t)R_2 +
             dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
-        doi:
+        doi: https://doi.org/10.1137/080717717
         """
         t = self.t
         yt = self.y_hist[0] # y_t
@@ -231,7 +227,7 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2_dense_cauchy(self, dt: float) -> StepResult:
         r"""
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t)
+        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
         where L is a dense matrix and computing varphi
         using cauchy contour integral approach with quadrature rule
         """
