@@ -156,15 +156,17 @@ class SysJacLinOp(LinOp):
     """
     _t: float
     _u: jax.Array
-    _frhs: eqx.Module
+    _frhs: eqx.Module #type?
+    _frhs_kwargs: dict
 
     def __init__(self, t, u, frhs: eqx.Module, frhs_kwargs: dict={}, **kwargs):
         self._t = t
         self._u = u
-        # store the function handle with applied kwargs
-        # TODO: using Partial here leads to jax errors.
-        # Is there an example that uses kw_args? I do not understand how this is supposed to work.
-        self._frhs = frhs #jax.tree_util.Partial(frhs, **frhs_kwargs)
+        # TODO: store the function handle with applied kwargs, however using Partial here leads to jax errors.
+        # jax.tree_util.Partial(frhs, **frhs_kwargs)
+        # There is no use of kwargs yet, decide how this is supposed to work.
+        self._frhs = frhs
+        self._frhs_kwargs = frhs_kwargs
 
     @abstractmethod
     def _fdt(self) -> jax.Array:
@@ -177,24 +179,35 @@ class SysJacLinOp(LinOp):
         """
         Prototype cached frhs evaluation: evaluate frhs
         """
-        return self._frhs(self._t, self._u)
+        return self._frhs(self._t, self._u, **self._frhs_kwargs)
 
 
 class CustomJacLinOp(SysJacLinOp):
     _f_du: jax.Array
     _f_dt: jax.Array
 
+    # for finite difference fallback
+    _frhs_u: jax.Array
+    _eps: float
+
     def __init__(self, t, u, frhs: eqx.Module, f_du: jax.Array, f_dt: jax.Array=None, frhs_kwargs: dict={}, **kwargs):
         super().__init__(t, u, frhs, frhs_kwargs, **kwargs)
         self._f_du = MatrixLinOp(f_du)
         self._f_dt = f_dt
 
+        if self._f_dt is None:
+            self._frhs_u = self._frhs(t, u, **self._frhs_kwargs)
+            self._eps = kwargs.get("eps", 0.5e-8)
+        else:
+            self._frhs_u = None
+            self._eps = None
+
     @jax.jit
     def _fdt(self) -> jax.Array:
         if self._f_dt is None:
             # if f_dt is not supplied, use finite difference fallback
-            eps = jnp.sqrt(jnp.finfo(self._u.dtype).eps)
-            f_dt = (self._frhs(self._t + eps, self._u) - self._frhs(self._t, self._u)) / eps
+            eps = self._eps
+            f_dt = (self._frhs(self._t + eps, self._u, **self._frhs_kwargs) - self._frhs_u) / eps
             return f_dt
         else:
             return self._f_dt
@@ -209,6 +222,17 @@ class CustomJacLinOp(SysJacLinOp):
         # delegate _dense to owned MatrixLinOp
         return self._f_du._dense()
 
+    @jax.jit
+    def _frhs_cached(self) -> jax.Array:
+        """
+        Prototype cached frhs evaluation: evaluate frhs
+        """
+        if self._frhs_u is None:
+            return self._frhs(self._t, self._u, **self._frhs_kwargs)
+        else:
+            # for finite difference fallback
+            return self._frhs_u
+
 
 class AdJacLinOp(SysJacLinOp):
     _frhs_u: jax.Array
@@ -216,7 +240,7 @@ class AdJacLinOp(SysJacLinOp):
 
     def __init__(self, t, u, frhs: eqx.Module, frhs_kwargs: dict={}, **kwargs):
         super().__init__(t, u, frhs, frhs_kwargs, **kwargs)
-        self._frhs_u, self._fjac_u = jax.linearize(self._frhs, self._t, self._u)
+        self._frhs_u, self._fjac_u = jax.linearize(partial(self._frhs, **self._frhs_kwargs), self._t, self._u)
 
     @jax.jit
     def _matvec(self, v: jax.Array) -> jax.Array:
@@ -263,7 +287,7 @@ class FdJacLinOp(SysJacLinOp):
     def __init__(self, t, u, frhs: Callable, frhs_kwargs: dict={},
                  scale: float=1.0, gamma: float=0.0, **kwargs):
         super().__init__(t, u, frhs, frhs_kwargs, **kwargs)
-        self._frhs_u = self._frhs(t, u)
+        self._frhs_u = self._frhs(t, u, **self._frhs_kwargs)
         self._scale = scale
         self._gamma = gamma # shift
         self._eps = kwargs.get("eps", 0.5e-8)
@@ -288,7 +312,7 @@ class FdJacLinOp(SysJacLinOp):
         u_pert = self._u + scaled_eps*v
 
         # compute the unshifted jac-vec product.
-        diff = self._frhs(self._t, u_pert) - self._frhs_u
+        diff = self._frhs(self._t, u_pert, **self._frhs_kwargs) - self._frhs_u
         j_v = (diff)*ieps
 
         # shift j_v product
@@ -301,7 +325,7 @@ class FdJacLinOp(SysJacLinOp):
         Computes time derivative of the rhs by finite difference
         """
         print("jit-compiling FdJacLinOp._fdt")
-        return (self._frhs(self._t+self._eps, self._u) - self._frhs_u) / self._eps
+        return (self._frhs(self._t+self._eps, self._u, **self._frhs_kwargs) - self._frhs_u) / self._eps
 
     @jax.jit
     def _frhs_cached(self) -> jax.Array:
