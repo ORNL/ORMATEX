@@ -34,7 +34,7 @@ impl KrylovExpm {
     {
         let (q, h, _b) = arnoldi_lop(a_lo, dt, v0.as_ref(), self.krylov_dim, self.iom);
         let beta = v0.norm_l2();
-        let mut unit_vec = faer::Mat::zeros(v0.nrows(), 1);
+        let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
         // let matexp = matexp_pade::matexp(h.as_ref(), 1.0);
         // return faer::Scale(beta) * (q.as_ref() * matexp.as_ref() * unit_vec)
@@ -48,7 +48,7 @@ impl KrylovExpm {
     {
         let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim, self.iom);
         let beta = v0.norm_l2();
-        let mut unit_vec = faer::Mat::zeros(v0.nrows(), 1);
+        let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
         // let phi_k = matexp_pade::phi_ext((faer::Scale(dt) * h.as_ref()).as_ref(), k);
         // return faer::Scale(beta) * (q.as_ref() * phi_k.as_ref() * unit_vec)
