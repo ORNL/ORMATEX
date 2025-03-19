@@ -115,7 +115,11 @@ class AdDiffSEM:
 
         quad = el_nodal.GLL_quad()(self.p + 1)
         self.basis = fem.Basis(self.mesh, self.element, quadrature=quad)
+
+        self.dirichlet_bd = None
         if self.mesh.boundaries:
+            # set the left boundary to Dirichlet
+            self.dirichlet_bd = self.mesh.boundaries['left'].flatten()
             # if the mesh has boundaries, get a basis for BC
             self.basis_f = fem.FacetBasis(self.mesh, self.element)
 
@@ -158,8 +162,8 @@ class AdDiffSEM:
 
         if self.mesh.boundaries:
             # Dirichlet boundary conditions
-            fem.enforce(A, b, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
-            fem.enforce(M, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+            fem.enforce(A, b, D=self.dirichlet_bd, overwrite=True)
+            fem.enforce(M, D=self.dirichlet_bd, overwrite=True)
         else:
             # periodic boundary conditions
             fem.enforce(A, b, D=self.basis.get_dofs().flatten(), overwrite=True)
@@ -193,13 +197,25 @@ class AffineLinearSEM(OdeSplitSys):
     Ml: jax.Array
     b: jax.Array
 
+    dirichlet_bd: np.array
+
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         self.A, self.Ml, self.b = sys_assembler.assemble(**kwargs)
+
+        # Dirichlet boundary conditions
+        if sys_assembler.dirichlet_bd is not None:
+            self.dirichlet_bd = sys_assembler.dirichlet_bd
+        else:
+            self.dirichlet_bd = np.array([], dtype=int)
+
         super().__init__()
 
     @jax.jit
     def _frhs(self, t: float, u: jax.Array) -> jax.Array:
-        return (self.b - self.A @ u) / self.Ml
+        f = (self.b - self.A @ u) / self.Ml
+        # set the time derivative of the Dirichlet boundary data to zero
+        f = f.at[self.dirichlet_bd].set(0.)
+        return f
 
     @jax.jit
     def _fl(self, t: float, u: jax.Array, **kwargs):
