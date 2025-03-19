@@ -267,28 +267,39 @@ if __name__ == "__main__":
 
     # init the system
     sem = AdDiffSEM(mesh, p=args.p, params=param_dict, field_fns=field_dict)
-    ode_sys = AffineLinearSEM(sem)
+    if not args.nonautonomous:
+        ode_sys = AffineLinearSEM(sem)
+    else:
+        ode_sys = NonautonomousSEM(sem)
     t = 0.0
 
     # mesh mask for initial conditions
     xs = np.asarray(sem.collocation_points())
 
+    dist = lambda x, xp: jnp.abs(x - xp)
+    if periodic or args.nonautonomous:
+        # distance on the torus
+        dist = lambda x, xp: torus_distance(x, xp)
+
     if args.ic == "square":
         # square wave
         startx, endx = 0.1, 0.4
-        ic_points = np.where((xs > startx) & (xs < endx))
-        y0_profile = np.zeros(ode_sys.b.shape) + 1e-9
-        y0_profile[ic_points] = 1.0
+        meanx, dxhalf = (endx + startx)/2., (endx - startx)/2.
+        g_prof = lambda x: np.where(dist(meanx, x) < dxhalf, 1., 0.)
+        y0_profile = g_prof(xs)
         y0 = jnp.asarray(y0_profile)
-        g_prof_exact = lambda t, x: \
-                np.asarray([1.0 if (x_i > startx+t*vel) & (x_i < endx+t*vel) else 0.0 for x_i in x])
+        g_prof_exact = lambda t, x: g_prof(x - t*vel)
     else:
         # gaussian profile
         wc, ww = 0.3, 0.05
-        g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
+        g_prof = lambda x: np.exp(-(dist(x, wc) / (2*ww))**2.0)
         y0_profile = g_prof(xs)
         y0 = jnp.asarray(y0_profile)
-        g_prof_exact = lambda t, x: np.exp(-( ( (x - (wc+t*vel)%1 ) ) /(2*ww))**2.0)
+        g_prof_exact = lambda t, x: g_prof(x - t*vel)
+
+    # modification for Dirichlet boundary conditions
+    if sem.dirichlet_bd is not None:
+        y0 = y0.at[sem.dirichlet_bd].set(g_prof(np.array([0.])))
 
     # integrate the system
     t0 = 0.
