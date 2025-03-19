@@ -225,6 +225,35 @@ class AffineLinearSEM(OdeSplitSys):
         return DiagLinOp(self.Ml)
 
 
+class NonautonomousSEM(AffineLinearSEM):
+    """
+    Define ODE System associated to affine linear sparse Jacobian problem
+
+    The same as AffinLinearSEM, but with nonautonomous Dirichlet boundary conditions
+    """
+
+    @jax.jit
+    def dirichlet_dt(self, t: float):
+        # use the dirichlet data corresponding to default analytic solution
+        wc, ww = 0.3, 0.05
+        vel = 0.5
+        dirichlet_fun = \
+            lambda time: jnp.exp(-(torus_distance(0., (wc+time*vel))/(2*ww))**2.0)
+        # return the time derivative of the Dirichlet data
+        return jax.grad(dirichlet_fun)(t)
+
+    @jax.jit
+    def _frhs(self, t: float, u: jax.Array) -> jax.Array:
+        f = (self.b - self.A @ u) / self.Ml
+        # set the time derivative of the Dirichlet boundary data
+        f = f.at[self.dirichlet_bd].set(self.dirichlet_dt(t))
+        return f
+
+def torus_distance(x, xp):
+    #distance of two points on torus (up to equivalence)
+    dx = jnp.abs(x%1 - xp%1)
+    return jnp.where(dx > 0.5, 1. - dx, dx)
+
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
@@ -238,6 +267,7 @@ if __name__ == "__main__":
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
+    parser.add_argument("-nonautonomous", help="run nonautonomous system with external forcing", action="store_true", default=False)
     args = parser.parse_args()
 
     # create the mesh
