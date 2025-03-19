@@ -101,7 +101,6 @@ class LotkaVolterraNonauto(OdeSplitSys):
         pred_hunt_dt = f_pred_hunt_dt(t)
         fdt = jnp.array([0, - pred_hunt_dt * x[1]])
         return CustomJacLinOp(t, x, self.frhs, jac, fdt, frhs_kwargs=kwargs)
-        #return FdJacLinOp(t, x, self.frhs, frhs_kwargs=kwargs)
 
     # define a linear operator for testing
     @jax.jit
