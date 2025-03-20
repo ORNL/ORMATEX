@@ -23,13 +23,16 @@ class ExpRBIntegrator(IntegrateSys):
                       "exprb2_dense_cauchy": 2, "dense_cauchy": 1}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
+        # Exponential integration method
         self.method = method
+        # Partial fraction decomposition method
+        self.pfd_method = kwargs.get("pfd_method", "cram_16")
         if not self.method in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
         if "dense_cauchy" in method:
             if HAS_ORMATEX_RUST:
                 self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
-                    kwargs.get("expmv_method", "cram"), kwargs.get("expmv_order", 16))
+                    self.pfd_method, kwargs.get("pfd_order", 16))
             else:
                 raise AttributeError(f"{self.method} requires the rust bindings, which were not found.")
 
@@ -245,10 +248,10 @@ class ExpRBIntegrator(IntegrateSys):
             # deriv of rhs wrt time at current time
             fytt = sys_jac_lop._fdt()
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-                phi2J_fytt = f_phi_k_pole(J*dt, fytt, 2)
+                phi2J_fytt = f_phi_k_pole(J*dt, fytt, 2, self.pfd_method)
 
         # TODO eliminate redundant rational solves for nonautonomous system
-        phi1J_fyt = f_phi_k_pole(J*dt, fyt, 1)
+        phi1J_fyt = f_phi_k_pole(J*dt, fyt, 1, self.pfd_method)
 
         y_new = yt + dt * (phi1J_fyt + dt * phi2J_fytt)
 

@@ -352,7 +352,7 @@ if __name__ == "__main__":
     nsteps = 10
     dt = T / nsteps
     method = args.method
-    res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=160, iom=10)
+    res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=160, iom=10, pfd_method="CN")
     t_res, y_res = res.t_res, res.y_res
 
     # compute expected solution
