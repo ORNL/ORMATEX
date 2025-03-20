@@ -202,10 +202,15 @@ where
         let y1 = y0.as_ref() +
             self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, fy0_dt.as_ref(), 1);
 
+        // correction for nonautonomous case
+        let (phi2_v, v) = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+
         let rn_dt = faer::Scale(dt) * self.remf(
-            tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), None);
-        let y_new = y1.as_ref() + faer::Scale(2.0/3.0)*
-            self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, rn_dt.as_ref(), 2);
+            tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
+        let y_new = y1.as_ref()
+            + faer::Scale(2.0/3.0) * self.expm.apply_phi_linop(
+                sys_jac_lop.as_ref(), dt, rn_dt.as_ref(), 2)
+            + phi2_v;
 
         // estimate error in the step
         let y_err = (y_new.as_ref() - y1.as_ref()).as_ref().norm_l1().abs();
