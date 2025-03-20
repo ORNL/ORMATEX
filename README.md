@@ -90,7 +90,7 @@ Imports
 
     import jax
     from jax import numpy as jnp
-    from ormatex_py.ode_sys import OdeSys, MatrixLinOp
+    from ormatex_py.ode_sys import OdeSys, CustomJacLinOp
     from ormatex_py import integrate_wrapper
 
 Define the system
@@ -152,7 +152,7 @@ Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, au
                 [self.alpha - self.beta * x[1], - self.beta*x[0]],
                 [self.delta*x[1], self.delta*x[0] - self.gamma]
                 ])
-            return MatrixLinOp(jac)
+            return CustomJacLinOp(t, x, self.frhs, jac)
 
 #### Integrator Quick Reference
 
