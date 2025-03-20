@@ -262,7 +262,7 @@ if __name__ == "__main__":
     print(f"Running on {jax.devices()}.")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
+    parser.add_argument("-ic", help="one of [square, zero, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")

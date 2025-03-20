@@ -460,7 +460,7 @@ class OdeSysNp(OdeSys):
         # Alternatively, a pure numpy implementation is acceptable,
         # but JAX can be powerful for automatic differentiation
         # and GPU acceleration of the system model.
-        inner_frhs = self.inner._frhs(t, x, **kwargs).reshape((-1, ), order='F')
+        inner_frhs = self.inner._frhs(t, x.flatten(), **kwargs).reshape((-1, ), order='F')
         return np.asarray(inner_frhs)
 
     def _fjac(self, t, x, **kwargs):
