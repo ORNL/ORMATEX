@@ -9,7 +9,7 @@ from functools import partial
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all
+from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pole
 try:
     import ormatex_py.ormatex as ormatex_rs
     HAS_ORMATEX_RUST = True
@@ -19,7 +19,8 @@ except ImportError:
 class ExpRBIntegrator(IntegrateSys):
 
     _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3,
-                      "exprb2_dense": 2, "exprb2_dense_cauchy": 2, "dense_cauchy": 1}
+                      "exprb2_dense": 2, "exprb2_pfd": 2,
+                      "exprb2_dense_cauchy": 2, "dense_cauchy": 1}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
         self.method = method
@@ -224,32 +225,64 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    def _step_exprb2_pfd(self, dt: float) -> StepResult:
+        r"""
+        Computes the solution update by:
+        y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
+        where J is the dense Jacobian matrix and varphi is computed
+        using partial fraction decomposition
+        """
+        t = self.t
+        yt = self.y_hist[0]
+        sys_jac_lop = self.sys.fjac(t, yt)
+        fyt = sys_jac_lop._frhs_cached()
+
+        J = sys_jac_lop.dense()
+
+        # check for nonautonomous system
+        phi2J_fytt = 0.
+        if self.tol_fdt >= 0.:
+            # deriv of rhs wrt time at current time
+            fytt = sys_jac_lop._fdt()
+            if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
+                phi2J_fytt = f_phi_k_pole(J*dt, fytt, 2)
+
+        # TODO eliminate redundant rational solves for nonautonomous system
+        phi1J_fyt = f_phi_k_pole(J*dt, fyt, 1)
+
+        y_new = yt + dt * (phi1J_fyt + dt * phi2J_fytt)
+
+        y_err = -1.
+        return StepResult(t+dt, dt, y_new, y_err)
+
     def _step_exprb2_dense_cauchy(self, dt: float) -> StepResult:
         r"""
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*L)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
-        where L is a dense matrix and computing varphi
+        y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
+        where J is the dense Jacobian matrix and varphi is computed
         using cauchy contour integral approach with quadrature rule
         """
         t = self.t
         yt = self.y_hist[0]
-        # y_new, y_err = ExpRBIntegrator._cram_rs(t, yt, dt, self.sys)
         sys_jac_lop = self.sys.fjac(t, yt)
         fyt = sys_jac_lop._frhs_cached()
 
         J = np.asarray(sys_jac_lop.dense())
 
         # check for nonautonomous system
-        phi2_fytt = 0.
+        phi2J_fytt = 0.
         if self.tol_fdt >= 0.:
             # deriv of rhs wrt time at current time
             fytt = sys_jac_lop._fdt()
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-                phi2_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2).flatten()
-                phi2_fytt = (dt**2.0)*jnp.asarray(phi2_fytt)
+                phi2J_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2).flatten()
+                phi2J_fytt = jnp.asarray(phi2J_fytt)
 
         phi1J_fyt = self.phikv_dense_rs.eval(J, dt, np.asarray(fyt).reshape(-1,1), 1).flatten()
-        y_new = yt + dt * jnp.asarray(phi1J_fyt) + phi2_fytt
+        phi1J_fyt = jnp.asarray(phi1J_fyt)
+
+        y_new = yt + dt * (phi1J_fyt + dt * phi2J_fytt)
+
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
@@ -283,6 +316,8 @@ class ExpRBIntegrator(IntegrateSys):
                 return self._step_epi2(dt)
         elif self.method == "exprb2_dense":
             return self._step_exprb2_dense(dt)
+        elif self.method == "exprb2_pfd":
+            return self._step_exprb2_pfd(dt)
         elif self.method == "exprb2_dense_cauchy" and HAS_ORMATEX_RUST:
             return self._step_exprb2_dense_cauchy(dt)
         elif self.method == "dense_cauchy" and HAS_ORMATEX_RUST:
