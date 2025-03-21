@@ -266,6 +266,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-pfd_method", help="partial frac decomp method", type=str, default="CN")
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-nonautonomous", help="run nonautonomous system with external forcing", action="store_true", default=False)
     args = parser.parse_args()
@@ -352,7 +353,8 @@ if __name__ == "__main__":
     nsteps = 10
     dt = T / nsteps
     method = args.method
-    res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=160, iom=10, pfd_method="CN")
+    pfd_method = args.pfd_method
+    res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=160, iom=10, pfd_method=pfd_method)
     t_res, y_res = res.t_res, res.y_res
 
     # compute expected solution
