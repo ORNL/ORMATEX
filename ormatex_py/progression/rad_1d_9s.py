@@ -114,11 +114,20 @@ class RAD_SEM(OdeSplitSys):
     xs: jax.Array
     region_rx: jax.Array
 
+    dirichlet_bd: np.array
+
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         # get stiffness matrix and mass vector
         self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
         # get collocation points
         self.xs = sys_assembler.collocation_points()
+
+        # Dirichlet boundary conditions
+        if sys_assembler.dirichlet_bd is not None:
+            self.dirichlet_bd = sys_assembler.dirichlet_bd
+        else:
+            self.dirichlet_bd = np.array([], dtype=int)
+
         # get bateman matrix
         self.bat_mat = gen_bateman_matrix(keymap, decay_lib)
         # reactor height and center
@@ -187,6 +196,8 @@ class RAD_SEM(OdeSplitSys):
         lub = un @ self.bat_mat.transpose()
         # full system
         udot = lub + (s_fis + s_trans + s_evap + s_rem) - (self.A @ un) / self.Ml.reshape((-1, 1))
+        # set the time derivative of the Dirichlet boundary data to zero
+        udot = udot.at[self.dirichlet_bd,:].set(0.)
         # integrators currently expect a flat U
         return flatten_u(udot)
 
@@ -217,7 +228,7 @@ if __name__ == "__main__":
     parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
-    parser.add_argument("-nsteps", help="basis order", type=int, default=100)
+    parser.add_argument("-nsteps", help="number of time steps", type=int, default=100)
     parser.add_argument("-multi_plot", help="multiple plots", action='store_true', default=False)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")

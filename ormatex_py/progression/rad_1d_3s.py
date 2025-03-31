@@ -41,11 +41,20 @@ class RAD_SEM(OdeSplitSys):
     Ml: jax.Array
     xs: jax.Array
 
+    dirichlet_bd: np.array
+
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         # get stiffness matrix and mass vector
         self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
         # get collocation points
         self.xs = sys_assembler.collocation_points()
+
+        # Dirichlet boundary conditions
+        if sys_assembler.dirichlet_bd is not None:
+            self.dirichlet_bd = sys_assembler.dirichlet_bd
+        else:
+            self.dirichlet_bd = np.array([], dtype=int)
+
         # get bateman matrix
         self.bat_mat = gen_bateman_matrix(keymap, decay_lib)
         super().__init__()
@@ -58,6 +67,8 @@ class RAD_SEM(OdeSplitSys):
         lub = un @ self.bat_mat.transpose()
         # full system
         udot = lub - (self.A @ un) / self.Ml.reshape((-1, 1))
+        # set the time derivative of the Dirichlet boundary data to zero
+        udot = udot.at[self.dirichlet_bd,:].set(0.)
         # integrators currently expect a flat U
         return flatten_u(udot)
 
@@ -134,11 +145,13 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # initial profiles for each species
     wc, ww = 0.4, 0.05
     g_prof0 = lambda x: 0.0*x + 1e-16
-    g_prof1 = lambda x: np.exp(-((x-wc)/(2*ww))**2.0) * 1.0
     if periodic:
+        g_prof1 = lambda x: np.exp(-((1.0-((x - wc) % 1)) / (2*ww))**2.0) + \
+            np.exp(-((((x - wc) % 1)) / (2*ww))**2.0)
         g_prof_exact = lambda t, x: np.exp(-((1.0-((x - (wc+t*vel)) % 1)) / (2*ww))**2.0) + \
             np.exp(-((((x - (wc+t*vel)) % 1)) / (2*ww))**2.0)
     else:
+        g_prof1 = lambda x: np.exp(-((x-wc)/(2*ww))**2.0) * 1.0
         g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel)) / (2*ww))**2.0)
     y0_profile = [
             g_prof1(xs),
@@ -233,7 +246,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-dt", help="time step size", type=float, default=0.1)
-    parser.add_argument("-tf", help="final time", type=float, default=2.0)
+    parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
