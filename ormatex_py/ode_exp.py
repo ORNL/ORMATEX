@@ -357,18 +357,16 @@ class ExpSplitIntegrator(IntegrateSys):
         self._cached_dt = None
 
     def _remf(self, tr: float, yr: jax.Array,
-              frhs_yt: jax.Array, sys_lop: LinOp, v=0.0):
+              frhs_yt: jax.Array, sys_lop: LinOp):
         """
-        Computes remainder R(yr) = frhs(yr) - frhs(yt) - L*(yr-y0) - v*(tr-t0)
-        where
-        v = d(frhs)/dt
+        Computes remainder R(yr) = frhs(yr) - frhs(yt) - L*(yr-yt)
         """
         t = self.t_hist[0]
         yt = self.y_hist[0]
         dt = tr - t
         frhs_yr = self.sys.frhs(tr, yr)
         L_yd = sys_lop(yr - yt)
-        return frhs_yr - frhs_yt - L_yd - v*dt
+        return frhs_yr - frhs_yt - L_yd
 
     def _step_exp1(self, dt: float) -> StepResult:
         """
@@ -459,7 +457,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
     def _update_dense_phiLs(self, dt: float, cks: list[tuple[float,list[int]]]):
         if not (self._cached_dt and self._cached_dt == dt):
-            # TODO: L is only evaluated the first step (t0, yt) or if dt changes
+            # TODO: L is only evaluated the first step (t0, y0) or if dt changes.
             #   for some examples, want to update L once t or y changes substantially
             self._cached_sys_lop = self.sys.fl(self.t, self.y_hist[0])
             L = self._cached_sys_lop.dense()
