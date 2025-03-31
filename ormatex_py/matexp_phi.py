@@ -192,15 +192,14 @@ def f_phi_k_appl(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
 
     return phi_kb
 
-@partial(jax.jit, static_argnums=(2,))
-def f_phi_k_pole(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
+@partial(jax.jit, static_argnums=(2, 3))
+def f_phi_k_pole(z: jax.Array, b: jax.Array, k: int, method: str) -> jax.Array:
     """
     Computes phi_k(Z)B for dense Z and dense B, using a rational approximation and partial fraction expansion
     """
     N, M, B = _validate_args_appl(z, b, k)
 
     # poles
-    method = 'cram_16' #'cram_16'
     ps, cs, c0 = _pole_dict[method]
 
     phi_kb = jnp.zeros(B.shape)

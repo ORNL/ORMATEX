@@ -213,7 +213,7 @@ fn select_solver<'a>(
     }
     // exp integrator family is default
     let expmv: Box<dyn DensePhikvEvaluator> = match expmv_method.as_str() {
-        "cram" => { Box::new(matexp_cauchy::gen_cram_expm(16)) },
+        "cram" | "cram_16" => { Box::new(matexp_cauchy::gen_cram_expm(16)) },
         "parabolic" => { Box::new(matexp_cauchy::gen_parabolic_expm(24)) },
         // pade is default
         _ => { Box::new(PadeExpm::new(12)) },
@@ -338,7 +338,7 @@ impl DensePhikvEvalRs {
     #[new]
     pub fn new(method: String, order: usize) -> Self {
         let evaluator: Box<dyn DensePhikvEvaluator> = match method.as_str() {
-            "cram" => { Box::new(matexp_cauchy::gen_cram_expm(order)) },
+            "cram" | "cram_16" => { Box::new(matexp_cauchy::gen_cram_expm(order)) },
             "parabolic" => { Box::new(matexp_cauchy::gen_parabolic_expm(order)) },
             // pade is default
             _ => { Box::new(PadeExpm::new(order)) },
