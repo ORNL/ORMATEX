@@ -115,7 +115,11 @@ class AdDiffSEM:
 
         quad = el_nodal.GLL_quad()(self.p + 1)
         self.basis = fem.Basis(self.mesh, self.element, quadrature=quad)
+
+        self.dirichlet_bd = None
         if self.mesh.boundaries:
+            # set the left boundary to Dirichlet
+            self.dirichlet_bd = self.mesh.boundaries['left'].flatten()
             # if the mesh has boundaries, get a basis for BC
             self.basis_f = fem.FacetBasis(self.mesh, self.element)
 
@@ -158,8 +162,8 @@ class AdDiffSEM:
 
         if self.mesh.boundaries:
             # Dirichlet boundary conditions
-            fem.enforce(A, b, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
-            fem.enforce(M, D=self.mesh.boundaries['left'].flatten(), overwrite=True)
+            fem.enforce(A, b, D=self.dirichlet_bd, overwrite=True)
+            fem.enforce(M, D=self.dirichlet_bd, overwrite=True)
         else:
             # periodic boundary conditions
             fem.enforce(A, b, D=self.basis.get_dofs().flatten(), overwrite=True)
@@ -193,13 +197,25 @@ class AffineLinearSEM(OdeSplitSys):
     Ml: jax.Array
     b: jax.Array
 
+    dirichlet_bd: np.array
+
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         self.A, self.Ml, self.b = sys_assembler.assemble(**kwargs)
+
+        # Dirichlet boundary conditions
+        if sys_assembler.dirichlet_bd is not None:
+            self.dirichlet_bd = sys_assembler.dirichlet_bd
+        else:
+            self.dirichlet_bd = np.array([], dtype=int)
+
         super().__init__()
 
     @jax.jit
     def _frhs(self, t: float, u: jax.Array) -> jax.Array:
-        return (self.b - self.A @ u) / self.Ml
+        f = (self.b - self.A @ u) / self.Ml
+        # set the time derivative of the Dirichlet boundary data to zero
+        f = f.at[self.dirichlet_bd].set(0.)
+        return f
 
     @jax.jit
     def _fl(self, t: float, u: jax.Array, **kwargs):
@@ -208,6 +224,35 @@ class AffineLinearSEM(OdeSplitSys):
     def _fm(self, t: float, u: jax.Array, **kwargs):
         return DiagLinOp(self.Ml)
 
+
+class NonautonomousSEM(AffineLinearSEM):
+    """
+    Define ODE System associated to affine linear sparse Jacobian problem
+
+    The same as AffinLinearSEM, but with nonautonomous Dirichlet boundary conditions
+    """
+
+    @jax.jit
+    def dirichlet_dt(self, t: float):
+        # use the dirichlet data corresponding to default analytic solution
+        wc, ww = 0.3, 0.05
+        vel = 0.5
+        dirichlet_fun = \
+            lambda time: jnp.exp(-(torus_distance(0., (wc+time*vel))/(2*ww))**2.0)
+        # return the time derivative of the Dirichlet data
+        return jax.grad(dirichlet_fun)(t)
+
+    @jax.jit
+    def _frhs(self, t: float, u: jax.Array) -> jax.Array:
+        f = (self.b - self.A @ u) / self.Ml
+        # set the time derivative of the Dirichlet boundary data
+        f = f.at[self.dirichlet_bd].set(self.dirichlet_dt(t))
+        return f
+
+def torus_distance(x, xp):
+    #distance of two points on torus (up to equivalence)
+    dx = jnp.abs(x%1 - xp%1)
+    return jnp.where(dx > 0.5, 1. - dx, dx)
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
@@ -222,6 +267,7 @@ if __name__ == "__main__":
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
+    parser.add_argument("-nonautonomous", help="run nonautonomous system with external forcing", action="store_true", default=False)
     args = parser.parse_args()
 
     # create the mesh
@@ -251,28 +297,39 @@ if __name__ == "__main__":
 
     # init the system
     sem = AdDiffSEM(mesh, p=args.p, params=param_dict, field_fns=field_dict)
-    ode_sys = AffineLinearSEM(sem)
+    if not args.nonautonomous:
+        ode_sys = AffineLinearSEM(sem)
+    else:
+        ode_sys = NonautonomousSEM(sem)
     t = 0.0
 
     # mesh mask for initial conditions
     xs = np.asarray(sem.collocation_points())
 
+    dist = lambda x, xp: jnp.abs(x - xp)
+    if periodic or args.nonautonomous:
+        # distance on the torus
+        dist = lambda x, xp: torus_distance(x, xp)
+
     if args.ic == "square":
         # square wave
         startx, endx = 0.1, 0.4
-        ic_points = np.where((xs > startx) & (xs < endx))
-        y0_profile = np.zeros(ode_sys.b.shape) + 1e-9
-        y0_profile[ic_points] = 1.0
+        meanx, dxhalf = (endx + startx)/2., (endx - startx)/2.
+        g_prof = lambda x: np.where(dist(meanx, x) < dxhalf, 1., 0.)
+        y0_profile = g_prof(xs)
         y0 = jnp.asarray(y0_profile)
-        g_prof_exact = lambda t, x: \
-                np.asarray([1.0 if (x_i > startx+t*vel) & (x_i < endx+t*vel) else 0.0 for x_i in x])
+        g_prof_exact = lambda t, x: g_prof(x - t*vel)
     else:
         # gaussian profile
         wc, ww = 0.3, 0.05
-        g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
+        g_prof = lambda x: np.exp(-(dist(x, wc) / (2*ww))**2.0)
         y0_profile = g_prof(xs)
         y0 = jnp.asarray(y0_profile)
-        g_prof_exact = lambda t, x: np.exp(-( ( (x - (wc+t*vel)%1 ) ) /(2*ww))**2.0)
+        g_prof_exact = lambda t, x: g_prof(x - t*vel)
+
+    # modification for Dirichlet boundary conditions
+    if sem.dirichlet_bd is not None:
+        y0 = y0.at[sem.dirichlet_bd].set(g_prof(np.array([0.])))
 
     # integrate the system
     t0 = 0.
