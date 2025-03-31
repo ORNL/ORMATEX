@@ -9,7 +9,7 @@ from functools import partial
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pole
+from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd
 try:
     import ormatex_py.ormatex as ormatex_rs
     HAS_ORMATEX_RUST = True
@@ -248,10 +248,10 @@ class ExpRBIntegrator(IntegrateSys):
             # deriv of rhs wrt time at current time
             fytt = sys_jac_lop._fdt()
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-                phi2J_fytt = f_phi_k_pole(J*dt, fytt, 2, self.pfd_method)
+                phi2J_fytt = f_phi_k_pfd(J*dt, fytt, 2, self.pfd_method)
 
         # TODO eliminate redundant rational solves for nonautonomous system
-        phi1J_fyt = f_phi_k_pole(J*dt, fyt, 1, self.pfd_method)
+        phi1J_fyt = f_phi_k_pfd(J*dt, fyt, 1, self.pfd_method)
 
         y_new = yt + dt * (phi1J_fyt + dt * phi2J_fytt)
 
