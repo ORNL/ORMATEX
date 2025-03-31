@@ -5,9 +5,8 @@ from functools import partial
 import numpy as np
 import jax
 from jax import numpy as jnp
-import equinox as eqx
-
 import warnings
+
 
 def f_phi_k(z: jax.Array, k: int) -> jax.Array:
     """
@@ -22,11 +21,13 @@ def f_phi_k(z: jax.Array, k: int) -> jax.Array:
 
     return phi_k
 
+
 def _validate_args(z: jax.Array, k: int):
     assert k >= 0
     N, M = z.shape
     assert N == M
     return N
+
 
 @partial(jax.jit, static_argnums=(1,2))
 def f_phi_k_inv(z: jax.Array, k: int, eps: float) -> (jax.Array, float):
@@ -57,6 +58,7 @@ def f_phi_k_inv(z: jax.Array, k: int, eps: float) -> (jax.Array, float):
             #jax.debug.print("phi_k: {M}, err_est: {err_est}", M=phi_k, err_est=err_est)
     return phi_k, err_est
 
+
 @partial(jax.jit, static_argnums=(1,2))
 def f_phi_k_ext(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
     """
@@ -79,6 +81,7 @@ def f_phi_k_ext(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
     else:
         phi_k = phi_ks[:N,-N:]
         return phi_k
+
 
 @partial(jax.jit, static_argnums=(1,2))
 def f_phi_k_poly_all(z: jax.Array, k: int, poly_deg: int=4) -> list[jax.Array]:
@@ -105,6 +108,7 @@ def f_phi_k_poly_all(z: jax.Array, k: int, poly_deg: int=4) -> list[jax.Array]:
         fact_j = fact_j / j
 
     return phi_ks
+
 
 @partial(jax.jit, static_argnums=(1,))
 def f_phi_k_sq_all(z: jax.Array, k: int) -> list[jax.Array]:
@@ -173,6 +177,7 @@ def _validate_args_appl(z: jax.Array, b: jax.Array, k: int):
 
     return N, M, B
 
+
 @partial(jax.jit, static_argnums=(2,))
 def f_phi_k_appl(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
     """
@@ -191,6 +196,7 @@ def f_phi_k_appl(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
         phi_kb = jax.scipy.linalg.expm(z) @ b
 
     return phi_kb
+
 
 @partial(jax.jit, static_argnums=(2, 3))
 def f_phi_k_pole(z: jax.Array, b: jax.Array, k: int, method: str) -> jax.Array:
@@ -241,25 +247,19 @@ _pole_dict = {
             -4.26534836471*1.495681999245/2,
              2.50083847742*3.820326308790/2 ],
           0.),
-#0.04114194770720298: -0.00014326417099274583
-#0.10758317466073569: 0.002376694093673533
-#0.29832604345073066: -0.03921102269323874
-#0.7460236275603809: 0.48461597829260533
-#1.6908383487041962: -3.2441209848984927
-#5.60080011960195: 2.1380484058175866
-    '7': ([ 0.04728751770480, 
-            0.09389080167724, 
-            0.20796050989930, 
-            0.45742555418024, 
-            0.92942003356271, 
-            1.84299554257902, 
+    '7': ([ 0.04728751770480,
+            0.09389080167724,
+            0.20796050989930,
+            0.45742555418024,
+            0.92942003356271,
+            1.84299554257902,
             4.57055955536047 ],
-          [  0.000163577680840*0.04728751770480/2,  
-            -0.001764825301114*0.09389080167724/2,  
-             0.017086342009571*0.20796050989930/2,  
-            -0.166269759575889*0.45742555418024/2,  
-             1.154271032677210*0.92942003356271/2,  
-            -4.992218084698426*1.84299554257902/2,  
+          [  0.000163577680840*0.04728751770480/2,
+            -0.001764825301114*0.09389080167724/2,
+             0.017086342009571*0.20796050989930/2,
+            -0.166269759575889*0.45742555418024/2,
+             1.154271032677210*0.92942003356271/2,
+            -4.992218084698426*1.84299554257902/2,
              3.489846378219987*4.57055955536047/2 ],
           0.),
     '9': ([ 0.056131797854510,
