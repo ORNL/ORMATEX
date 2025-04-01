@@ -184,7 +184,7 @@ if __name__ == "__main__":
     xs = np.asarray(sem.basis.doflocs.flatten())
 
     # initial profiles for each species
-    wc, ww = 0.3, 2*0.05
+    wc, ww = 0.3, 0.05
     g_prof = lambda x: np.exp(-((x-wc)/(2*ww))**2.0)
     g_prof2 = lambda x: 0.2*np.exp(-((x-wc)/(2*ww))**2.0)
     y0_profile = [g_prof(xs), g_prof2(xs)]
