@@ -226,7 +226,7 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
 
 def run_sweep():
     methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense",
-               "exprb2_dense", "exprb2_dense_cauchy", "dense_cauchy",
+               "exprb2_dense", "exprb2_pfd_rs", "exp_pfd_rs",
                "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
     dts = [1., 2., 5., 10., 25., 50.]
     tf = 100.

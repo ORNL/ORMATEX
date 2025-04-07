@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 from ormatex_py.ode_sys import MatrixLinOp
 from ormatex_py.matexp_krylov import phi_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k, f_phi_k_ext, f_phi_k_appl, f_phi_k_sq
+from ormatex_py.matexp_phi import f_phi_k, f_phi_k_ext, f_phi_k_appl, f_phi_k_sq, f_phi_k_pfd
 
 jax.config.update("jax_enable_x64", True)
 
@@ -24,11 +24,11 @@ ref_phi = np.array([
     [ 0.10808308959542341,  0.1266237199582164,   0.15124928069313592,
       0.18476090064484876,  0.23154914510216867,  0.29863201236633136 ]])
 
+
 def test_phi_0():
     """
     Computes phi_0(A) == exp(A)
     """
-
     # test a diagonal matrix with reference values
     d_z = jnp.diag(ref_z)
     jax_phi_0 = f_phi_k(d_z, k=0)
@@ -52,6 +52,7 @@ def test_phi_0():
         jax_phi_0_sq = f_phi_k_sq(test_a, k=0)
         assert jnp.allclose(np_phi_0, jax_phi_0_sq)
 
+
 def run_test_phi_k(k):
     # test a diagonal matrix with reference values
     if k < ref_phi.shape[0]:
@@ -74,14 +75,15 @@ def run_test_phi_k(k):
         jax_phi_k_ext = f_phi_k_ext(test_a, k=k)
         assert jnp.allclose(jax_phi_k, jax_phi_k_ext)
         jax_phi_k_sq = f_phi_k_sq(test_a, k=k)
-        #jax.debug.print("{a}\n{b}", a=jax_phi_k, b=jax_phi_k_poly)
         assert jnp.allclose(jax_phi_k_sq, jax_phi_k_ext)
+
 
 def test_phi_1():
     """
     Computes phi_1(A)
     """
     run_test_phi_k(1)
+
 
 def test_phi_k_seqential():
     """
@@ -90,11 +92,11 @@ def test_phi_k_seqential():
     for k in range(2, ref_phi.shape[0]):
         run_test_phi_k(k)
 
+
 def test_phi_k_all():
     """
     test routines that compute phi_k(A) for all k < k_max
     """
-
     k_max = ref_phi.shape[0]-1
     d_z = jnp.diag(ref_z)
     jax_phi_ks = f_phi_k_ext(d_z, k=k_max, return_all=True)
@@ -103,6 +105,7 @@ def test_phi_k_all():
     jax_phi_ks = f_phi_k_sq(d_z, k=k_max, return_all=True)
     jax.debug.print("{a}\n{b}", a=diags(jax_phi_ks), b=ref_phi)
     assert jnp.allclose(diags(jax_phi_ks), ref_phi)
+
 
 def test_phi_k_appl():
     """
@@ -128,12 +131,26 @@ def test_phi_k_appl():
             jax_phi_k_b = f_phi_k_appl(test_a, test_b, k=k)
             assert jnp.allclose(jax_phi_k @ test_b, jax_phi_k_b)
 
+
+def test_phi_k_appl_pfd():
+    """
+    Test partial fraction decomposition calc of phi_k(A)b products
+    """
+    pfd_methods = ["cram_16"]
+    for pfd_method in pfd_methods:
+        for k in range(ref_phi.shape[0]):
+            # test a diagonal matrix with reference values
+            d_z = jnp.diag(ref_z)
+            b = jnp.ones((ref_phi.shape[1],))
+            phi_k_b = f_phi_k_pfd(d_z, b, k=k, method=pfd_method)
+            assert jnp.allclose(phi_k_b, ref_phi[k,:])
+
+
 def test_phi_linop_0():
     """
     Computes phi_0(A*dt)*b
     via Krylov approx
     """
-
     # test a diagonal matrix with reference values
     d_z = np.diag(ref_z)
     d_z_lo = MatrixLinOp(jnp.asarray(d_z))
@@ -157,12 +174,12 @@ def test_phi_linop_0():
 
         assert jnp.allclose(np_phi_0 @ b, jax_phi_0_b)
 
+
 def test_phi_linop_1():
     """
     Computes phi_1(A*dt)*b
     via Krylov approx
     """
-
     # test a diagonal matrix with reference values
     d_z = np.diag(ref_z)
     d_z_lo = MatrixLinOp(jnp.asarray(d_z))
@@ -170,6 +187,7 @@ def test_phi_linop_1():
     jax_phi_1_b = phi_linop(
         d_z_lo, 1.0, b, k=1, max_krylov_dim=ref_z.shape[0], iom=100)
     assert jnp.allclose(jax_phi_1_b, ref_phi[1,:])
+
 
 def test_kiops_fixedstep():
     """
@@ -202,6 +220,7 @@ def test_kiops_fixedstep():
     vb = [test_b0, test_b1, test_b2]
     phipm_phi_combo = kiops_fixedsteps(test_a_lo, dt, vb, max_krylov_dim=10, iom=10, n_steps=1)
     assert jnp.allclose(phipm_phi_combo, base_phi_combo, atol=1e-6)
+
 
 def test_phi_badmat_1():
     """
