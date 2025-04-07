@@ -20,7 +20,7 @@ class ExpRBIntegrator(IntegrateSys):
 
     _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3,
                       "exprb2_dense": 2, "exprb2_pfd": 2,
-                      "exprb2_dense_cauchy": 2, "dense_cauchy": 1}
+                      "exprb2_pfd_rs": 2, "exp_pfd_rs": 1}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
         # Exponential integration method
@@ -29,7 +29,7 @@ class ExpRBIntegrator(IntegrateSys):
         self.pfd_method = kwargs.get("pfd_method", "cram_16")
         if not self.method in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
-        if "dense_cauchy" in method:
+        if "pfd_rs" in method:
             if HAS_ORMATEX_RUST:
                 self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
                     self.pfd_method, kwargs.get("pfd_order", 16))
@@ -258,7 +258,7 @@ class ExpRBIntegrator(IntegrateSys):
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_exprb2_dense_cauchy(self, dt: float) -> StepResult:
+    def _step_exprb2_pfd_rs(self, dt: float) -> StepResult:
         r"""
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
@@ -289,7 +289,7 @@ class ExpRBIntegrator(IntegrateSys):
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_dense_cauchy(self, dt: float) -> StepResult:
+    def _step_exp_pfd_rs(self, dt: float) -> StepResult:
         r"""
         Computes the solution update by:
         y_{t+1} = \varphi_0(dt*L)*y0
@@ -321,10 +321,10 @@ class ExpRBIntegrator(IntegrateSys):
             return self._step_exprb2_dense(dt)
         elif self.method == "exprb2_pfd":
             return self._step_exprb2_pfd(dt)
-        elif self.method == "exprb2_dense_cauchy" and HAS_ORMATEX_RUST:
-            return self._step_exprb2_dense_cauchy(dt)
-        elif self.method == "dense_cauchy" and HAS_ORMATEX_RUST:
-            return self._step_dense_cauchy(dt)
+        elif self.method == "exprb2_pfd_rs" and HAS_ORMATEX_RUST:
+            return self._step_exprb2_pfd_rs(dt)
+        elif self.method == "exp_pfd_rs" and HAS_ORMATEX_RUST:
+            return self._step_exp_pfd_rs(dt)
         else:
             raise NotImplementedError
 
