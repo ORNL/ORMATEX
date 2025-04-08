@@ -378,7 +378,8 @@ class ExpLejaIntegrator(IntegrateSys):
         # estimate largest magnitude eigenvalue and corrosponding eigenvec by power iter
         # store eigenvector for next step to speed convergence of power iterations in
         # subsequent calls to power iter method.
-        shift, scale, max_eig, self._leja_bk = leja_shift_scale(a_tilde_lo, n, self.leja_max_power_iter, self._leja_bk)
+        shift, scale, max_eig, self._leja_bk = leja_shift_scale(
+                a_tilde_lo, v.shape[0], self.leja_max_power_iter, self._leja_bk)
 
         # compute phi-vector products by leja interpolation
         y_update, leja_iters, converged = leja_phikv_extended(
