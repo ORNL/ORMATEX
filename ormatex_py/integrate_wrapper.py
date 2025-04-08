@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from ormatex_py.ode_sys import OdeSys
-from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
+from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator, ExpLejaIntegrator
 from ormatex_py.ode_explicit import RKIntegrator
 
 try:
@@ -48,13 +48,16 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     is_rs = method in ["exprb2_rs", "exprb3_rs", "epi2_rs", "epi3_rs",
                        "bdf2_rs", "bdf1_rs", "backeuler_rs", "cn_rs"]
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
+    is_leja = method in ExpLejaIntegrator._valid_methods.keys()
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
     is_rk = method in RKIntegrator._valid_methods.keys()
     c_res = {}
-    if is_rb or is_split or is_rk:
+    if is_rb or is_split or is_rk or is_leja:
         # init the time integrator
         if is_rb:
             sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, **kwargs)
+        elif is_leja:
+            sys_int = ExpLejaIntegrator(ode_sys, t0, y0, method=method, **kwargs)
         elif is_split:
             sys_int = ExpSplitIntegrator(ode_sys, t0, y0, method=method, **kwargs)
         elif is_rk:

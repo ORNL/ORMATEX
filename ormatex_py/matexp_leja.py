@@ -61,6 +61,44 @@ def gen_leja(n=100):
     pass
 
 
+@partial(jax.jit, static_argnums=(2))
+def power_iter(a_lop: LinOp, b0: jax.Array, iter: int):
+    """
+    Performs power iteration to find dominate eigenvalue of system
+    """
+    # b_k = jax.random.uniform(jax.random.key(42), (dim,))
+    # inital guess for eigenvector
+    tol = 1.0e-3
+    b_k = b0.at[:].get()
+    eig_last = 1e20
+    # for _ in range(iter):
+    #     b_k1 = a_lop.matvec(b_k)
+    #     eig_a = (b_k.transpose() @ b_k1) / \
+    #             (b_k.transpose() @ b_k)
+    #     b_k1_norm = jnp.linalg.norm(b_k1)
+    #     b_k = b_k1 / b_k1_norm
+    #     if eig_diff < tol:
+    #         break
+    #     eig_last = eig_a
+    # jax version of above
+    def body_power_iter(args):
+        # unpack args: (i, bk, eig_a)
+        i, b_k, eig_old, _ = args
+        b_k1 = a_lop.matvec(b_k)
+        eig_new = (b_k.transpose() @ b_k1) / \
+                (b_k.transpose() @ b_k)
+        b_k1_norm = jnp.linalg.norm(b_k1)
+        b_k = b_k1 / b_k1_norm
+        i += 1
+        return i, b_k, eig_new, eig_old
+    def cond_power_iter(args):
+        i, b_k, eig_new, eig_old = args
+        eig_diff = jnp.abs(eig_new - eig_old)
+        return (eig_diff > tol) & (i < iter)
+    _, b_k, eig_a, _ = lax.while_loop(cond_power_iter, body_power_iter, (0, b_k, eig_last, 1.0))
+    return eig_a, b_k
+
+
 @jax.jit
 def newton_poly_div_diff(x: jax.Array, y: jax.Array):
     """
@@ -123,6 +161,68 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, coeff: float, shift: f
     # expmv, n_iters, converged
     return poly_expmv, i, converged
 
+def leja_phikv_extended(
+    a_tilde_lo: LinOp, dt: float, v: jax.Array, leja_x: jax.Array, n: int, shift: float, scale: float,
+        n_substeps: int=1, tol: float=1.0e-6) -> jax.Array:
+    w, iter, converged = real_leja_expmv(a_tilde_lo, 1.0, v, 1.0,
+              shift, scale, leja_x, tol)
+    return w[0:n], iter, converged
+
+def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=None, scale_factor: float=1.1):
+    """
+    Args:
+        max_power_iter: maximum number of power iterations
+        b0: vector. Initial guess for principle eigenvector of A
+        scale_factor: saftey factor for largest eig magnitude to ensure leja points
+            encompass the system jacobian spectrum
+    """
+    if b0 is not None:
+        assert len(b0) == dim
+    else:
+        b0 = jax.random.uniform(jax.random.key(42), (dim,))
+    max_eig, b = power_iter(a_tilde_lo, b0, max_power_iter)
+    alpha = max_eig * scale_factor
+    shift = alpha / 2.
+    scale = alpha / 4.
+    return shift, scale, max_eig, b
+
+def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
+    """
+    Builds extended linear system.
+
+    Args:
+        a_lo:  System Linear operator
+        dt: time step size
+        vb: list of rhs vectors to which :math:`A` will be applied to
+
+    Builds the matrix:
+
+    .. math::
+
+        \tilde A = [[A, B],[0, K]]
+
+    where A = a_lo is NxN,
+    B = vb[:0:-1] is Nxp,
+    K = [[0, I_{p-1}],[0, 0]] is pxp,
+    :math:` \tilde A ` is N+p x N+p
+    """
+    p = len(vb) - 1
+    n = vb[0].shape[0]
+
+    # build B
+    b = jnp.vstack(vb[:0:-1]).T
+
+    # build \tilde A
+    k = np.zeros((p,p))
+    k[0:p-1, 1:] = np.eye(p-1)
+    k = jnp.asarray(k)
+    a_tilde_lo = AugMatrixLinOp(a_lo, dt, b, k)
+
+    unit_vec = np.zeros(p)
+    unit_vec[-1] = 1.0
+    v = jnp.concat((vb[0], jnp.asarray(unit_vec)))
+    return a_tilde_lo, v, n
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
@@ -143,16 +243,22 @@ if __name__ == "__main__":
     # generate a matrix and wrap as a linear operator
     a = np.array([[-1.25, 0.0],
                   [1.25, -0.5]])
+    dim = len(a)
     eigs_a = np.linalg.eig(a)[0]
-    max_abs_eig = np.max(np.abs(eigs_a))
-    print("eigs:", eigs_a)
-    # TODO: estimate largest eig by power iter
-    alpha = -max_abs_eig
-    shift = alpha / 2.
-    scale = alpha / 4.
     a = jnp.asarray(a)
+    print("eigs a:", eigs_a)
+
     a_lop = MatrixLinOp(a)
     u = jnp.ones(len(a))
+    # Estimate largest eig by power iter
+    b0 = jax.random.uniform(jax.random.key(42), (dim,))
+    max_eig, _ = power_iter(a_lop, b0, 10)
+
+    scale_factor = 1.1
+    alpha = max_eig * scale_factor
+    print("alpha a:", alpha)
+    shift = alpha / 2.
+    scale = alpha / 4.
 
     # calc exp(a_lop*dt)*u
     dt = 0.25

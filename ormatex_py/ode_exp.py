@@ -10,6 +10,7 @@ from functools import partial
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd
+from ormatex_py.matexp_leja import leja_phikv_extended, gen_leja_fast, power_iter, build_a_tilde, leja_shift_scale
 try:
     import ormatex_py.ormatex as ormatex_rs
     HAS_ORMATEX_RUST = True
@@ -325,6 +326,74 @@ class ExpRBIntegrator(IntegrateSys):
             return self._step_exprb2_pfd_rs(dt)
         elif self.method == "exp_pfd_rs" and HAS_ORMATEX_RUST:
             return self._step_exp_pfd_rs(dt)
+        else:
+            raise NotImplementedError
+
+    def accept_step(self, s: StepResult):
+        self.t = s.t
+        self.t_hist.appendleft(s.t)
+        self.y_hist.appendleft(s.y)
+
+
+class ExpLejaIntegrator(IntegrateSys):
+
+    _valid_methods = {"epi2_leja": 2, }
+
+    def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2_leja", **kwargs):
+        # Exponential integration method
+        self.method = method
+        if method not in self._valid_methods.keys():
+            raise AttributeError(f"{self.method} not in {self._valid_methods}")
+        order = self._valid_methods[self.method]
+        self.leja_tol = kwargs.get("leja_tol", 1e-8)
+        # storage for eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
+        self._leja_bk = None
+        self.leja_max_power_iter = 20
+        self.leja_x = jnp.asarray(
+                gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 500)))
+        super().__init__(sys, t0, y0, order, method, **kwargs)
+
+    def _step_epi2(self, dt: float) -> StepResult:
+        """
+        Computes the solution update by:
+        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        doi:
+        """
+        t = self.t
+        yt = self.y_hist[0] # y_t
+
+        sys_jac_lop = self.sys.fjac(t, yt)
+        fyt = sys_jac_lop._frhs_cached()
+
+        # time derivative
+        fytt = sys_jac_lop._fdt()
+
+        vb0 = jnp.zeros(yt.shape)
+
+        # build augmented linear system
+        a_tilde_lo, v, n = build_a_tilde(sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt])
+
+        # estimate largest magnitude eigenvalue and corrosponding eigenvec by power iter
+        # store eigenvector for next step to speed convergence of power iterations in
+        # subsequent calls to power iter method.
+        shift, scale, max_eig, self._leja_bk = leja_shift_scale(a_tilde_lo, n, self.leja_max_power_iter, self._leja_bk)
+
+        # compute phi-vector products by leja interpolation
+        y_update, leja_iters, converged = leja_phikv_extended(
+                a_tilde_lo, 1.0, v, self.leja_x, n, shift, scale, 1, self.leja_tol)
+
+        # y_update, leja_iters, converged = leja_phikv_extended(
+        #     sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt], self.leja_x, self.leja_tol)
+        y_new = yt + y_update
+        y_err = -1.0
+
+        return StepResult(t+dt, dt, y_new, y_err)
+
+    def step(self, dt: float) -> StepResult:
+        if self.method == "epi2_leja":
+            return self._step_epi2(dt)
         else:
             raise NotImplementedError
 
