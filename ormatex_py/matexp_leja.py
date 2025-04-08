@@ -5,7 +5,11 @@ interpolation routines.
 from functools import partial
 import numpy as np
 import jax
+from jax import lax
 from jax import numpy as jnp
+
+# internal imports
+from ormatex_py.ode_sys import LinOp, AugMatrixLinOp, MatrixLinOp
 
 
 def gen_leja_fast(a=-2, b=2., n=100):
@@ -57,19 +61,105 @@ def gen_leja(n=100):
     pass
 
 
-if __name__ == "__main__":
-    # generate leja points
-    lp = gen_leja_fast(a=-2, b=2, n=100)
+@jax.jit
+def newton_poly_div_diff(x: jax.Array, y: jax.Array):
+    """
+    Divided difference formula to compute coeffs of the newton polynomial
+    given pairs of (x_i, y_i)
+    """
+    m = len(x)
+    a = y.at[:].get()
+    for k in range(1, m):
+        a = a.at[k:m].set( (a.at[k:m].get() - a.at[k - 1].get())/(x.at[k:m].get() - x.at[k - 1].get()) )
+    return a
 
+
+@jax.jit
+def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, coeff: float, shift: float, scale: float, leja_x: jax.Array, tol: float):
+    """
+    Computes leja polynomial interpolation to approx exp(dt*A)*v
+
+    Args:
+        shift:  shift applied to leja points.  q=(1/2)*alpha.  Where alpha=0.5*max(abs(eigs(A))
+        scale:  scale applied to leja points.
+    """
+    print(f"jit-compiling leja_expmv")
+    n_leja = len(leja_x)
+    converged = False
+
+    coeffs = newton_poly_div_diff(leja_x,  jnp.exp(coeff*(shift + scale*leja_x)))
+    # coeffs = newton_poly_div_diff(leja_x,  jnp.exp(coeff*(leja_x)))
+    # polynomial approximation, 1st term
+    poly_expmv = coeffs[0] * u
+    y = u.at[:].get()
+
+    # for i in range(1, n_leja):
+    #     y_i = (dt*a_lo.matvec(y)/(scale)) + (y * (-shift/scale - leja_x[i-1]))
+    #     y = y.at[:].set(y_i)
+    #     poly_expmv += coeffs[i] * y
+    #     # estimate error
+    #     poly_err = jnp.linalg.norm(y) * jnp.abs(coeffs[i])
+    #     if poly_err < tol:
+    #         converged = True
+    #         break
+    # jax version of above
+    def body_leja_poly(args):
+        # unpack args: (i, y, poly, err)
+        i, y, poly_expmv, _ = args
+        # compute new term in the polynomial approx
+        _y_i = (dt*a_lo.matvec(y)/(scale)) + (y * (-shift/scale - leja_x[i-1]))
+        y = y.at[:].set(_y_i)
+        poly_expmv += coeffs[i] * y
+        # estimate error
+        poly_err = jnp.linalg.norm(y) * jnp.abs(coeffs[i])
+        i += 1
+        return i, y, poly_expmv, poly_err
+    def cond_leja_poly(args):
+        i, _, _, poly_err = args
+        return (poly_err > tol) & (i < n_leja)
+    i, y, poly_expmv, err = lax.while_loop(
+            cond_leja_poly, body_leja_poly, (1, y, poly_expmv, 1.0e20))
+    converged = i < n_leja
+    # expmv, n_iters, converged
+    return poly_expmv, i, converged
+
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    # generate leja points
+    lp = gen_leja_fast(a=-2, b=2, n=20)
     # first 10 leja points
     for v in lp[0:10]:
         print(v)
 
     # plot leja points on the complex plane
-    import matplotlib.pyplot as plt
     plt.figure()
     cmap = plt.get_cmap('rainbow')
     plt.scatter(np.real(lp), np.imag(lp), c=list(range(0, len(lp))), cmap=cmap)
-    plt.show()
+    plt.savefig('fast_leja_points.png')
     plt.grid()
     plt.close()
+
+    # generate a matrix and wrap as a linear operator
+    a = np.array([[-1.25, 0.0],
+                  [1.25, -0.5]])
+    eigs_a = np.linalg.eig(a)[0]
+    max_abs_eig = np.max(np.abs(eigs_a))
+    print("eigs:", eigs_a)
+    # TODO: estimate largest eig by power iter
+    alpha = -max_abs_eig
+    shift = alpha / 2.
+    scale = alpha / 4.
+    a = jnp.asarray(a)
+    a_lop = MatrixLinOp(a)
+    u = jnp.ones(len(a))
+
+    # calc exp(a_lop*dt)*u
+    dt = 0.25
+    lp = jnp.asarray(lp)
+    leja_expmv, iter, converged = real_leja_expmv(a_lop, dt, u, 1.0, shift, scale, lp, 1e-6)
+    expected_expmv = jax.scipy.linalg.expm(dt*a) @ u
+    print(iter)
+    print(converged)
+    print(leja_expmv)
+    print(expected_expmv)
