@@ -136,15 +136,27 @@ def test_phi_k_appl_pfd():
     """
     Test partial fraction decomposition calc of phi_k(A)b products
     """
-    pfd_methods = ["cram_16"]
+    pfd_methods = ["cram_16", "pade_0_14", "pade_0_16"] \
+                + [f"pade_{2*k}_{2*k}" for k in range(3,6)] \
+                + [f"pade_{2*k-1}_{2*k}" for k in range(3,6)] \
+                + [f"pade_{2*k-2}_{2*k}" for k in range(3,6)]
+    # methods are included if they can pass the tolearnce check
+    # low order methods are excluded due to accuracy limits (which is to be expected)
+    # high order methods are excluded since they are affected by cancellation errors. consider removing the ones that are. 
+    print(f"test PFD methods for: {pfd_methods}")
+    close = {}
     for pfd_method in pfd_methods:
         for k in range(ref_phi.shape[0]):
             # test a diagonal matrix with reference values
             d_z = jnp.diag(ref_z)
             b = jnp.ones((ref_phi.shape[1],))
             phi_k_b = f_phi_k_pfd(d_z, b, k=k, method=pfd_method)
-            assert jnp.allclose(phi_k_b, ref_phi[k,:])
+            close[(pfd_method, k)] = bool(jnp.allclose(phi_k_b, ref_phi[k,:]))
 
+            if not close[(pfd_method, k)]:
+                jax.debug.print("{m} for phi_{k} failed with {error}", m=pfd_method, k=k, error=phi_k_b-ref_phi[k,:])
+
+    assert all(close.values())
 
 def test_phi_linop_0():
     """
