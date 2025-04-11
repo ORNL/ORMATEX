@@ -153,11 +153,12 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, coeff: float, shift: f
         i += 1
         return i, y, poly_expmv, poly_err
     def cond_leja_poly(args):
-        i, _, _, poly_err = args
-        return (poly_err > tol) & (i < n_leja) & (poly_err < 2.0e4)
+        i, y, poly_expmv, poly_err = args
+        tol_check = (poly_err > tol*jnp.linalg.norm(poly_expmv)+tol) & (i < n_leja) & (poly_err < 2.0e4)
+        return tol_check
     i, y, poly_expmv, err = lax.while_loop(
             cond_leja_poly, body_leja_poly, (1, y, poly_expmv, 1.0e4))
-    converged = (i < n_leja) & (err <= tol)
+    converged = (i < n_leja) & (err < 2.0e4)
     # expmv, n_iters, converged
     return poly_expmv, i, converged
 
@@ -195,7 +196,7 @@ def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=
     Args:
         tau_dt: inital substep size in (0, 1].
     """
-    assert tau_dt >= 0
+    assert tau_dt > 0
     # substep size
     dts = min(tau_dt, 1.0)
     # substep time
@@ -203,8 +204,9 @@ def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=
     # current substep solution
     w_t = v
     tot_iter = 0
-    i, max_substeps = 0, 20
+    i, max_substeps = 0, 200
     max_tau_dt = 0.0
+    last_converged = False
     while True:
         w, iter, converged = real_leja_expmv(
                 a_tilde_lo, dts, w_t, 1.0, shift, scale, leja_x, tol)
@@ -212,14 +214,17 @@ def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=
         if not converged:
             # reduce the substep size
             dts /= 2.
+            last_converged = False
         else:
+            # the maximum accepted step size
+            max_tau_dt = max(max_tau_dt, dts)
             # accept the substep
             tau = tau + dts
             w_t = w
             # clip substep size
             dts = min(dts, 1.0 - tau)
-            # the maximum accepted step size
-            max_tau_dt = max(max_tau_dt, dts)
+            last_converged = True
+        # print(i, converged, tau, dts, iter)
         if tau >= 1.0:
             break
         i += 1

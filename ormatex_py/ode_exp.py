@@ -345,10 +345,10 @@ class ExpLejaIntegrator(IntegrateSys):
         if method not in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
         order = self._valid_methods[self.method]
-        self.leja_tol = kwargs.get("leja_tol", 1e-6)
+        self.leja_tol = kwargs.get("leja_tol", 1e-14)
         # storage for eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
         self._leja_bk = None
-        self.leja_max_power_iter = 40
+        self.leja_max_power_iter = 80
         self.leja_substep_size = 1.0
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 1000)))
@@ -386,7 +386,7 @@ class ExpLejaIntegrator(IntegrateSys):
         # y_update, leja_iters, converged = leja_phikv_extended(
         #         a_tilde_lo, 1.0, v, self.leja_x, n, shift, scale, 1, self.leja_tol)
         y_update, leja_iters, converged, max_tau_dt = leja_phikv_extended_substep(
-                a_tilde_lo, self.leja_substep_size, v, self.leja_x,
+                a_tilde_lo, 1.1*self.leja_substep_size, v, self.leja_x,
                 n, shift, scale, self.leja_tol)
         self.leja_substep_size = max_tau_dt
 
