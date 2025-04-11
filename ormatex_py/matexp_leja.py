@@ -95,8 +95,8 @@ def power_iter(a_lop: LinOp, b0: jax.Array, iter: int):
         i, b_k, eig_new, eig_old = args
         eig_diff = jnp.abs(eig_new - eig_old)
         return (eig_diff > tol) & (i < iter)
-    _, b_k, eig_a, _ = lax.while_loop(cond_power_iter, body_power_iter, (0, b_k, eig_last, 1.0))
-    return eig_a, b_k
+    iters, b_k, eig_a, _ = lax.while_loop(cond_power_iter, body_power_iter, (0, b_k, eig_last, 1.0))
+    return eig_a, b_k, iters
 
 
 @jax.jit
@@ -164,7 +164,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, coeff: float, shift: f
 def leja_phikv_extended(
     a_tilde_lo: LinOp, dt: float, v: jax.Array, leja_x: jax.Array, n: int, shift: float, scale: float,
         n_substeps: int=1, tol: float=1.0e-6) -> jax.Array:
-    w, iter, converged = real_leja_expmv(a_tilde_lo, 1.0, v, 1.0,
+    w, iter, converged = real_leja_expmv(a_tilde_lo, dt, v, 1.0,
               shift, scale, leja_x, tol)
     return w[0:n], iter, converged
 
@@ -180,11 +180,11 @@ def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=Non
         assert len(b0) == dim
     else:
         b0 = jax.random.uniform(jax.random.key(42), (dim,))
-    max_eig, b = power_iter(a_tilde_lo, b0, max_power_iter)
+    max_eig, b, iters = power_iter(a_tilde_lo, b0, max_power_iter)
     alpha = max_eig * scale_factor
     shift = alpha / 2.
     scale = alpha / 4.
-    return shift, scale, max_eig, b
+    return shift, scale, max_eig, b, iters
 
 def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
     """
@@ -252,7 +252,7 @@ if __name__ == "__main__":
     u = jnp.ones(len(a))
     # Estimate largest eig by power iter
     b0 = jax.random.uniform(jax.random.key(42), (dim,))
-    max_eig, _ = power_iter(a_lop, b0, 10)
+    max_eig, _, _ = power_iter(a_lop, b0, 10)
 
     scale_factor = 1.1
     alpha = max_eig * scale_factor

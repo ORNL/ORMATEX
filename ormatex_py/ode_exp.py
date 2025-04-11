@@ -345,12 +345,12 @@ class ExpLejaIntegrator(IntegrateSys):
         if method not in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
         order = self._valid_methods[self.method]
-        self.leja_tol = kwargs.get("leja_tol", 1e-8)
+        self.leja_tol = kwargs.get("leja_tol", 1e-6)
         # storage for eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
         self._leja_bk = None
-        self.leja_max_power_iter = 20
+        self.leja_max_power_iter = 80
         self.leja_x = jnp.asarray(
-                gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 500)))
+                gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 1000)))
         super().__init__(sys, t0, y0, order, method, **kwargs)
 
     def _step_epi2(self, dt: float) -> StepResult:
@@ -378,7 +378,7 @@ class ExpLejaIntegrator(IntegrateSys):
         # estimate largest magnitude eigenvalue and corrosponding eigenvec by power iter
         # store eigenvector for next step to speed convergence of power iterations in
         # subsequent calls to power iter method.
-        shift, scale, max_eig, self._leja_bk = leja_shift_scale(
+        shift, scale, max_eig, self._leja_bk, _power_iters = leja_shift_scale(
                 a_tilde_lo, v.shape[0], self.leja_max_power_iter, self._leja_bk)
 
         # compute phi-vector products by leja interpolation
