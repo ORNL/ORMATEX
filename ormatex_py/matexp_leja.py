@@ -125,7 +125,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, coeff: float, shift: f
     n_leja = len(leja_x)
     converged = False
 
-    coeffs = newton_poly_div_diff(leja_x,  jnp.exp(coeff*(shift + scale*leja_x)))
+    coeffs = newton_poly_div_diff(leja_x,  jnp.exp(coeff*dt*(shift + scale*leja_x)))
     # coeffs = newton_poly_div_diff(leja_x,  jnp.exp(coeff*(leja_x)))
     # polynomial approximation, 1st term
     poly_expmv = coeffs[0] * u
@@ -145,7 +145,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, coeff: float, shift: f
         # unpack args: (i, y, poly, err)
         i, y, poly_expmv, _ = args
         # compute new term in the polynomial approx
-        _y_i = (dt*a_lo.matvec(y)/(scale)) + (y * (-shift/scale - leja_x[i-1]))
+        _y_i = (a_lo.matvec(y)/(scale)) + (y * (-shift/scale - leja_x[i-1]))
         y = y.at[:].set(_y_i)
         poly_expmv += coeffs[i] * y
         # estimate error
@@ -154,15 +154,16 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, coeff: float, shift: f
         return i, y, poly_expmv, poly_err
     def cond_leja_poly(args):
         i, _, _, poly_err = args
-        return (poly_err > tol) & (i < n_leja)
+        return (poly_err > tol) & (i < n_leja) & (poly_err < 2.0e4)
     i, y, poly_expmv, err = lax.while_loop(
-            cond_leja_poly, body_leja_poly, (1, y, poly_expmv, 1.0e20))
-    converged = i < n_leja
+            cond_leja_poly, body_leja_poly, (1, y, poly_expmv, 1.0e4))
+    converged = (i < n_leja) & (err <= tol)
     # expmv, n_iters, converged
     return poly_expmv, i, converged
 
 def leja_phikv_extended(
-    a_tilde_lo: LinOp, dt: float, v: jax.Array, leja_x: jax.Array, n: int, shift: float, scale: float,
+        a_tilde_lo: LinOp, dt: float, v: jax.Array, leja_x: jax.Array,
+        n: int, shift: float, scale: float,
         n_substeps: int=1, tol: float=1.0e-6) -> jax.Array:
     w, iter, converged = real_leja_expmv(a_tilde_lo, dt, v, 1.0,
               shift, scale, leja_x, tol)
@@ -185,6 +186,53 @@ def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=Non
     shift = alpha / 2.
     scale = alpha / 4.
     return shift, scale, max_eig, b, iters
+
+def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=1.0e-6):
+    """
+    Computs exp(dt*A)*v using substeps by:
+        v_{i+1} = exp(dt*A*tau_i)*v_{i}
+        where sum(tau_i) = 1
+    Args:
+        tau_dt: inital substep size in (0, 1].
+    """
+    assert tau_dt >= 0
+    # substep size
+    dts = min(tau_dt, 1.0)
+    # substep time
+    tau = 0.0
+    # current substep solution
+    w_t = v
+    tot_iter = 0
+    i, max_substeps = 0, 20
+    max_tau_dt = 0.0
+    while True:
+        w, iter, converged = real_leja_expmv(
+                a_tilde_lo, dts, w_t, 1.0, shift, scale, leja_x, tol)
+        tot_iter += iter
+        if not converged:
+            # reduce the substep size
+            dts /= 2.
+        else:
+            # accept the substep
+            tau = tau + dts
+            w_t = w
+            # clip substep size
+            dts = min(dts, 1.0 - tau)
+            # the maximum accepted step size
+            max_tau_dt = max(max_tau_dt, dts)
+        if tau >= 1.0:
+            break
+        i += 1
+        if i > max_substeps:
+            raise RuntimeError("Max substeps reached")
+    return w_t[0:n], tot_iter, converged, max_tau_dt
+
+
+def leja_phikv_extended_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol):
+    w, tot_iters, converged, dts = real_leja_expmv_substep(
+            a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol)
+    return w, tot_iters, converged, dts
+
 
 def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
     """
@@ -269,3 +317,21 @@ if __name__ == "__main__":
     print(converged)
     print(leja_expmv)
     print(expected_expmv)
+
+    # imag eigs only
+    a = np.array([[0.0, 1.0],
+                  [-1.0, 0.0]])
+    dim = len(a)
+    eigs_a = np.linalg.eig(a)[0]
+    a = jnp.asarray(a)
+    print("eigs a:", eigs_a)
+
+    a_lop = MatrixLinOp(a)
+    u = jnp.ones(len(a))
+    # Estimate largest eig by power iter
+    b0 = jax.random.uniform(jax.random.key(42), (dim,))
+    max_eig, _, _ = power_iter(a_lop, b0, 10)
+
+    scale_factor = 1.1
+    alpha = max_eig * scale_factor
+    print("alpha a:", alpha)

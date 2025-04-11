@@ -10,7 +10,7 @@ from functools import partial
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd
-from ormatex_py.matexp_leja import leja_phikv_extended, gen_leja_fast, power_iter, build_a_tilde, leja_shift_scale
+from ormatex_py.matexp_leja import leja_phikv_extended, gen_leja_fast, power_iter, build_a_tilde, leja_shift_scale, leja_phikv_extended_substep
 try:
     import ormatex_py.ormatex as ormatex_rs
     HAS_ORMATEX_RUST = True
@@ -348,7 +348,8 @@ class ExpLejaIntegrator(IntegrateSys):
         self.leja_tol = kwargs.get("leja_tol", 1e-6)
         # storage for eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
         self._leja_bk = None
-        self.leja_max_power_iter = 80
+        self.leja_max_power_iter = 40
+        self.leja_substep_size = 1.0
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 1000)))
         super().__init__(sys, t0, y0, order, method, **kwargs)
@@ -382,8 +383,12 @@ class ExpLejaIntegrator(IntegrateSys):
                 a_tilde_lo, v.shape[0], self.leja_max_power_iter, self._leja_bk)
 
         # compute phi-vector products by leja interpolation
-        y_update, leja_iters, converged = leja_phikv_extended(
-                a_tilde_lo, 1.0, v, self.leja_x, n, shift, scale, 1, self.leja_tol)
+        # y_update, leja_iters, converged = leja_phikv_extended(
+        #         a_tilde_lo, 1.0, v, self.leja_x, n, shift, scale, 1, self.leja_tol)
+        y_update, leja_iters, converged, max_tau_dt = leja_phikv_extended_substep(
+                a_tilde_lo, self.leja_substep_size, v, self.leja_x,
+                n, shift, scale, self.leja_tol)
+        self.leja_substep_size = max_tau_dt
 
         # y_update, leja_iters, converged = leja_phikv_extended(
         #     sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt], self.leja_x, self.leja_tol)
