@@ -68,11 +68,20 @@ class RAD_SEM(OdeSplitSys):
     Ml: jax.Array
     xs: jax.Array
 
+    dirichlet_bd: np.array
+
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         # get stiffness matrix and mass vector
         self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
         # get collocation points
         self.xs = sys_assembler.collocation_points()
+
+        # Dirichlet boundary conditions
+        if sys_assembler.dirichlet_bd is not None:
+            self.dirichlet_bd = sys_assembler.dirichlet_bd
+        else:
+            self.dirichlet_bd = np.array([], dtype=int)
+
         # get bateman matrix
         self.bat_mat = gen_bateman_matrix(['u_0', 'u_1'], decay_lib)
         super().__init__()
@@ -106,6 +115,8 @@ class RAD_SEM(OdeSplitSys):
         # add bateman
         lub = un @ self.bat_mat.transpose()
         udot = lub + s - (self.A @ un) / self.Ml.reshape((-1, 1))
+        # set the time derivative of the Dirichlet boundary data to zero
+        udot = udot.at[self.dirichlet_bd,:].set(0.)
         # integrators currently expect a flat U
         return flatten_u(udot)
 

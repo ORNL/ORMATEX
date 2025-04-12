@@ -5,9 +5,9 @@ from functools import partial
 import numpy as np
 import jax
 from jax import numpy as jnp
-import equinox as eqx
-
 import warnings
+from ormatex_py.matexp_phi_pfd_dict import pfd_dict
+
 
 def f_phi_k(z: jax.Array, k: int) -> jax.Array:
     """
@@ -22,11 +22,13 @@ def f_phi_k(z: jax.Array, k: int) -> jax.Array:
 
     return phi_k
 
+
 def _validate_args(z: jax.Array, k: int):
     assert k >= 0
     N, M = z.shape
     assert N == M
     return N
+
 
 @partial(jax.jit, static_argnums=(1,2))
 def f_phi_k_inv(z: jax.Array, k: int, eps: float) -> (jax.Array, float):
@@ -57,6 +59,7 @@ def f_phi_k_inv(z: jax.Array, k: int, eps: float) -> (jax.Array, float):
             #jax.debug.print("phi_k: {M}, err_est: {err_est}", M=phi_k, err_est=err_est)
     return phi_k, err_est
 
+
 @partial(jax.jit, static_argnums=(1,2))
 def f_phi_k_ext(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
     """
@@ -79,6 +82,7 @@ def f_phi_k_ext(z: jax.Array, k: int, return_all: bool=False) -> jax.Array:
     else:
         phi_k = phi_ks[:N,-N:]
         return phi_k
+
 
 @partial(jax.jit, static_argnums=(1,2))
 def f_phi_k_poly_all(z: jax.Array, k: int, poly_deg: int=4) -> list[jax.Array]:
@@ -105,6 +109,7 @@ def f_phi_k_poly_all(z: jax.Array, k: int, poly_deg: int=4) -> list[jax.Array]:
         fact_j = fact_j / j
 
     return phi_ks
+
 
 @partial(jax.jit, static_argnums=(1,))
 def f_phi_k_sq_all(z: jax.Array, k: int) -> list[jax.Array]:
@@ -173,6 +178,7 @@ def _validate_args_appl(z: jax.Array, b: jax.Array, k: int):
 
     return N, M, B
 
+
 @partial(jax.jit, static_argnums=(2,))
 def f_phi_k_appl(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
     """
@@ -191,3 +197,26 @@ def f_phi_k_appl(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
         phi_kb = jax.scipy.linalg.expm(z) @ b
 
     return phi_kb
+
+
+@partial(jax.jit, static_argnums=(2, 3))
+def f_phi_k_pfd(z: jax.Array, b: jax.Array, k: int, method: str) -> jax.Array:
+    """
+    Computes phi_k(Z)B for dense Z and dense B, using a rational approximation
+    and partial fraction expansion
+    """
+    N, M, B = _validate_args_appl(z, b, k)
+
+    # poles and coefficients for partial fraction decomp.
+    ps, cs, c0 = pfd_dict[method]
+
+    phi_kb = jnp.zeros(B.shape)
+    Id = jnp.eye(z.shape[0])
+
+    if k == 0:
+        phi_kb += c0 * B
+
+    for p, c in zip(ps, cs):
+        phi_kb += jnp.real((2. * c / p**k) * jnp.linalg.solve((z - p*Id), B))
+
+    return phi_kb.reshape(b.shape)

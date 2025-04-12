@@ -11,6 +11,7 @@ from ormatex_py.ode_explicit import RKIntegrator
 
 try:
     from ormatex_py.ormatex import integrate_wrapper_rs, PySysWrapped
+    from ormatex_py.ode_sys import OdeSysNp
     HAS_ORMATEX_RUST = True
 except ImportError:
     HAS_ORMATEX_RUST = False
@@ -67,8 +68,9 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
         # try to integrate with rust ormatex integrators
         if not HAS_ORMATEX_RUST:
             raise ImportError("import ormatex_py.ormatex failed. Rust ormatex bindings not found. Run: maturin develop --release")
-        assert isinstance(ode_sys, PySysWrapped)
-        y_res, t_res = integrate_wrapper_rs(ode_sys, y0, t0, dt, nsteps, method=str(method[0:-3]), **kwargs)
+        if not isinstance(ode_sys, PySysWrapped):
+            ode_sys = PySysWrapped(OdeSysNp(ode_sys))
+        y_res, t_res = integrate_wrapper_rs(ode_sys, np.asarray(y0).reshape((-1, 1)), t0, dt, nsteps, method=str(method[0:-3]), **kwargs)
         y_res, t_res = np.asarray(y_res).squeeze(), np.asarray(t_res)
     else:
         try:

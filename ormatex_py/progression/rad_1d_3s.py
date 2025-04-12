@@ -41,11 +41,20 @@ class RAD_SEM(OdeSplitSys):
     Ml: jax.Array
     xs: jax.Array
 
+    dirichlet_bd: np.array
+
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         # get stiffness matrix and mass vector
         self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
         # get collocation points
         self.xs = sys_assembler.collocation_points()
+
+        # Dirichlet boundary conditions
+        if sys_assembler.dirichlet_bd is not None:
+            self.dirichlet_bd = sys_assembler.dirichlet_bd
+        else:
+            self.dirichlet_bd = np.array([], dtype=int)
+
         # get bateman matrix
         self.bat_mat = gen_bateman_matrix(keymap, decay_lib)
         super().__init__()
@@ -58,6 +67,8 @@ class RAD_SEM(OdeSplitSys):
         lub = un @ self.bat_mat.transpose()
         # full system
         udot = lub - (self.A @ un) / self.Ml.reshape((-1, 1))
+        # set the time derivative of the Dirichlet boundary data to zero
+        udot = udot.at[self.dirichlet_bd,:].set(0.)
         # integrators currently expect a flat U
         return flatten_u(udot)
 
@@ -100,7 +111,7 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     print("CFL: %0.4f/%0.4f" % (dtJeig_max, dtJnorm))
     return dtJeig_max, dtJeig_min
 
-def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu=1e-10):
+def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu=1e-10, **kwargs):
     # create the mesh
     dwidth = 1.0
     mesh0 = fem.MeshLine1(np.array([[0., dwidth]])).with_boundaries({
@@ -134,11 +145,13 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # initial profiles for each species
     wc, ww = 0.4, 0.05
     g_prof0 = lambda x: 0.0*x + 1e-16
-    g_prof1 = lambda x: np.exp(-((x-wc)/(2*ww))**2.0) * 1.0
     if periodic:
+        g_prof1 = lambda x: np.exp(-((1.0-((x - wc) % 1)) / (2*ww))**2.0) + \
+            np.exp(-((((x - wc) % 1)) / (2*ww))**2.0)
         g_prof_exact = lambda t, x: np.exp(-((1.0-((x - (wc+t*vel)) % 1)) / (2*ww))**2.0) + \
             np.exp(-((((x - (wc+t*vel)) % 1)) / (2*ww))**2.0)
     else:
+        g_prof1 = lambda x: np.exp(-((x-wc)/(2*ww))**2.0) * 1.0
         g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel)) / (2*ww))**2.0)
     y0_profile = [
             g_prof1(xs),
@@ -166,13 +179,16 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
 
     # integrate the system
     res = integrate_wrapper.integrate(
-            ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10)
+            ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10, **kwargs)
     t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
     sx = xs[si]
     fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5,10))
     mae_list, mae_rl_list = [], []
+
+    pfd_method = kwargs.get("pfd_method", '')
+    method_str = method if not pfd_method else "%s %s" % (method, pfd_method)
 
     t = t_res[-1]
     yf = y_res[-1]
@@ -194,7 +210,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
         mae_rl = np.mean(np.abs(diff_rl))
         mae_list.append(mae)
         mae_rl_list.append(mae_rl)
-        ax[n].set_title(r"%s, MAE: %0.3e, $\Delta$t=%0.2e" % (method, mae, dt))
+        ax[n].set_title(r"%s, MAE: %0.3e, $\Delta$t=%0.2e" % (method_str, mae, dt))
 
     # TODO: mark reactor boundaries on the plot
     # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
@@ -204,7 +220,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     ax[2].set_ylabel("Species 2 [mol/cc]")
     ax[0].set_xlabel("location [m]")
     plt.tight_layout()
-    plt.savefig('reac_adv_diff_s3_%s_%0.3e.png' % (method, dt))
+    plt.savefig('reac_adv_diff_s3_%s_%1.3f.png' % (method_str, dt))
     plt.close()
 
     if jac_plot:
@@ -233,7 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-dt", help="time step size", type=float, default=0.1)
-    parser.add_argument("-tf", help="final time", type=float, default=2.0)
+    parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
@@ -241,24 +257,27 @@ if __name__ == "__main__":
     jax.config.update("jax_disable_jit", args.nojit)
 
     if args.sweep:
-        methods = ['exprb2', 'exprb3', 'epi3', 'implicit_euler', 'implicit_esdirk3']
+        #methods = ['exprb2', 'exprb3', 'epi3', 'implicit_euler', 'implicit_esdirk3']
+        methods = ['exprb2', 'exprb2_pfd', 'exprb2_pfd', 'exprb2_pfd', 'implicit_esdirk3']
+        pfd_methods = ['', 'pade_1_2', 'pade_2_4', 'cram_6', '']
         dts = [0.025, 0.05, 0.1, 0.125, 0.2, 0.5]
         mae_sweep = {}
         mae_rl_sweep = {}
-        for method in methods:
-            mae_sweep[method] = []
-            mae_rl_sweep[method] = []
+        for method, pfd_method in zip(methods, pfd_methods):
+            method_str = method if not pfd_method else "%s %s" % (method, pfd_method)
+            mae_sweep[method_str] = []
+            mae_rl_sweep[method_str] = []
             for dt in dts:
-                mae, mae_rl = main(dt, method, True, args.mr, args.p, tf=args.tf)
-                mae_sweep[method].append(([dt] + mae))
-                mae_rl_sweep[method].append(([dt] + mae_rl))
-            print("=== Method: %s" % method)
+                mae, mae_rl = main(dt, method, True, args.mr, args.p, tf=args.tf, pfd_method=pfd_method)
+                mae_sweep[method_str].append(([dt] + mae))
+                mae_rl_sweep[method_str].append(([dt] + mae_rl))
+            print("=== Method: %s" % method_str)
             print("dt, MAE, ")
-            for mae_res in mae_sweep[method]:
+            for mae_res in mae_sweep[method_str]:
                 print(*["%0.4e" % r for r in mae_res], sep=', ', end='')
                 print()
             print("dt, MRE, ")
-            for mae_rl_res in mae_rl_sweep[method]:
+            for mae_rl_res in mae_rl_sweep[method_str]:
                 print(*["%0.4e" % r for r in mae_rl_res], sep=', ', end='')
                 print()
 
@@ -267,13 +286,13 @@ if __name__ == "__main__":
         from matplotlib.pyplot import cm
         plt.figure()
         colors = iter(cm.rainbow(np.linspace(0, 1, len(methods))))
-        for i, method in enumerate(methods):
-            dt_v_mae = np.asarray(mae_rl_sweep[method])
+        for i, method_str in enumerate(mae_rl_sweep.keys()):
+            dt_v_mae = np.asarray(mae_rl_sweep[method_str])
             color = next(colors)
             if i % 2 == 0:
-                plt.plot(dt_v_mae[:, 0], dt_v_mae[:, 3], '-o', alpha=0.85, c=color, label="Method: %s" % method)
+                plt.plot(dt_v_mae[:, 0], dt_v_mae[:, 3], '-o', alpha=0.85, c=color, label="Method: %s" % method_str)
             else:
-                plt.plot(dt_v_mae[:, 0], dt_v_mae[:, 3], ls='--', alpha=0.85, c=color, label="Method: %s" % method)
+                plt.plot(dt_v_mae[:, 0], dt_v_mae[:, 3], ls='--', alpha=0.85, c=color, label="Method: %s" % method_str)
         plt.ylabel(r"Mean Relative Error. Avg((calc-true)/max(true))")
         plt.yscale("log")
         plt.xscale("log")

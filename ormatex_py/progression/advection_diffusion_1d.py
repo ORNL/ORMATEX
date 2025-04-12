@@ -262,10 +262,11 @@ if __name__ == "__main__":
     print(f"Running on {jax.devices()}.")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-ic", help="one of [square, gauss]", type=str, default="gauss")
+    parser.add_argument("-ic", help="one of [square, zero, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-pfd_method", help="partial frac decomp method", type=str, default="CN")
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-nonautonomous", help="run nonautonomous system with external forcing", action="store_true", default=False)
     args = parser.parse_args()
@@ -287,11 +288,14 @@ if __name__ == "__main__":
             mesh.boundaries['left'],
         )
 
-    # overall velocity vel
-    vel = 0.5
-    # diffusion coefficient nu
-    nu = 0.0
-    ##nu = 0.05 * vel / (args.p * 2**nrefs) #stabilization by diffusion
+    # overall velocity vel and diffusion coefficient nu
+    if args.ic == "zero":
+        vel = 0.1
+        nu =  1.0
+    else:
+        vel = 0.5
+        nu =  0.0
+        ##nu = 0.05 * vel / (args.p * 2**nrefs) #stabilization by diffusion
     param_dict = {"nu": nu, "vel": vel}
     field_dict = {} #{"vel_f": vel_f, "src_f": src_f}
 
@@ -319,6 +323,11 @@ if __name__ == "__main__":
         y0_profile = g_prof(xs)
         y0 = jnp.asarray(y0_profile)
         g_prof_exact = lambda t, x: g_prof(x - t*vel)
+    elif args.ic == "zero":
+        g_prof = lambda x: np.zeros(x.shape)
+        y0_profile = g_prof(xs)
+        y0 = jnp.asarray(y0_profile)
+        g_prof_exact = lambda t, x: g_prof(x - t*vel)
     else:
         # gaussian profile
         wc, ww = 0.3, 0.05
@@ -329,14 +338,23 @@ if __name__ == "__main__":
 
     # modification for Dirichlet boundary conditions
     if sem.dirichlet_bd is not None:
-        y0 = y0.at[sem.dirichlet_bd].set(g_prof(np.array([0.])))
+        if args.ic == "zero":
+            y_dir = 1
+        else:
+            y_dir = g_prof(np.array([0.]))
+        y0 = y0.at[sem.dirichlet_bd].set(y_dir)
 
     # integrate the system
     t0 = 0.
-    dt = .1
-    nsteps = 40
+    if args.ic == "zero":
+        T = .1
+    else:
+        T = 1.6
+    nsteps = 10
+    dt = T / nsteps
     method = args.method
-    res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=160, iom=10)
+    pfd_method = args.pfd_method
+    res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=160, iom=10, pfd_method=pfd_method)
     t_res, y_res = res.t_res, res.y_res
 
     # compute expected solution
@@ -354,7 +372,7 @@ if __name__ == "__main__":
     cfl = dt * vel / mesh_spacing
     plt.figure()
     for i in range(nsteps):
-        if i % 4 == 0 or i == 0:
+        if i % 1 == 0 or i == 0:
             t = t_res[i]
             y = y_res[i][si]
             y_exact = y_exact_res[i][si]

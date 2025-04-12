@@ -173,7 +173,7 @@ def analytic_bateman_single_parent(t, batmat, n0):
     return np.asarray(N, dtype=np.float64)
 
 
-def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000.):
+def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_method="cram_16"):
     jax.config.update("jax_enable_x64", True)
     keymap = ["c_0", "c_1", "c_2"]
     decay_lib_sp = {
@@ -192,7 +192,8 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000.):
     test_ode_sys = TestBatemanSysJac(keymap, decay_lib_sp)
     y0 = jnp.array([n0, 0.0, 0.0])
     nsteps = int((tf - t0) / dt)
-    res = integrate_wrapper.integrate(test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=12)
+    res = integrate_wrapper.integrate(
+            test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=12, pfd_method=pfd_method)
     t_res, y_res = res.t_res, res.y_res
     t_res = np.asarray(t_res)
     y_res = np.asarray(y_res)
@@ -225,7 +226,7 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000.):
 
 def run_sweep():
     methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense",
-               "exprb2_dense", "exprb2_dense_cauchy", "dense_cauchy",
+               "exprb2_dense", "exprb2_pfd_rs", "exp_pfd_rs",
                "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
     dts = [1., 2., 5., 10., 25., 50.]
     tf = 100.
