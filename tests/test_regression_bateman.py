@@ -27,11 +27,11 @@ def test_bateman_s3_pfd():
     """
     Test exponential integrators for a 3 species system
     """
-    methods = ["exprb2_pfd", "exprb2_pfd"]
-    pfd_methods = ["cram_16", "12"]
+    methods = ["exprb2_pfd", "exprb2_pfd", "exprb2_pfd", "exprb2_pfd", "exprb2_pfd", "exprb2_pfd"]
+    pfd_methods = ["cram_6", "cram_16", "pade_3_4", "pade_5_6", "pade_7_8", "pade_2_4"]
     for method, pfd_method in zip(methods, pfd_methods):
         t_res, y_res, t_true, y_true = analytic_bateman_s3(method=method, do_plot=False, pfd_method=pfd_method)
         diff = y_res - y_true
-        print("Method: %s, Max abs err: %0.4e" % (method, np.max(np.abs(diff))))
+        print("Method: %s %s, Max abs err: %0.4e" % (method, pfd_method, np.max(np.abs(diff))))
         assert np.allclose(t_res, t_true)
-        assert np.allclose(y_res, y_true, rtol=1e-2, atol=1e-2)
+        assert np.allclose(y_res, y_true, rtol=1e-3, atol=1e-3)
