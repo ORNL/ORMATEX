@@ -54,7 +54,7 @@ templates_path = ['_templates']
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = []
+exclude_patterns = ['../../ormatex_py/progression']
 
 
 # -- Options for HTML output -------------------------------------------------
@@ -92,7 +92,7 @@ html_static_path = ['_static']
 latex_elements = {
     'extraclassoptions': 'openany,oneside',
     'preamble': r'\usepackage{enumitem}\setlistdepth{99}',
-    "maketitle": "\\input{ml_psa_title.tex}"
+    "maketitle": "\\input{ormatex_title.tex}"
     # 'maketitle': maketitle_tex
 }
 
