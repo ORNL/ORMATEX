@@ -35,7 +35,7 @@ class PhiEvaluatorModule(eqx.Module):
 
 class PhiEvaluator():
 
-    _valid_methods = {"krylov", "kiops", "pfd", "dense"}
+    _valid_methods = {"krylov", "kiops", "pfd", "pfd_rs", "dense"}
 
     def __init__(self, sys_lop, method="krylov", **kwargs):
 
@@ -46,7 +46,9 @@ class PhiEvaluator():
         if not self.method in self._valid_methods:
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
 
-        self.set_lop(sys_lop)
+        self.sys_lop = sys_lop
+        if sys_lop is not None:
+            self.set_lop(sys_lop)
 
     def set_lop(self, sys_lop):
         self.sys_lop = sys_lop
@@ -57,6 +59,8 @@ class PhiEvaluator():
             self.Phi = PhiEvaluatorKIOPS(sys_lop, **self.init_kwargs)
         elif self.method == "pfd":
             self.Phi = PhiEvaluatorPFD(sys_lop, **self.init_kwargs)
+        elif self.method == "pfd_rs":
+            self.Phi = PhiEvaluatorPFDRS(sys_lop, **self.init_kwargs)
         elif self.method == "dense":
             self.Phi = PhiEvaluatorDense(sys_lop, **self.init_kwargs)
         else:
@@ -130,7 +134,7 @@ class PhiEvaluatorKIOPS(PhiEvaluatorModule):
         rhs_list = [jnp.zeros(bs[0].shape)] * (maxk+1)
         for it, k in enumerate(ks):
             rhs_list[k] = rhs_list[k] + bs[it]
-        #TODO: write new kiops which takes vb already a block to avoid extra copies from list
+        #TODO: write new kiops which takes vb already as a block to avoid extra copies from list
         result = kiops_fixedsteps(
             self.sys_lop, cdt, rhs_list,
             max_krylov_dim=self.max_krylov_dim, iom=self.iom)
@@ -140,6 +144,7 @@ class PhiEvaluatorKIOPS(PhiEvaluatorModule):
 class PhiEvaluatorPFD(PhiEvaluatorModule):
     sys_lop: LinOp
     pfd_coeffs: tuple
+    J: jax.Array
 
     def __init__(self, sys_lop, **kwargs):
 
@@ -149,21 +154,18 @@ class PhiEvaluatorPFD(PhiEvaluatorModule):
         pfd_method = kwargs.get("pfd_method", "cram_16")
         self.pfd_coeffs = get_pfd_coeffs(pfd_method)
 
-        #if "pfd_rs" in method:
-        #    if HAS_ORMATEX_RUST:
-        #        self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
-        #            self.pfd_method, kwargs.get("pfd_order", 16))
-        #    else:
-        #        raise AttributeError(f"{self.method} requires the rust bindings, which were not found.")
+        self.J = self.sys_lop.dense()
 
     @jax.jit
     def eval_phi(self, k, cdt, b):
-        cdtJ = cdt * self.sys_lop.dense()
+        #cdtJ = cdt * self.sys_lop.dense()
+        cdtJ = cdt * self.J
         return f_phi_ks_pfd(cdtJ, b, jnp.asarray(k), self.pfd_coeffs)
 
     @partial(jax.jit, static_argnames=('ks', ))
     def eval_phis(self, ks, cdt, bs):
-        cdtJ = cdt * self.sys_lop.dense()
+        #cdtJ = cdt * self.sys_lop.dense()
+        cdtJ = cdt * self.J
 
         Bs = jnp.stack(bs, axis=1)
         Ks = jnp.asarray(ks)
@@ -174,9 +176,11 @@ class PhiEvaluatorPFD(PhiEvaluatorModule):
 
 class PhiEvaluatorDense(PhiEvaluatorModule):
     sys_lop: LinOp
+    J: jax.Array
 
     def __init__(self, sys_lop, **kwargs):
         self.sys_lop = sys_lop
+        self.J = self.sys_lop.dense()
 
     @partial(jax.jit, static_argnames=('k', ))
     def eval_phi(self, k, cdt, b):
@@ -184,11 +188,48 @@ class PhiEvaluatorDense(PhiEvaluatorModule):
 
     @partial(jax.jit, static_argnames=('ks', ))
     def eval_phis(self, ks, cdt, bs):
-        cdtJ = cdt * self.sys_lop.dense()
+        #cdtJ = cdt * self.sys_lop.dense()
+        cdtJ = cdt * self.J
         phiJs = f_phi_k_sq_all(cdtJ, max(ks))
 
         result = jnp.zeros(bs[0].shape)
         for it, k in enumerate(ks):
             result += phiJs[k] @ bs[it]
 
+        return result
+
+
+
+class PhiEvaluatorPFDRS(PhiEvaluatorModule):
+    sys_lop: LinOp
+    phikv_dense_rs: eqx.Module
+    J: np.array
+
+    def __init__(self, sys_lop, **kwargs):
+
+        self.sys_lop = sys_lop
+
+        # Partial fraction decomposition method
+        pfd_method = kwargs.get("pfd_method", "cram_16")
+        pfd_order = kwargs.get("pfd_order", 16)
+
+        if HAS_ORMATEX_RUST:
+            self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(pfd_method, pfd_order)
+        else:
+            raise AttributeError("PhiEvaluatorPFDRS requires the rust bindings, which were not found.")
+
+        self.J = np.asarray(self.sys_lop.dense())
+
+    def eval_phi(self, k, cdt, b):
+        #J = np.asarray(self.sys_lop.dense())
+        J = self.J
+        result = self.phikv_dense_rs.eval(J, cdt, np.asarray(b).reshape(-1,1), k).flatten()
+        return jnp.asarray(result)
+
+    def eval_phis(self, ks, cdt, bs):
+        #J = np.asarray(self.sys_lop.dense())
+        J = self.J
+        result = np.zeros(bs[0].shape)
+        for it, k in enumerate(ks):
+            result += self.phikv_dense_rs.eval(J, cdt, np.asarray(bs[it]).reshape(-1,1), k).flatten()
         return result

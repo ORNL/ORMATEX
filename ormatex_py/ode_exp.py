@@ -50,20 +50,15 @@ class ExpRBIntegrator(IntegrateSys):
         if not self.method in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
 
+        # construct PhiEvaluator
         method_phi_dict = {"exprb2": "krylov", "exprb3": "krylov", "epi2": "kiops", "epi3": "kiops",
                            "exprb2_dense": "dense", "exprb2_pfd": "pfd",
-                           "exprb2_pfd_rs": "pfd", "exp_pfd_rs": "pfd"}
+                           "exprb2_pfd_rs": "pfd_rs", "exp_pfd_rs": "pfd_rs"}
         phi_method = phi_method if phi_method is not None else method_phi_dict[method]
         self.Phi = PhiEvaluator(None, method=phi_method, **kwargs)
 
-        #TODO: move this to PhiEvaluator
-        if "pfd_rs" in method:
-            self.pfd_method = kwargs.get("pfd_method", "cram_16")
-            if HAS_ORMATEX_RUST:
-                self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
-                    self.pfd_method, kwargs.get("pfd_order", 16))
-            else:
-                raise AttributeError(f"{self.method} requires the rust bindings, which were not found.")
+        # tolerence to detect nonautonomous systems, a negative value disables this check
+        self.tol_fdt = kwargs.get("tol_fdt", 0.)
 
         order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, **kwargs)
@@ -154,6 +149,7 @@ class ExpRBIntegrator(IntegrateSys):
         y_update = self.Phi.eval_phis((1, 2), dt, (fyt, (2./3.)*rn + dt*fytt))
 
         y_new = yt + dt * y_update
+        # no error est. avail
         y_err = -1.0
 
         return StepResult(t+dt, dt, y_new, y_err)
@@ -356,50 +352,25 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_exprb2_pfd_rs(self, dt: float) -> StepResult:
+    def _step_exp(self, dt: float) -> StepResult:
         r"""
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
-        where J is the dense Jacobian matrix and varphi is computed
-        using cauchy contour integral approach with quadrature rule
+            y_{t+1} = \varphi_0(dt*J)*y0
+        where J is the Jacobian matrix
+        NOTE: Only useful for purely linear systems
         """
         t = self.t
         yt = self.y_hist[0]
+
         sys_jac_lop = self.sys.fjac(t, yt)
+        self.Phi.set_lop(sys_jac_lop)
+
         fyt = sys_jac_lop._frhs_cached()
+        if jnp.linalg.norm(fyt - sys_jac_lop(yt), ord=jax.numpy.inf) / jnp.linalg.norm(fyt, ord=jax.numpy.inf) > 1e-7:
+            print(f"warning: step_exp only valid for purely linear systems")
 
-        J = np.asarray(sys_jac_lop.dense())
+        y_new = self.Phi.eval_phi(0, dt, yt)
 
-        # check for nonautonomous system
-        phi2J_fytt = 0.
-        if self.tol_fdt >= 0.:
-            # deriv of rhs wrt time at current time
-            fytt = sys_jac_lop._fdt()
-            if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-                phi2J_fytt = self.phikv_dense_rs.eval(J, dt, np.asarray(fytt).reshape(-1,1), 2).flatten()
-                phi2J_fytt = jnp.asarray(phi2J_fytt)
-
-        phi1J_fyt = self.phikv_dense_rs.eval(J, dt, np.asarray(fyt).reshape(-1,1), 1).flatten()
-        phi1J_fyt = jnp.asarray(phi1J_fyt)
-
-        y_new = yt + dt * (phi1J_fyt + dt * phi2J_fytt)
-
-        y_err = -1.
-        return StepResult(t+dt, dt, y_new, y_err)
-
-    def _step_exp_pfd_rs(self, dt: float) -> StepResult:
-        r"""
-        Computes the solution update by:
-        y_{t+1} = \varphi_0(dt*L)*y0
-        where L is a dense matrix and computing varphi
-        using cauchy contour integral approach with quadrature rule
-        NOTE: Only useful for pure linear systems
-        """
-        t = self.t
-        yt = self.y_hist[0]
-        J = np.asarray(self.sys.fjac(t, yt).dense())
-        phi0J_yt = self.phikv_dense_rs.eval(J, dt, np.asarray(yt).reshape(-1,1), 0)
-        y_new = jnp.asarray(phi0J_yt.flatten())
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
