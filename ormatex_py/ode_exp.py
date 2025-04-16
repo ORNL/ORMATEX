@@ -23,6 +23,8 @@ import numpy as np
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
+from ormatex_py.phi_evaluator import PhiEvaluator
+
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd, \
@@ -42,14 +44,21 @@ class ExpRBIntegrator(IntegrateSys):
                       "exprb2_dense": 2,
                       "exprb2_pfd_rs": 2, "exp_pfd_rs": 1}
 
-    def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
+    def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", phi_method=None, **kwargs):
         # Exponential integration method
         self.method = method
-        # Partial fraction decomposition method
-        self.pfd_method = kwargs.get("pfd_method", "cram_16")
         if not self.method in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
+
+        method_phi_dict = {"exprb2": "krylov", "exprb3": "krylov", "epi2": "kiops", "epi3": "kiops",
+                           "exprb2_dense": "dense", "exprb2_pfd": "pfd",
+                           "exprb2_pfd_rs": "pfd", "exp_pfd_rs": "pfd"}
+        phi_method = phi_method if phi_method is not None else method_phi_dict[method]
+        self.Phi = PhiEvaluator(None, method=phi_method, **kwargs)
+
+        #TODO: move this to PhiEvaluator
         if "pfd_rs" in method:
+            self.pfd_method = kwargs.get("pfd_method", "cram_16")
             if HAS_ORMATEX_RUST:
                 self.phikv_dense_rs = ormatex_rs.DensePhikvEvalRs(
                     self.pfd_method, kwargs.get("pfd_order", 16))
@@ -62,13 +71,60 @@ class ExpRBIntegrator(IntegrateSys):
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
         # incomplete orthogonalization depth for mgs
         self.iom = kwargs.get("iom", 100)
+        
         # tolerence to detect nonautonomous systems, a negative value disables this check
-        self.tol_fdt = kwargs.get("tol_fdt", 1.0e-8)
+        self.tol_fdt = kwargs.get("tol_fdt", 0.)
         # threads
         self.executor = ThreadPoolExecutor(max_workers=2)
 
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
+
+    def _remf(self, tr: float, yr: jax.Array,
+              frhs_yt: jax.Array, sys_jac_lop_yt: LinOp, v=0.0):
+        """
+        Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt) - v*(tr-t0)
+        where v = d(frhs)/dt
+        """
+        t = self.t_hist[0]
+        yt = self.y_hist[0]
+        dt = tr - t
+        frhs_yr = self.sys.frhs(tr, yr)
+        jac_yd = sys_jac_lop_yt(yr - yt)
+        return frhs_yr - frhs_yt - jac_yd - v*dt
+
+    def _step_exprb2(self, dt: float) -> StepResult:
+        r"""
+        Exponential Euler, computes the solution update by:
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
+
+        where J is the Jacobian matrix and varphi is computed using a general PhiEvaluator
+
+        doi: https://doi.org/10.1137/080717717
+        """
+        t = self.t
+        yt = self.y_hist[0]
+
+        sys_jac_lop = self.sys.fjac(t, yt)
+        self.Phi.set_lop(sys_jac_lop)
+
+        fyt = sys_jac_lop._frhs_cached()
+
+        if self.tol_fdt >= 0.:
+            # deriv of rhs wrt time at current time
+            fytt = sys_jac_lop._fdt()
+
+        if self.tol_fdt >= 0. and jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
+            y_update = self.Phi.eval_phis((1, 2), dt, (fyt, dt*fytt))
+        else:
+            y_update = self.Phi.eval_phi(1, dt, fyt)
+
+        y_new = yt + dt * y_update
+        # no error est. avail
+        y_err = -1.
+
+        return StepResult(t+dt, dt, y_new, y_err)
 
     def _phi2v_nonauto(self, sys_jac_lop, dt, c=1.0):
         r"""
@@ -90,58 +146,6 @@ class ExpRBIntegrator(IntegrateSys):
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
                 return (c**2.)*(dt**2.)*phi_linop(sys_jac_lop, c*dt, fytt, 2, self.max_krylov_dim, self.iom), fytt
         return 0., 0.
-
-    def _step_exprb2(self, dt: float, frhs_kwargs: dict) -> StepResult:
-        """
-        Computes the solution update by:
-
-        .. math::
-
-            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)+
-                dt**2*\varphi_2(dt*J_t)F'(t, y_t)
-
-        doi: https://doi.org/10.1137/080717717
-        """
-        t = self.t
-        yt = self.y_hist[0]
-        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
-        fyt = sys_jac_lop._frhs_cached()
-        phi2_v, _0 = self._phi2v_nonauto(sys_jac_lop, dt)
-        y_new = yt \
-            + phi_linop(sys_jac_lop, dt, dt*fyt, 1, self.max_krylov_dim, self.iom) \
-            + phi2_v
-        # no error est. avail
-        y_err = -1.
-        return StepResult(t+dt, dt, y_new, y_err)
-
-    # lowest order EPI multistep method is single step
-    # but implemented using KIOPS, which is different for nonhomogeneous
-    def _step_epi2(self, dt: float, frhs_kwargs: dict) -> StepResult:
-        """
-        Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
-            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
-
-        doi:
-        """
-        t = self.t
-        yt = self.y_hist[0] # y_t
-
-        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
-        fyt = sys_jac_lop._frhs_cached()
-
-        # time derivative
-        fytt = sys_jac_lop._fdt()
-
-        # use kiops to save one call to arnoldi
-        vb0 = jnp.zeros(yt.shape)
-        y_update = kiops_fixedsteps(
-            sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt],
-            max_krylov_dim=self.max_krylov_dim, iom=self.iom)
-        y_new = yt + y_update
-        y_err = -1.0
-
-        return StepResult(t+dt, dt, y_new, y_err)
 
     def _step_epi3(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
@@ -312,41 +316,6 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_exprb2_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
-        r"""
-        Computes the solution update by:
-
-        .. math::
-
-            y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
-
-        where J is the dense Jacobian matrix and varphi is computed
-        using partial fraction decomposition
-        """
-        t = self.t
-        yt = self.y_hist[0]
-        # sys_jac_lop = self.sys.fjac(t, yt)
-        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
-        fyt = sys_jac_lop._frhs_cached()
-
-        J = sys_jac_lop.dense()
-
-        # check for nonautonomous system
-        phi2J_fytt = 0.
-        if self.tol_fdt >= 0.:
-            # deriv of rhs wrt time at current time
-            fytt = sys_jac_lop._fdt()
-            if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-                phi2J_fytt = f_phi_k_pfd(J*dt, fytt, 2, self.pfd_method)
-
-        # TODO eliminate redundant rational solves for nonautonomous system
-        phi1J_fyt = f_phi_k_pfd(J*dt, fyt, 1, self.pfd_method)
-
-        y_new = yt + dt * (phi1J_fyt + dt * phi2J_fytt)
-
-        y_err = -1.
-        return StepResult(t+dt, dt, y_new, y_err)
-
     def _step_exprb3_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Computes the solution update by:
@@ -472,24 +441,22 @@ class ExpRBIntegrator(IntegrateSys):
         elif self.method == "pexprb4":
             return self._step_pexprb4(dt, frhs_kwargs)
         elif self.method == "epi2":
-            return self._step_epi2(dt, frhs_kwargs)
+            return self._step_exprb2(dt, frhs_kwargs)
         elif self.method == "epi3":
             if len(self.y_hist) >= 2:
                 return self._step_epi3(dt, frhs_kwargs)
             else:
                 return self._step_exprb3(dt, frhs_kwargs)
         elif self.method == "exprb2_dense":
-            return self._step_exprb2_dense(dt)
+            return self._step_exprb2(dt, frhs_kwargs)
         elif self.method == "exprb2_pfd":
-            return self._step_exprb2_pfd(dt, frhs_kwargs)
+            return self._step_exprb2(dt, frhs_kwargs)
         elif self.method == "exprb3_pfd":
             return self._step_exprb3_pfd(dt, frhs_kwargs)
-        elif self.method == "exp_pfd":
-            return self._step_exp_pfd(dt, frhs_kwargs)
         elif self.method == "exprb2_pfd_rs" and HAS_ORMATEX_RUST:
-            return self._step_exprb2_pfd_rs(dt)
+            return self._step_exprb2_pfd_rs(dt, frhs_kwargs)
         elif self.method == "exp_pfd_rs" and HAS_ORMATEX_RUST:
-            return self._step_exp_pfd_rs(dt)
+            return self._step_exp_pfd_rs(dt, frhs_kwargs)
         else:
             raise NotImplementedError
 

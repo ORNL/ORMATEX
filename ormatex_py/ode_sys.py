@@ -298,6 +298,7 @@ class AdJacLinOp(SysJacLinOp):
         """
         Define the (dense) jacobian of frhs.
         """
+        print("jit-compiling AdJacLinOp._dense")
         return jax.vmap(self._matvec, in_axes=(1), out_axes=1)(jnp.eye(self._u.shape[0]))
 
 

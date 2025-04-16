@@ -22,7 +22,6 @@ import jax
 import equinox as eqx
 from jax import numpy as jnp
 import warnings
-from ormatex_py.matexp_phi_pfd_dict import pfd_dict
 
 
 def f_phi_k(z: jax.Array, k: int) -> jax.Array:
@@ -246,7 +245,7 @@ class PhiEvaluator_PFD_Dense(eqx.Module):
         assert len(ks) == M
 
         # poles and coefficients for partial fraction decomp.
-        ps, cs, c0 = pfd_dict[self.method]
+        ps, cs, c0 = get_pfd_coeffs(self.method)
         k = jnp.asarray(ks)
 
         # correction for phi0
@@ -266,7 +265,7 @@ def compute_pfd_lu(z: jax.Array, method: str):
     """
     Precompute LU factors for partial fraction decomposition phi_k_pfd
     """
-    ps, _, _ = pfd_dict[method]
+    ps, _, _ = get_pfd_coeffs(method)
     N, N1 = z.shape
     assert N == N1
     Id = jnp.eye(N)
@@ -281,24 +280,52 @@ def compute_pfd_lu(z: jax.Array, method: str):
     return (pfd_lu, pfd_piv)
 
 
+@partial(jax.jit, static_argnums=(0,))
+def get_pfd_coeffs(method: str):
+    from ormatex_py.matexp_phi_pfd_dict import pfd_dict
+
+    ps, cs, c0 = pfd_dict[method]
+    return jnp.asarray(ps), jnp.asarray(cs), c0
+
+
+@jax.jit
+def f_phi_ks_pfd(z: jax.Array, b: jax.Array, ks: jax.Array, pfd_coeffs: tuple) -> jax.Array:
+    """
+    Computes phi_k(Z)B for dense Z and dense B, using a rational approximation
+    and partial fraction expansion.
+
+    ks either a array of shape (1) or an array of shape (M).
+    in the latter case, a different k is used for different columns of B.
+    """
+    N, M, B = _validate_args_appl(z, b, 0)
+    if len(ks.shape) == 0 or (len(ks.shape) == 1 and ks.shape[0] == 1):
+        pass
+    elif len(ks.shape) == 1:
+        assert ks.shape[0] == M
+        ks = ks.reshape((1, M))
+    else:
+        assert len(ks.shape) == 2
+        assert (1, M) == ks.shape
+
+    # poles and coefficients for partial fraction decomp.
+    ps, cs, c0 = pfd_coeffs
+
+    Id = jnp.eye(z.shape[0])
+
+    # constant part
+    phi_kb = jnp.where(ks==0, 1., 0.) * c0 * B
+
+    for p, c in zip(ps, cs):
+        phi_kb += jnp.real((2. * c / p**ks) * jnp.linalg.solve((z - p*Id), B))
+
+    return phi_kb.reshape(b.shape)
+
+
 @partial(jax.jit, static_argnums=(2, 3))
 def f_phi_k_pfd(z: jax.Array, b: jax.Array, k: int, method: str) -> jax.Array:
     """
     Computes phi_k(Z)B for dense Z and dense B, using a rational approximation
     and partial fraction expansion
     """
-    _N, _M, B = _validate_args_appl(z, b, k)
-
-    # poles and coefficients for partial fraction decomp.
-    ps, cs, c0 = pfd_dict[method]
-
-    phi_kb = jnp.zeros(B.shape)
-    Id = jnp.eye(z.shape[0])
-
-    if k == 0:
-        phi_kb += c0 * B
-
-    for p, c in zip(ps, cs):
-        phi_kb += jnp.real((2. * c / p**k) * jnp.linalg.solve((z - p*Id), B))
-
-    return phi_kb.reshape(b.shape)
+    pfd_coeffs = get_pfd_coeffs(method)
+    return f_phi_ks_pfd(z, b, jnp.asarray(k), pfd_coeffs)
