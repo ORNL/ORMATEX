@@ -10,7 +10,7 @@ from functools import partial
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd
-from ormatex_py.matexp_leja import leja_phikv_extended, gen_leja_fast, power_iter, build_a_tilde, leja_shift_scale, leja_phikv_extended_substep
+from ormatex_py.matexp_leja import gen_leja_fast, build_a_tilde, leja_shift_scale, real_leja_expmv_substep
 try:
     import ormatex_py.ormatex as ormatex_rs
     HAS_ORMATEX_RUST = True
@@ -345,10 +345,11 @@ class ExpLejaIntegrator(IntegrateSys):
         if method not in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
         order = self._valid_methods[self.method]
-        self.leja_tol = kwargs.get("leja_tol", 1e-14)
+        self.leja_tol = kwargs.get("leja_tol", 1e-16)
         # storage for eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
         self._leja_bk = None
         self.leja_max_power_iter = 80
+        self.leja_max_eig_scale = 1.0
         self.leja_substep_size = 1.0
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 1000)))
@@ -380,18 +381,15 @@ class ExpLejaIntegrator(IntegrateSys):
         # store eigenvector for next step to speed convergence of power iterations in
         # subsequent calls to power iter method.
         shift, scale, max_eig, self._leja_bk, _power_iters = leja_shift_scale(
-                a_tilde_lo, v.shape[0], self.leja_max_power_iter, self._leja_bk)
+                a_tilde_lo, v.shape[0], self.leja_max_power_iter,
+                self._leja_bk, self.leja_max_eig_scale)
 
         # compute phi-vector products by leja interpolation
-        # y_update, leja_iters, converged = leja_phikv_extended(
-        #         a_tilde_lo, 1.0, v, self.leja_x, n, shift, scale, 1, self.leja_tol)
-        y_update, leja_iters, converged, max_tau_dt = leja_phikv_extended_substep(
+        y_update, leja_iters, converged, max_tau_dt = real_leja_expmv_substep(
                 a_tilde_lo, 1.1*self.leja_substep_size, v, self.leja_x,
                 n, shift, scale, self.leja_tol)
         self.leja_substep_size = max_tau_dt
 
-        # y_update, leja_iters, converged = leja_phikv_extended(
-        #     sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt], self.leja_x, self.leja_tol)
         y_new = yt + y_update
         y_err = -1.0
 

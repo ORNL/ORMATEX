@@ -12,11 +12,18 @@ from jax import numpy as jnp
 from ormatex_py.ode_sys import LinOp, AugMatrixLinOp, MatrixLinOp
 
 
-def gen_leja_fast(a=-2, b=2., n=100):
+def gen_leja_fast(a: float=-2., b: float=2., n: int=100):
     """
-    Generate the fast leja points.  Ref:
+    Generate the fast leja points in [a, b].
+
+    Ref:
         Baglama, J., D. Calvetti, and L. Reichel.
         "Fast leja points." Electron. Trans. Numer. Anal 7.124-140 (1998): 119-120.
+
+    Args:
+        a: left bounding point on the interval [a, b]
+        b: right point
+        n: number of fast leja points to generate
     """
     # the first 3 fast leja points
     zt = np.zeros(n)
@@ -50,25 +57,17 @@ def gen_leja_fast(a=-2, b=2., n=100):
     return zt
 
 
-def gen_leja(n=100):
-    """
-    Generate leja points
-
-    Args:
-        n: maximum number of leja points to generate
-    """
-    # TODO
-    pass
-
-
-@partial(jax.jit, static_argnums=(2))
-def power_iter(a_lop: LinOp, b0: jax.Array, iter: int):
+@partial(jax.jit, static_argnums=(2,3))
+def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-2):
     """
     Performs power iteration to find dominate eigenvalue of system
+
+    Args:
+        a_lop:  LinOp linear operator which must implement matvec.
+        b0: initial eigen vector
+        iter: max number of power iterations to perform.
+        tol: tolerance for dominate (real) eigenvalue
     """
-    # b_k = jax.random.uniform(jax.random.key(42), (dim,))
-    # inital guess for eigenvector
-    tol = 1.0e-3
     b_k = b0.at[:].get()
     eig_last = 1e20
     # for _ in range(iter):
@@ -104,6 +103,10 @@ def newton_poly_div_diff(x: jax.Array, y: jax.Array):
     """
     Divided difference formula to compute coeffs of the newton polynomial
     given pairs of (x_i, y_i)
+
+    Args:
+        x: data support points, where the data is sampled.
+        y: value of the function at x points.
     """
     m = len(x)
     a = y.at[:].get()
@@ -113,40 +116,42 @@ def newton_poly_div_diff(x: jax.Array, y: jax.Array):
 
 
 @jax.jit
-def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, coeff: float, shift: float, scale: float, leja_x: jax.Array, tol: float):
-    """
-    Computes leja polynomial interpolation to approx exp(dt*A)*v
+def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, tol: float):
+    r"""
+    Computes leja polynomial interpolation to approx :math:`\matrm{exp}(\delta t A)u`.
+
+    Ref:  L. Bergamaschi.  M. Caliari. A. Martinez and M. Vianello.
+        Comparing Leja and Krylov Approximations of Large Scale
+        Matrix Exponentials. Intl. Conf on Computational Science. 2006.
 
     Args:
-        shift:  shift applied to leja points.  q=(1/2)*alpha.  Where alpha=0.5*max(abs(eigs(A))
+        a_lo:  LinOp linear operator which must implement matvec.
+        dt:  (Sub)step size.
+        u: vector to which the matrix exponential is applied.
+        shift:  shift applied to leja points.
         scale:  scale applied to leja points.
+        leja_x:  The unscaled leja points
+        tol:  Tolerance of the polynomial interpolation such that
+            :math:`|| p - exp(\delta t A)u || < tol` where p is
+            the leja polynomial approximation to :math:`\matrm{exp}(\delta t A)u`.
     """
     print(f"jit-compiling leja_expmv")
     n_leja = len(leja_x)
     converged = False
 
-    coeffs = newton_poly_div_diff(leja_x,  jnp.exp(coeff*dt*(shift + scale*leja_x)))
-    # coeffs = newton_poly_div_diff(leja_x,  jnp.exp(coeff*(leja_x)))
-    # polynomial approximation, 1st term
+    coeffs = newton_poly_div_diff(leja_x,  jnp.exp(shift + scale*leja_x))
     poly_expmv = coeffs[0] * u
     y = u.at[:].get()
+    beta = jnp.linalg.norm(u)
 
-    # for i in range(1, n_leja):
-    #     y_i = (dt*a_lo.matvec(y)/(scale)) + (y * (-shift/scale - leja_x[i-1]))
-    #     y = y.at[:].set(y_i)
-    #     poly_expmv += coeffs[i] * y
-    #     # estimate error
-    #     poly_err = jnp.linalg.norm(y) * jnp.abs(coeffs[i])
-    #     if poly_err < tol:
-    #         converged = True
-    #         break
     # jax version of above
     def body_leja_poly(args):
         # unpack args: (i, y, poly, err)
         i, y, poly_expmv, _ = args
         # compute new term in the polynomial approx
-        _y_i = (a_lo.matvec(y)/(scale)) + (y * (-shift/scale - leja_x[i-1]))
-        y = y.at[:].set(_y_i)
+        z = dt*a_lo.matvec(y) / scale
+        z = z - ((shift/scale + leja_x[i-1]) * y)
+        y = y.at[:].set(z)
         poly_expmv += coeffs[i] * y
         # estimate error
         poly_err = jnp.linalg.norm(y) * jnp.abs(coeffs[i])
@@ -154,29 +159,38 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, coeff: float, shift: f
         return i, y, poly_expmv, poly_err
     def cond_leja_poly(args):
         i, y, poly_expmv, poly_err = args
-        tol_check = (poly_err > tol*jnp.linalg.norm(poly_expmv)+tol) & (i < n_leja) & (poly_err < 2.0e4)
-        return tol_check
+        # jax.debug.print("i: {}, h: {}, err: {}", i, dt, poly_err)
+        tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e4)
+        iter_check = (i < n_leja)
+        return ((tol_check) & (iter_check)) | (i < 3)
     i, y, poly_expmv, err = lax.while_loop(
-            cond_leja_poly, body_leja_poly, (1, y, poly_expmv, 1.0e4))
-    converged = (i < n_leja) & (err < 2.0e4)
+            cond_leja_poly, body_leja_poly, (1, y, poly_expmv, 1.0e2))
+    converged = (i < n_leja) & (err < beta*1.0e4)
     # expmv, n_iters, converged
     return poly_expmv, i, converged
 
-def leja_phikv_extended(
+def _leja_phikv_extended(
         a_tilde_lo: LinOp, dt: float, v: jax.Array, leja_x: jax.Array,
         n: int, shift: float, scale: float,
         n_substeps: int=1, tol: float=1.0e-6) -> jax.Array:
-    w, iter, converged = real_leja_expmv(a_tilde_lo, dt, v, 1.0,
-              shift, scale, leja_x, tol)
+    w, iter, converged = real_leja_expmv(a_tilde_lo, dt, v, shift, scale, leja_x, tol)
     return w[0:n], iter, converged
 
-def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=None, scale_factor: float=1.1):
+def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=None, scale_factor: float=1.0):
     """
+    Computes scaling and shifting parameters for leja interpolation
+    of the matrix exponential using power iteration to estimate the
+    eigenvalue with maximum real magnitude.
+    TODO: use arnoldi or other method to estimate the eigenvalue with
+    the maximum imag magnitude.
+    WARNING: This routine does not work for systems with only
+    imaginary eigenvalues.
+
     Args:
-        max_power_iter: maximum number of power iterations
-        b0: vector. Initial guess for principle eigenvector of A
-        scale_factor: saftey factor for largest eig magnitude to ensure leja points
-            encompass the system jacobian spectrum
+        max_power_iter: maximum number of power iterations.
+        b0: vector. Initial guess for principle eigenvector of A.
+        scale_factor: saftey factor for largest eig magnitude to
+            ensure leja points encompass the spectrum.
     """
     if b0 is not None:
         assert len(b0) == dim
@@ -188,13 +202,21 @@ def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=Non
     scale = alpha / 4.
     return shift, scale, max_eig, b, iters
 
-def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=1.0e-6):
+def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=1.0e-10):
     """
-    Computs exp(dt*A)*v using substeps by:
+    Computs :math:`exp(\Delta t A)v` using substeps by:
+
+    .. code-block::
+
         v_{i+1} = exp(dt*A*tau_i)*v_{i}
-        where sum(tau_i) = 1
+
+    where :math:`\sum(tau_i) = 1`
+
     Args:
+        a_tilde_lo:  LinOp linear operator.
         tau_dt: inital substep size in (0, 1].
+        v: vector to which the matrix exponential is applied
+        leja_x: leja points generated by the fast_leja_points function.
     """
     assert tau_dt > 0
     # substep size
@@ -204,13 +226,14 @@ def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=
     # current substep solution
     w_t = v
     tot_iter = 0
-    i, max_substeps = 0, 200
+    i, max_substeps = 0, 1000
     max_tau_dt = 0.0
     last_converged = False
     while True:
         w, iter, converged = real_leja_expmv(
-                a_tilde_lo, dts, w_t, 1.0, shift, scale, leja_x, tol)
+                a_tilde_lo, dts, w_t, shift, scale, leja_x, tol)
         tot_iter += iter
+        # print(i, iter, tau, dts)
         if not converged:
             # reduce the substep size
             dts /= 2.
@@ -231,12 +254,6 @@ def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=
         if i > max_substeps:
             raise RuntimeError("Max substeps reached")
     return w_t[0:n], tot_iter, converged, max_tau_dt
-
-
-def leja_phikv_extended_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol):
-    w, tot_iters, converged, dts = real_leja_expmv_substep(
-            a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol)
-    return w, tot_iters, converged, dts
 
 
 def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
@@ -307,7 +324,7 @@ if __name__ == "__main__":
     b0 = jax.random.uniform(jax.random.key(42), (dim,))
     max_eig, _, _ = power_iter(a_lop, b0, 10)
 
-    scale_factor = 1.1
+    scale_factor = 1.01
     alpha = max_eig * scale_factor
     print("alpha a:", alpha)
     shift = alpha / 2.
@@ -316,7 +333,7 @@ if __name__ == "__main__":
     # calc exp(a_lop*dt)*u
     dt = 0.25
     lp = jnp.asarray(lp)
-    leja_expmv, iter, converged = real_leja_expmv(a_lop, dt, u, 1.0, shift, scale, lp, 1e-6)
+    leja_expmv, iter, converged = real_leja_expmv(a_lop, dt, u, shift, scale, lp, 1e-6)
     expected_expmv = jax.scipy.linalg.expm(dt*a) @ u
     print(iter)
     print(converged)
@@ -337,6 +354,6 @@ if __name__ == "__main__":
     b0 = jax.random.uniform(jax.random.key(42), (dim,))
     max_eig, _, _ = power_iter(a_lop, b0, 10)
 
-    scale_factor = 1.1
+    scale_factor = 1.01
     alpha = max_eig * scale_factor
     print("alpha a:", alpha)
