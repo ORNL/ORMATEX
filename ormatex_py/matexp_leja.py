@@ -60,13 +60,13 @@ def gen_leja_fast(a: float=-2., b: float=2., n: int=100):
 @partial(jax.jit, static_argnums=(2,3))
 def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-2):
     """
-    Performs power iteration to find dominate eigenvalue of system
+    Performs power iteration to find dominant eigenvalue of system
 
     Args:
         a_lop:  LinOp linear operator which must implement matvec.
         b0: initial eigen vector
         iter: max number of power iterations to perform.
-        tol: tolerance for dominate (real) eigenvalue
+        tol: tolerance for dominant (real) eigenvalue
     """
     b_k = b0.at[:].get()
     eig_last = 1e20
