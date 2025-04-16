@@ -70,16 +70,6 @@ def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-2):
     """
     b_k = b0.at[:].get()
     eig_last = 1e20
-    # for _ in range(iter):
-    #     b_k1 = a_lop.matvec(b_k)
-    #     eig_a = (b_k.transpose() @ b_k1) / \
-    #             (b_k.transpose() @ b_k)
-    #     b_k1_norm = jnp.linalg.norm(b_k1)
-    #     b_k = b_k1 / b_k1_norm
-    #     if eig_diff < tol:
-    #         break
-    #     eig_last = eig_a
-    # jax version of above
     def body_power_iter(args):
         # unpack args: (i, bk, eig_a)
         i, b_k, eig_old, _ = args
@@ -116,7 +106,7 @@ def newton_poly_div_diff(x: jax.Array, y: jax.Array):
 
 
 @jax.jit
-def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, tol: float):
+def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, coeffs: jax.Array, tol: float):
     r"""
     Computes leja polynomial interpolation to approx :math:`\matrm{exp}(\delta t A)u`.
 
@@ -139,7 +129,6 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
     n_leja = len(leja_x)
     converged = False
 
-    coeffs = newton_poly_div_diff(leja_x,  jnp.exp(shift + scale*leja_x))
     poly_expmv = coeffs[0] * u
     y = u.at[:].get()
     beta = jnp.linalg.norm(u)
@@ -169,12 +158,6 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
     # expmv, n_iters, converged
     return poly_expmv, i, converged
 
-def _leja_phikv_extended(
-        a_tilde_lo: LinOp, dt: float, v: jax.Array, leja_x: jax.Array,
-        n: int, shift: float, scale: float,
-        n_substeps: int=1, tol: float=1.0e-6) -> jax.Array:
-    w, iter, converged = real_leja_expmv(a_tilde_lo, dt, v, shift, scale, leja_x, tol)
-    return w[0:n], iter, converged
 
 def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=None, scale_factor: float=1.0):
     """
@@ -201,6 +184,7 @@ def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=Non
     shift = alpha / 2.
     scale = alpha / 4.
     return shift, scale, max_eig, b, iters
+
 
 def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=1.0e-10):
     """
@@ -229,9 +213,18 @@ def real_leja_expmv_substep(a_tilde_lo, tau_dt, v, leja_x, n, shift, scale, tol=
     i, max_substeps = 0, 1000
     max_tau_dt = 0.0
     last_converged = False
+
+    # Compute divided differences from
+    # M. Calari.  Accurate evaluation of divided differences for polynomial
+    # interpolation of exponential propagators. Computing. 80. 2007.
+    # Xi = jnp.diag(leja_x, 0) + jnp.diag(jnp.ones(leja_x.shape[0]-1), -1)
+    # extract the first column
+    # coeffs = jax.scipy.linalg.expm(shift + scale*Xi).at[:, 0].get()
+    coeffs = newton_poly_div_diff(leja_x,  jnp.exp(shift + scale*leja_x))
+
     while True:
         w, iter, converged = real_leja_expmv(
-                a_tilde_lo, dts, w_t, shift, scale, leja_x, tol)
+                a_tilde_lo, dts, w_t, shift, scale, leja_x, coeffs, tol)
         tot_iter += iter
         # print(i, iter, tau, dts)
         if not converged:
@@ -333,7 +326,8 @@ if __name__ == "__main__":
     # calc exp(a_lop*dt)*u
     dt = 0.25
     lp = jnp.asarray(lp)
-    leja_expmv, iter, converged = real_leja_expmv(a_lop, dt, u, shift, scale, lp, 1e-6)
+    coeffs = newton_poly_div_diff(lp,  jnp.exp(shift + scale*lp))
+    leja_expmv, iter, converged = real_leja_expmv(a_lop, dt, u, shift, scale, lp, coeffs, 1e-6)
     expected_expmv = jax.scipy.linalg.expm(dt*a) @ u
     print(iter)
     print(converged)

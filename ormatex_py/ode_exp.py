@@ -352,7 +352,7 @@ class ExpLejaIntegrator(IntegrateSys):
         self.leja_max_eig_scale = 1.0
         self.leja_substep_size = 1.0
         self.leja_x = jnp.asarray(
-                gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 1000)))
+                gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 200)))
         super().__init__(sys, t0, y0, order, method, **kwargs)
 
     def _step_epi2(self, dt: float) -> StepResult:
