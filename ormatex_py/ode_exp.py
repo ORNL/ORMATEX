@@ -67,11 +67,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, **kwargs)
-        # maximum krylov subspace dimension
-        self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
-        # incomplete orthogonalization depth for mgs
-        self.iom = kwargs.get("iom", 100)
-        
+
         # tolerence to detect nonautonomous systems, a negative value disables this check
         self.tol_fdt = kwargs.get("tol_fdt", 0.)
         # threads
@@ -96,11 +92,14 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2(self, dt: float) -> StepResult:
         r"""
         Exponential Euler, computes the solution update by:
-
+        .. math::
             y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
 
         where J is the Jacobian matrix and varphi is computed using a general PhiEvaluator
 
+        Hochbruck, Marlis, Alexander Ostermann, and Julia Schweitzer.
+        Exponential Rosenbrock-type methods.
+        SIAM Journal on Numerical Analysis 47.1 (2009): 786-803.
         doi: https://doi.org/10.1137/080717717
         """
         t = self.t
@@ -126,33 +125,13 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _phi2v_nonauto(self, sys_jac_lop, dt, c=1.0):
-        r"""
-        For rosenbrock exp integrators, this method computes
-        the correction term for nonautonomous systems.
-        :math:`\Delta t^2 \varphi_2(A \Delta t)v`
-        with
-        :math:`v=\frac{d \mathrm{frhs}}{dt}`
-        Ref:
-            Hochbruck, Marlis, Alexander Ostermann, and Julia Schweitzer.
-            Exponential Rosenbrock-type methods.
-            SIAM Journal on Numerical Analysis 47.1 (2009): 786-803.
-        """
-        # only compute rhs time derivative if requested
-        if self.tol_fdt >= 0:
-            # deriv of rhs wrt time at current time
-            fytt = sys_jac_lop._fdt()
-            # check for nonautonomous system
-            if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-                return (c**2.)*(dt**2.)*phi_linop(sys_jac_lop, c*dt, fytt, 2, self.max_krylov_dim, self.iom), fytt
-        return 0., 0.
-
     def _step_epi3(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
-        Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
-            (2/3)*dt*\varphi_2(dt*J_t)R(t, y_t, y_{t-1}) +
-            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+        Exponential Propagation Integrator 3, computes the solution update by:
+        .. math::
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)
+                    + (2/3)*dt*\varphi_2(dt*J_t)R(t, y_t, y_{t-1})
+                    + dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
         doi:
         """
@@ -162,6 +141,8 @@ class ExpRBIntegrator(IntegrateSys):
         tp = self.t_hist[1]
 
         sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        self.Phi.set_lop(sys_jac_lop)
+
         fyt = sys_jac_lop._frhs_cached()
 
         # time derivative
@@ -170,47 +151,53 @@ class ExpRBIntegrator(IntegrateSys):
         # residual
         rn = self._remf(tp, yp, fyt, sys_jac_lop, fytt)
 
-        # use kiops to save 1 calls to arnoldi
-        vb0 = jnp.zeros(yt.shape)
-        y_update = kiops_fixedsteps(
-            sys_jac_lop, dt, [vb0, dt*fyt, dt*(2./3.)*rn + dt**2*fytt],
-            max_krylov_dim=self.max_krylov_dim, iom=self.iom)
-        y_new = yt + y_update
+        y_update = self.Phi.eval_phis((1, 2), dt, (fyt, (2./3.)*rn + dt*fytt))
+
+        y_new = yt + dt * y_update
         y_err = -1.0
 
         return StepResult(t+dt, dt, y_new, y_err)
 
     def _step_exprb3(self, dt: float, frhs_kwargs: dict) -> StepResult:
-        r"""
-        Computes the solution update by:
-
+        """
+        Exponential Rosenbrock 3, computes the solution update by:
         .. math::
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)
+                    + 2*dt*\varphi_3(dt*J_t)R_2
+                    + dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
-            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
-                2*dt*\varphi_3(dt*J_t)R_2 +
-                dt**2*\varphi_2(dt*J_t)F'(t, y_t)
-
-        Ref: doi: https://doi.org/10.1137/080717717
+        Hochbruck, Marlis, Alexander Ostermann, and Julia Schweitzer.
+        Exponential Rosenbrock-type methods.
+        SIAM Journal on Numerical Analysis 47.1 (2009): 786-803.
+        doi: https://doi.org/10.1137/080717717
         """
         t = self.t
-        yt = self.y_hist[0] # y_t
+        yt = self.y_hist[0]
 
         sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        self.Phi.set_lop(sys_jac_lop)
+
         fyt = sys_jac_lop._frhs_cached()
 
-        # phi2_v is nonzero for nonautonomous systems
-        phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt)
+        fytt = 0.
+        if self.tol_fdt >= 0.:
+            # deriv of rhs wrt time at current time
+            fytt = sys_jac_lop._fdt()
+
+        if self.tol_fdt >= 0. and jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
+            y_update1 = self.Phi.eval_phis((1, 2), dt, (fyt, dt*fytt))
+        else:
+            y_update1 = self.Phi.eval_phi(1, dt, fyt)
 
         # 2nd stage
         t_2 = t + dt
-        y_2 = yt \
-            + dt*phi_linop(sys_jac_lop, dt, fyt, 1, self.max_krylov_dim, self.iom) \
-            + phi2_v
-        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=v)
+        y_2 = yt + dt * y_update1
+
+        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=fytt)
 
         # compute final update
-        y_new = y_2 + 2.*dt*phi_linop(sys_jac_lop, dt, r_2, 3,
-                                      self.max_krylov_dim, self.iom)
+        y_update2 = self.Phi.eval_phi(3, dt, 2.*r_2)
+        y_new = y_2 + dt * y_update2
 
         # TODO: error estimate by comparing y_2 and y_new?
         y_err = jnp.linalg.norm(y_2 - y_new, ord=jnp.inf)
