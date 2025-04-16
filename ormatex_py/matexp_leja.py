@@ -162,7 +162,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
         # jax.debug.print("i: {}, h: {}, err: {}", i, dt, poly_err)
         tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e4)
         iter_check = (i < n_leja)
-        return ((tol_check) & (iter_check)) | (i < 3)
+        return (tol_check) & (iter_check) # | (i < 3)
     i, y, poly_expmv, err = lax.while_loop(
             cond_leja_poly, body_leja_poly, (1, y, poly_expmv, 1.0e2))
     converged = (i < n_leja) & (err < beta*1.0e4)

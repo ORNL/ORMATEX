@@ -13,14 +13,14 @@ from jax import numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
 
-def test_lotka_volterra():
+def test_lotka_volterra_auto():
     """
     Test exponential integrators on the Lotka-Volterra system
     """
     sys = LotkaVolterra()
     dt_list = [0.01, 0.0125, 0.02, 0.05]
-    methods = ["epi2", "epi3", "exprb3"]
-    methods_order = [2.0, 3.0, 3.0]
+    methods = ["epi2", "epi2_leja", "epi3", "exprb3"]
+    methods_order = [2.0, 2.0, 3.0, 3.0]
     for method, order in zip(methods, methods_order):
         err_dt = []
         for dt in dt_list:
@@ -36,7 +36,7 @@ def test_lotka_volterra():
             # compute ormatex result
             y0 = jnp.array([0.1, 0.2])
             res = integrate_wrapper.integrate(
-                    sys, y0, t0, dt, nsteps, method, max_krylov_dim=4, iom=3)
+                    sys, y0, t0, dt, nsteps, method, max_krylov_dim=4, iom=3, leja_tol=1e-10)
             t_res, y_res = res.t, res.y
             t_res = np.asarray(t_res)
             y_res = np.asarray(y_res)
