@@ -182,7 +182,7 @@ def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=Non
     max_eig, b, iters = power_iter(a_tilde_lo, b0, max_power_iter)
     alpha = max_eig * scale_factor
     shift = alpha / 2.
-    scale = alpha / 4.
+    scale = jnp.abs(alpha / 4.)
     return shift, scale, max_eig, b, iters
 
 
