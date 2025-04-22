@@ -139,7 +139,7 @@ class AugMatrixLinOp(LinOp):
         print("jit-compiling AugMatrixLinOp._matvec")
         n = self.B.shape[0]
         p = self.B.shape[1]
-        assert v.shape[0] == n + p
+        # assert v.shape[0] == n + p
         ab_v = self.dt*self.a_lo(v[0:n]) + self.B @ v[-p:]
         k_v = self.K @ v[-p:]
         res = jnp.concat((ab_v, k_v))

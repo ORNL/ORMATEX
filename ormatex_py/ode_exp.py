@@ -345,11 +345,16 @@ class ExpLejaIntegrator(IntegrateSys):
         if method not in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
         order = self._valid_methods[self.method]
-        self.leja_tol = kwargs.get("leja_tol", 1e-16)
-        # storage for eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
+        # Relative tol for leja polynomial approx
+        self.leja_tol = kwargs.get("leja_tol", 1e-15)
+        # Optional max magnitude of real component
+        # of the eig spectrum of the sys jacobian.
+        self.leja_scale = kwargs.get("leja_scale", None)
+        # eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
         self._leja_bk = None
+        self.istep = 0
         self.leja_max_power_iter = 80
-        self.leja_max_eig_scale = 1.0
+        self.leja_max_eig_scale = 1.00
         self.leja_substep_size = 1.0
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 200)))
@@ -377,21 +382,34 @@ class ExpLejaIntegrator(IntegrateSys):
         # build augmented linear system
         a_tilde_lo, v, n = build_a_tilde(sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt])
 
-        # estimate largest magnitude eigenvalue and corrosponding eigenvec by power iter
-        # store eigenvector for next step to speed convergence of power iterations in
-        # subsequent calls to power iter method.
-        shift, scale, max_eig, self._leja_bk, _power_iters = leja_shift_scale(
-                a_tilde_lo, v.shape[0], self.leja_max_power_iter,
-                self._leja_bk, self.leja_max_eig_scale)
+        if self.leja_scale is None:
+            # estimate largest magnitude eigenvalue and corrosponding eigenvec
+            # by power iter.  Store eigenvector for next step
+            # to speed convergence of power iterations in
+            # subsequent calls to power iter method.
+            shift, scale, max_eig, self._leja_bk, _power_iters = leja_shift_scale(
+                    a_tilde_lo, v.shape[0], self.leja_max_power_iter,
+                    self._leja_bk, self.leja_max_eig_scale)
+        else:
+            shift = self.leja_scale / 2.
+            scale = np.abs(self.leja_scale / 4.)
 
+        # import pdb; pdb.set_trace()
         # compute phi-vector products by leja interpolation
         y_update, leja_iters, converged, max_tau_dt = real_leja_expmv_substep(
                 a_tilde_lo, 1.1*self.leja_substep_size, v, self.leja_x,
                 n, shift, scale, self.leja_tol)
-        self.leja_substep_size = max_tau_dt
+
+        if not converged:
+            raise RuntimeError("Leja not converged")
 
         y_new = yt + y_update
         y_err = -1.0
+        self.istep += 1
+
+        wgt = min(self.istep, 10)
+        self.leja_substep_size = (1. / wgt) * max_tau_dt + \
+                ((wgt-1) / wgt) * self.leja_substep_size
 
         return StepResult(t+dt, dt, y_new, y_err)
 

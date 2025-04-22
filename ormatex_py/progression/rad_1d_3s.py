@@ -107,7 +107,7 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     plt.grid(alpha=0.5, ls='--')
     plt.title(r"$\Delta$t*Jac eigenvalues. $\Delta$t=%0.3e" % dt)
     plt.tight_layout()
-    plt.savefig(outdir + figname + ".png")
+    plt.savefig(figname + ".png")
     plt.close()
     dtJnorm = np.linalg.norm(dtJ, ord=np.inf)
     dtJeig_max = np.max(np.abs(eigdtJ))
