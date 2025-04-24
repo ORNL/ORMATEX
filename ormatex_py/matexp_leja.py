@@ -11,6 +11,75 @@ from jax import numpy as jnp
 # internal imports
 from ormatex_py.ode_sys import LinOp, AugMatrixLinOp, MatrixLinOp
 
+def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
+    """
+    Generate the conjugate leja points for an ellipse contained in the square
+        [a,b] x [-c,c].
+
+    This is the ellipse with center shift = ((a+b)/2, 0.) and half axes ((b-a)/2, c).
+
+    Args:
+        n: number of fast leja points to generate
+        a: left boundary of box
+        b: right boundary of box
+        c: upper boundary of symmetric box
+    """
+
+    shift = (a+b)/2.
+    hax1, hax2 = (b-a)/2., c
+    scale = (hax1 + hax2) / 2
+
+    # normalized half axes to capacity 1
+    h1, h2 = hax1/scale, hax2/scale
+
+    tol = 1e-4
+
+    if h1 < 0 or h2 < 0:
+        assert(False)
+    elif h2 <= tol:
+        # real points
+        assert(False)
+    elif h1 <= tol:
+        # imaginary points
+        n_bigger = 4 + (n-3)*2
+        zt = gen_leja_circle(n_bigger, conjugate=True)
+        zt[:3] = np.imag(zt[[0,2,3]])
+        zt[3:n] = np.imag(zt[4:n_bigger:2])
+        zt = 1.j * zt[:n]
+    else:
+        zt = gen_leja_circle(n, conjugate=True)
+        zt = np.real(zt) * h1 + np.imag(zt) * h2 * 1j
+
+    return zt, scale, shift
+
+def gen_leja_circle(n: int=64, conjugate=False):
+    """
+    Generate the fast leja points on a circle of radius 1 at zero.
+
+    Ref:
+        Baglama, J., D. Calvetti, and L. Reichel.
+        "Fast leja points." Electron. Trans. Numer. Anal 7.124-140 (1998): 119-120.
+
+    Args:
+        n: number of fast leja points to generate
+    """
+    log2n = max(2, int(n-1).bit_length())
+    nup = 2**log2n
+
+    zt = np.zeros(nup, dtype=np.complex128)
+    zt[0:2] = [+1, -1]
+
+    for k in range(1, log2n):
+        # multiply points by next root of unity to otain the next 2^(k-1) points
+        zt[2**k:2**(k+1)] = np.sqrt(zt[2**(k-1)]) * zt[:2**k]
+
+    if conjugate:
+        for k in range(1, log2n):
+            # reorder points so they come in conjugate pairs
+            mid_k = 2**k + 2**(k-1)
+            zt[2**k:2**(k+1)] = np.vstack((zt[2**k:mid_k], zt[2**(k+1)-1:mid_k-1:-1])).flatten(order='F')
+
+    return zt[:n]
 
 def gen_leja_fast(a: float=-2., b: float=2., n: int=100):
     """
@@ -224,7 +293,7 @@ def leja_coeffs_exp(leja_x: jax.Array, shift: float, scale: float, h: float=1.0)
 
 
 def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja_x: jax.Array, n: int, shift: float, scale: float, tol: float=1.0e-10):
-    """
+    r"""
     Computs :math:`exp(\Delta t A)v` using substeps by:
 
     .. code-block::
@@ -323,14 +392,27 @@ def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
     v = jnp.concat((vb[0], jnp.asarray(unit_vec)))
     return a_tilde_lo, v, n
 
-
-if __name__ == "__main__":
+def main():
     import matplotlib.pyplot as plt
     # generate leja points
     lp = gen_leja_fast(a=-2, b=2, n=20)
     # first 10 leja points
     for v in lp[0:10]:
         print(v)
+
+    #lpc = gen_leja_circle(n=20, conjugate=True)
+    a = -1. # use 0 for imaginary interval
+    lpc, scalec, shiftc = gen_leja_conjugate(n=26, a=a, b=0., c=10.)
+    print([scalec, shiftc])
+    print(lpc[:,None])
+
+    # plot leja points on the complex plane
+    plt.figure()
+    cmap = plt.get_cmap('rainbow')
+    plt.scatter(np.real(lpc), np.imag(lpc), c=list(range(0, len(lpc))), cmap=cmap)
+    plt.savefig('fast_leja_points_circle.png')
+    plt.grid()
+    plt.close()
 
     # plot leja points on the complex plane
     plt.figure()
@@ -388,3 +470,6 @@ if __name__ == "__main__":
     scale_factor = 1.01
     alpha = max_eig * scale_factor
     print("alpha a:", alpha)
+
+if __name__ == "__main__":
+    main()
