@@ -354,7 +354,7 @@ class ExpLejaIntegrator(IntegrateSys):
         self._leja_bk = None
         self.istep = 0
         self.leja_max_power_iter = 80
-        self.leja_max_eig_scale = 1.00
+        self.leja_max_eig_scale = 1.05
         self.leja_substep_size = 1.0
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 200)))

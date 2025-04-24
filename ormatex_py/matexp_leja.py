@@ -126,8 +126,36 @@ def gen_leja_fast(a: float=-2., b: float=2., n: int=100):
     return zt
 
 
+def gen_complex_conj_leja_fast(beta: float, n: int=100):
+    r"""
+    Generates the leja point sequence on the imaginary axis
+
+    :math:`i[-\beta, \beta]`
+
+    Args:
+        beta: max imag eig magnitude
+        n: number of fast leja points to generate
+    """
+    leja_x = gen_leja_fast(-beta, beta, n*2)
+    # take only every other real leja point
+    imag_even_leja_x = leja_x[0::2] * 1j
+    # take complex conjugate of odd m points
+    imag_odd_leja_x = leja_x[0::2] * -1j
+    # rejoin full conj complex leja fast sequence
+    leja_x = np.ones(len(leja_x), dtype=np.complex64)
+    leja_x[0::2] = imag_even_leja_x
+    leja_x[1::2] = imag_odd_leja_x
+    #leja_x[1::2] = imag_even_leja_x
+    #leja_x[0::2] = imag_odd_leja_x
+    leja_tmp = jnp.asarray(leja_x[0:n])
+    # eliminate duplicate 0
+    # TODO: Fix this. only works if interval is sym around 0
+    # z0 should be 0
+    return jnp.concat((leja_tmp[2:3], leja_tmp[0:2], leja_tmp[4:]))
+
+
 @partial(jax.jit, static_argnums=(2,3))
-def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-2):
+def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-3):
     """
     Performs power iteration to find dominant eigenvalue of system
 
@@ -173,6 +201,74 @@ def newton_poly_div_diff(x: jax.Array, y: jax.Array):
     for k in range(1, m):
         a = a.at[k:m].set( (a.at[k:m].get() - a.at[k - 1].get())/(x.at[k:m].get() - x.at[k - 1].get()) )
     return a
+
+def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, imag_leja_x: jax.Array, coeffs: jax.Array, tol: float):
+    """
+    Interpolation approx :math:`\matrm{exp}(\delta t A)u` at the conjugate complex
+    leja points.  The complex conj. leja points are symmetric about the real line,
+    and admit a 2 term recurrenace relationship to compute the polynomial
+    terms as described in
+
+    Ref: Caliari, M., Kandolf, P., Ostermann, A. et al. Comparison of software for
+        computing the action of the matrix exponential.
+        Bit Numer Math 54, 113–128 (2014).
+        https://doi.org/10.1007/s10543-013-0446-0
+
+    Args:
+        a_lo:  LinOp linear operator which must implement matvec.
+        dt:  (Sub)step size.
+        u: vector to which the matrix exponential is applied.
+        shift:  shift applied to leja points.
+        scale:  scale applied to leja points.
+        imag_leja_x:  The unscaled complex leja sequence
+    """
+    print(f"jit-compiling complex_conj_leja_expmv")
+    n_leja = len(imag_leja_x)
+    converged = False
+
+    # norm of u for rel err est
+    beta = jnp.linalg.norm(u)
+
+    # leading const term in poly
+    pm = jnp.real(coeffs[0] * u)
+    # jax.debug.print("i: {}, coeffs[0]: {}", 0, coeffs[0])
+
+    # initial r
+    rm = (dt*a_lo.matvec(u)-shift)/scale
+
+    # storage vecs for recurrance
+    qm = u.at[:].get() * 0.0
+
+    # jax version of above
+    def body_leja_poly(args):
+        # unpack args
+        i, rm, pm, qm, _ = args
+        # compute error estimate
+        err_r = jnp.real(coeffs[i-1])*jnp.linalg.norm(rm)
+        # compute new term in the polynomial approx
+        qm = (dt*a_lo.matvec(rm)-shift)/scale
+        # div diff coeffs[i] even is real
+        # div diff coeffs[i-1] odd is complex
+        pm = pm + jnp.real(coeffs[i-1])*rm + jnp.real(coeffs[i])*qm
+        # update r
+        rm = (dt*a_lo.matvec(qm)-shift)/scale + jnp.pow(jnp.imag(imag_leja_x[i-1]), 2)*rm
+        # y = dt*a_lo.matvec(y) / scale - ((shift/scale + leja_x[i-1]) * y)
+        # estimate error correction
+        poly_err = jnp.linalg.norm(qm) * jnp.abs(coeffs[i]) + err_r
+        # jax.debug.print("i: {}, err: {}, coeffs[i]: {}, coeffs[i-1]: {}", i, poly_err, coeffs[i], coeffs[i-1])
+        i += 2
+        return i, rm, pm, qm, poly_err
+    def cond_leja_poly(args):
+        i, rm, pm, qm, poly_err = args
+        # jax.debug.print("i: {}, h: {}, err: {}, scale: {}", i, dt, poly_err, scale)
+        tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e3)
+        iter_check = (i < n_leja)
+        return (tol_check) & (iter_check) # | (i < 3)
+    i, rm, pm, _qm, err = lax.while_loop(
+            cond_leja_poly, body_leja_poly, (2, rm, pm, qm, 1.0e2))
+    converged = (i < n_leja) & (err < beta*1.0e3)
+    # expmv, n_iters, converged
+    return jnp.real(pm), i, converged
 
 
 @jax.jit
@@ -395,9 +491,9 @@ def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
 def main():
     import matplotlib.pyplot as plt
     # generate leja points
-    lp = gen_leja_fast(a=-2, b=2, n=20)
+    lp = gen_leja_fast(a=-2, b=2, n=50)
     # first 10 leja points
-    for v in lp[0:10]:
+    for v in lp[0:50]:
         print(v)
 
     #lpc = gen_leja_circle(n=20, conjugate=True)
@@ -418,6 +514,10 @@ def main():
     plt.figure()
     cmap = plt.get_cmap('rainbow')
     plt.scatter(np.real(lp), np.imag(lp), c=list(range(0, len(lp))), cmap=cmap)
+    plt.title("Fast Leja sequence")
+    plt.grid(ls='--')
+    plt.xlabel("Re")
+    plt.ylabel("Im")
     plt.savefig('fast_leja_points.png')
     plt.grid()
     plt.close()
@@ -450,18 +550,18 @@ def main():
     expected_expmv = jax.scipy.linalg.expm(dt*a) @ u
     print(iter)
     print(converged)
-    print(leja_expmv)
-    print(expected_expmv)
+    print("real leja expmv: ", leja_expmv)
+    print("true expmv:" , expected_expmv)
 
     # imag eigs only
-    a = np.array([[0.0, 1.0],
-                  [-1.0, 0.0]])
+    a = np.array([[0.0, 2.5],
+                  [-2.5, 0.0]])
+    a_lop = MatrixLinOp(a)
     dim = len(a)
     eigs_a = np.linalg.eig(a)[0]
     a = jnp.asarray(a)
     print("eigs a:", eigs_a)
 
-    a_lop = MatrixLinOp(a)
     u = jnp.ones(len(a))
     # Estimate largest eig by power iter
     b0 = jax.random.uniform(jax.random.key(42), (dim,))
@@ -470,6 +570,39 @@ def main():
     scale_factor = 1.01
     alpha = max_eig * scale_factor
     print("alpha a:", alpha)
+
+    # generate imag leja sequence on interval i[-2, 2]
+    ip = gen_complex_conj_leja_fast(2, n=40)
+    plt.figure()
+    cmap = plt.get_cmap('rainbow')
+    plt.scatter(np.real(ip), np.imag(ip), c=list(range(0, len(ip))), cmap=cmap)
+    plt.title("Conjugate complex fast Leja sequence")
+    plt.grid(ls='--')
+    plt.xlabel("Re")
+    plt.ylabel("Im")
+    plt.savefig('fast_imag_leja_points.png')
+    plt.grid()
+    plt.close()
+
+    # compute expmv of matrix a with imaginary spectrum:  exp(a*dt)*u
+    dt = 1.0
+    expected_expmv = jax.scipy.linalg.expm(dt*a) @ u
+    # max extent of the matrix spectrum on imag axis
+    beta = np.abs(np.max(np.imag(eigs_a)))
+
+    # compute polynomial coeffs by div diff for complex conj leja sequence
+    shift = 0.
+    scale = beta / 4.
+    coeffs_dd = leja_coeffs_exp_dd(ip, shift, scale)
+    coeffs_exp = leja_coeffs_exp(ip, shift, scale)
+    print("===complex conj leja===")
+    print(ip)
+    print("===div diffs===")
+    # print(coeffs_dd)
+    print(coeffs_exp)
+    leja_expmv, iter, converged = complex_conj_leja_expmv(a_lop, dt, u, shift, scale, ip, coeffs_exp, 1e-6)
+    print("conj complex leja expmv:", leja_expmv)
+    print("true expmv:", expected_expmv)
 
 if __name__ == "__main__":
     main()
