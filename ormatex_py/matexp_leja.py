@@ -45,7 +45,7 @@ def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
         zt = gen_leja_circle(n_bigger, conjugate=True)
         zt[:3] = np.imag(zt[[0,2,3]])
         zt[3:n] = np.imag(zt[4:n_bigger:2])
-        zt = 1.j * zt[:n]
+        zt = 1.j * h2 * zt[:n]
     else:
         zt = gen_leja_circle(n, conjugate=True)
         zt = np.real(zt) * h1 + np.imag(zt) * h2 * 1j
