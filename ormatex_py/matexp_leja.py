@@ -246,13 +246,12 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         # compute error estimate
         err_r = jnp.real(coeffs[i-1])*jnp.linalg.norm(rm)
         # compute new term in the polynomial approx
-        qm = (dt*a_lo.matvec(rm)-shift)/scale
+        qm = (dt*a_lo.matvec(rm) - shift*rm)/scale
         # div diff coeffs[i] even is real
         # div diff coeffs[i-1] odd is complex
         pm = pm + jnp.real(coeffs[i-1])*rm + jnp.real(coeffs[i])*qm
         # update r
-        rm = (dt*a_lo.matvec(qm)-shift)/scale + jnp.pow(jnp.imag(imag_leja_x[i-1]), 2)*rm
-        # y = dt*a_lo.matvec(y) / scale - ((shift/scale + leja_x[i-1]) * y)
+        rm = (dt*a_lo.matvec(qm) - shift*qm)/scale + jnp.pow(jnp.imag(imag_leja_x[i-1]), 2)*rm
         # estimate error correction
         poly_err = jnp.linalg.norm(qm) * jnp.abs(coeffs[i]) + err_r
         # jax.debug.print("i: {}, err: {}, coeffs[i]: {}, coeffs[i-1]: {}", i, poly_err, coeffs[i], coeffs[i-1])
