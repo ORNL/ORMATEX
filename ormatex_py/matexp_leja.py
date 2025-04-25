@@ -9,7 +9,7 @@ from jax import lax
 from jax import numpy as jnp
 
 # internal imports
-from ormatex_py.ode_sys import LinOp, AugMatrixLinOp, MatrixLinOp
+from ormatex_py.ode_sys import LinOp, AugMatrixLinOp, MatrixLinOp, DiagLinOp
 
 def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
     """
@@ -70,7 +70,7 @@ def gen_leja_circle(n: int=64, conjugate=False):
     zt[0:2] = [+1, -1]
 
     for k in range(1, log2n):
-        # multiply points by next root of unity to otain the next 2^(k-1) points
+        # multiply points by next root of unity to obtain the next 2^k points
         zt[2**k:2**(k+1)] = np.sqrt(zt[2**(k-1)]) * zt[:2**k]
 
     if conjugate:
@@ -202,8 +202,9 @@ def newton_poly_div_diff(x: jax.Array, y: jax.Array):
         a = a.at[k:m].set( (a.at[k:m].get() - a.at[k - 1].get())/(x.at[k:m].get() - x.at[k - 1].get()) )
     return a
 
+@jax.jit
 def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, imag_leja_x: jax.Array, coeffs: jax.Array, tol: float):
-    """
+    r"""
     Interpolation approx :math:`\matrm{exp}(\delta t A)u` at the conjugate complex
     leja points.  The complex conj. leja points are symmetric about the real line,
     and admit a 2 term recurrenace relationship to compute the polynomial
@@ -230,11 +231,11 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     beta = jnp.linalg.norm(u)
 
     # leading const term in poly
-    pm = jnp.real(coeffs[0] * u)
+    pm = jnp.real(coeffs[0]) * u
     # jax.debug.print("i: {}, coeffs[0]: {}", 0, coeffs[0])
 
     # initial r
-    rm = (dt*a_lo.matvec(u)-shift)/scale
+    rm = (dt*a_lo.matvec(u) - shift*u)/scale
 
     # storage vecs for recurrance
     qm = u.at[:].get() * 0.0
@@ -267,7 +268,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
             cond_leja_poly, body_leja_poly, (2, rm, pm, qm, 1.0e2))
     converged = (i < n_leja) & (err < beta*1.0e3)
     # expmv, n_iters, converged
-    return jnp.real(pm), i, converged
+    return pm, i, converged
 
 
 @jax.jit
@@ -505,7 +506,7 @@ def main():
     plt.figure()
     cmap = plt.get_cmap('rainbow')
     plt.scatter(np.real(lpc), np.imag(lpc), c=list(range(0, len(lpc))), cmap=cmap)
-    plt.savefig('fast_leja_points_circle.png')
+    plt.savefig('leja_points_circle.png')
     plt.grid()
     plt.close()
 
@@ -603,5 +604,58 @@ def main():
     print("conj complex leja expmv:", leja_expmv)
     print("true expmv:", expected_expmv)
 
+
+def main2():
+    import matplotlib.pyplot as plt
+
+    #lpc = gen_leja_circle(n=20, conjugate=True)
+    a = 0 # use 0 for imaginary interval
+    lp, scale, shift = gen_leja_conjugate(n=26, a=a, b=0., c=4.)
+    print([scale, shift])
+    print(lp[:,None])
+
+    # plot leja points on the complex plane
+    plt.figure()
+    cmap = plt.get_cmap('rainbow')
+    plt.scatter(np.real(lp), np.imag(lp), c=list(range(0, len(lp))), cmap=cmap)
+    #plt.savefig('leja_points_circle.png')
+    plt.grid()
+    plt.close()
+
+    # generate a diagonal matrix and wrap as a linear operator
+    x_grid = jnp.linspace(-5,5,40)
+    zr_grid, zc_grid = jnp.meshgrid(x_grid, x_grid)
+
+    zs = zr_grid.flatten() + 1.j * zc_grid.flatten()
+
+    a_lop = DiagLinOp(zs)
+    u = jnp.ones(zs.shape, dtype=jnp.complex64)
+
+    # calc exp(a_lop) * u
+    expected_expmv = jnp.exp(zs)
+
+    lp = jnp.asarray(lp)
+    coeffs = newton_poly_div_diff(lp, jnp.exp(shift + scale*lp))
+
+    # compute polynomial coeffs by div diff for complex conj leja sequence
+    coeffs_dd = leja_coeffs_exp_dd(lp, shift, scale)
+    coeffs_exp = leja_coeffs_exp(lp, shift, scale)
+    print("===div diffs===")
+    # print(coeffs_dd)
+    print(coeffs_exp)
+    leja_expmv, iter, converged = complex_conj_leja_expmv(a_lop, 1., u, shift, scale, lp, coeffs_exp, 1e-0)
+    print([iter, converged])
+    #print("conj complex leja expmv:", leja_expmv)
+    #print("true expmv:", expected_expmv)
+
+    err = jnp.abs(expected_expmv-leja_expmv)
+    print("error:", err)
+
+    plt.figure()
+    plt.contour(jnp.real(zs.reshape(zr_grid.shape)), jnp.imag(zs.reshape(zr_grid.shape)), jnp.log(err.reshape(zr_grid.shape)))
+    plt.savefig('fast_leja_points_error.png')
+    plt.close()
+
 if __name__ == "__main__":
     main()
+    main2()
