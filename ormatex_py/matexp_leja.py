@@ -11,6 +11,7 @@ from jax import numpy as jnp
 # internal imports
 from ormatex_py.ode_sys import LinOp, AugMatrixLinOp, MatrixLinOp, DiagLinOp
 
+
 def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
     """
     Generate the conjugate leja points for an ellipse contained in the square
@@ -52,6 +53,7 @@ def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
 
     return zt, scale, shift
 
+
 def gen_leja_circle(n: int=64, conjugate=False):
     """
     Generate the fast leja points on a circle of radius 1 at zero.
@@ -80,6 +82,7 @@ def gen_leja_circle(n: int=64, conjugate=False):
             zt[2**k:2**(k+1)] = np.vstack((zt[2**k:mid_k], zt[2**(k+1)-1:mid_k-1:-1])).flatten(order='F')
 
     return zt[:n]
+
 
 def gen_leja_fast(a: float=-2., b: float=2., n: int=100):
     """
@@ -182,7 +185,10 @@ def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-3):
         i, b_k, eig_new, eig_old = args
         eig_diff = jnp.abs(eig_new - eig_old)
         return (eig_diff > tol) & (i < iter)
-    iters, b_k, eig_a, _ = lax.while_loop(cond_power_iter, body_power_iter, (0, b_k, eig_last, 1.0))
+    iters, b_k, eig_a, _ = lax.while_loop(
+            cond_power_iter,
+            body_power_iter,
+            (0, b_k, eig_last, 1.0))
     return eig_a, b_k, iters
 
 
@@ -201,6 +207,7 @@ def newton_poly_div_diff(x: jax.Array, y: jax.Array):
     for k in range(1, m):
         a = a.at[k:m].set( (a.at[k:m].get() - a.at[k - 1].get())/(x.at[k:m].get() - x.at[k - 1].get()) )
     return a
+
 
 @jax.jit
 def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, imag_leja_x: jax.Array, coeffs: jax.Array, tol: float):
@@ -232,7 +239,6 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
 
     # leading const term in poly
     pm = jnp.real(coeffs[0]) * u
-    # jax.debug.print("i: {}, coeffs[0]: {}", 0, coeffs[0])
 
     # initial r
     rm = (dt*a_lo.matvec(u) - shift*u)/scale
@@ -260,7 +266,6 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         return i, rm, pm, qm, poly_err
     def cond_leja_poly(args):
         i, rm, pm, qm, poly_err = args
-        # jax.debug.print("i: {}, h: {}, err: {}, scale: {}", i, dt, poly_err, scale)
         tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e3)
         iter_check = (i < n_leja)
         return (tol_check) & (iter_check) # | (i < 3)
@@ -488,7 +493,8 @@ def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
     v = jnp.concat((vb[0], jnp.asarray(unit_vec)))
     return a_tilde_lo, v, n
 
-def main():
+
+def example_fast_leja_points():
     import matplotlib.pyplot as plt
     # generate leja points
     lp = gen_leja_fast(a=-2, b=2, n=50)
@@ -496,25 +502,11 @@ def main():
     for v in lp[0:50]:
         print(v)
 
-    #lpc = gen_leja_circle(n=20, conjugate=True)
-    a = -1. # use 0 for imaginary interval
-    lpc, scalec, shiftc = gen_leja_conjugate(n=26, a=a, b=0., c=10.)
-    print([scalec, shiftc])
-    print(lpc[:,None])
-
-    # plot leja points on the complex plane
-    plt.figure()
-    cmap = plt.get_cmap('rainbow')
-    plt.scatter(np.real(lpc), np.imag(lpc), c=list(range(0, len(lpc))), cmap=cmap)
-    plt.savefig('leja_points_circle.png')
-    plt.grid()
-    plt.close()
-
     # plot leja points on the complex plane
     plt.figure()
     cmap = plt.get_cmap('rainbow')
     plt.scatter(np.real(lp), np.imag(lp), c=list(range(0, len(lp))), cmap=cmap)
-    plt.title("Fast Leja sequence")
+    plt.title("Fast real Leja sequence")
     plt.grid(ls='--')
     plt.xlabel("Re")
     plt.ylabel("Im")
@@ -600,17 +592,52 @@ def main():
     print("===div diffs===")
     # print(coeffs_dd)
     print(coeffs_exp)
-    leja_expmv, iter, converged = complex_conj_leja_expmv(a_lop, dt, u, shift, scale, ip, coeffs_exp, 1e-6)
+    leja_expmv, iter, converged = complex_conj_leja_expmv(
+            a_lop, dt, u, shift, scale, ip, coeffs_exp, 1e-6)
     print("conj complex leja expmv:", leja_expmv)
     print("true expmv:", expected_expmv)
 
 
-def main2():
+def example_leja_conjugate_points():
+    import matplotlib.pyplot as plt
+    a = -2. # use 0 for imaginary interval
+    c = 10.
+    lpc, scalec, shiftc = gen_leja_conjugate(n=26, a=a, b=0., c=c)
+    print([scalec, shiftc])
+    print(lpc[:,None])
+
+    # plot leja points on the complex plane
+    plt.figure()
+    cmap = plt.get_cmap('rainbow')
+    plt.scatter(np.real(lpc), np.imag(lpc), c=list(range(0, len(lpc))), cmap=cmap)
+    plt.grid(ls='--')
+    plt.xlabel("Re")
+    plt.ylabel("Im")
+    plt.title("Conjugate complex Leja points on ellipse \n a: %0.2f, c: %0.2f, shift: %0.2f, scale: %0.2f" % (a, c, shiftc, scalec))
+    plt.savefig('leja_points_ellipse.png')
+    plt.grid()
+    plt.close()
+
+    lpc = gen_leja_circle(n=26, conjugate=True)
+    # plot leja points on the complex plane
+    plt.figure()
+    cmap = plt.get_cmap('rainbow')
+    plt.scatter(np.real(lpc), np.imag(lpc), c=list(range(0, len(lpc))), cmap=cmap)
+    plt.grid(ls='--')
+    plt.title("Conjugate complex Leja points on circle")
+    plt.xlabel("Re")
+    plt.ylabel("Im")
+    plt.savefig('leja_points_circle.png')
+    plt.grid()
+    plt.close()
+
+
+def example_leja_conjugate_ellipse_error(a=0, c=4.):
+    # a=0 for imaginary interval
     import matplotlib.pyplot as plt
 
     #lpc = gen_leja_circle(n=20, conjugate=True)
-    a = 0 # use 0 for imaginary interval
-    lp, scale, shift = gen_leja_conjugate(n=26, a=a, b=0., c=4.)
+    lp, scale, shift = gen_leja_conjugate(n=26, a=a, b=0., c=c)
     print([scale, shift])
     print(lp[:,None])
 
@@ -618,12 +645,16 @@ def main2():
     plt.figure()
     cmap = plt.get_cmap('rainbow')
     plt.scatter(np.real(lp), np.imag(lp), c=list(range(0, len(lp))), cmap=cmap)
-    #plt.savefig('leja_points_circle.png')
+    plt.grid(ls='--')
+    plt.xlabel("Re")
+    plt.ylabel("Im")
+    plt.title("Leja conjugate ellipse \n a: %0.2f, c: %0.2f, shift: %0.2f, scale: %0.2f" % (a, c, shift, scale))
+    plt.savefig('leja_points_conjugate_ellipse_a%0.2f.png' % a)
     plt.grid()
     plt.close()
 
     # generate a diagonal matrix and wrap as a linear operator
-    x_grid = jnp.linspace(-5,5,40)
+    x_grid = jnp.linspace(-5,5,100)
     zr_grid, zc_grid = jnp.meshgrid(x_grid, x_grid)
 
     zs = zr_grid.flatten() + 1.j * zc_grid.flatten()
@@ -633,9 +664,7 @@ def main2():
 
     # calc exp(a_lop) * u
     expected_expmv = jnp.exp(zs)
-
     lp = jnp.asarray(lp)
-    coeffs = newton_poly_div_diff(lp, jnp.exp(shift + scale*lp))
 
     # compute polynomial coeffs by div diff for complex conj leja sequence
     coeffs_dd = leja_coeffs_exp_dd(lp, shift, scale)
@@ -643,19 +672,36 @@ def main2():
     print("===div diffs===")
     # print(coeffs_dd)
     print(coeffs_exp)
-    leja_expmv, iter, converged = complex_conj_leja_expmv(a_lop, 1., u, shift, scale, lp, coeffs_exp, 1e-0)
+    # shift, scale = 0., 1.0
+    leja_expmv, iter, converged = complex_conj_leja_expmv(
+            a_lop, 1., u, shift, scale, lp, coeffs_exp, 1e-6)
     print([iter, converged])
-    #print("conj complex leja expmv:", leja_expmv)
-    #print("true expmv:", expected_expmv)
+    print("conj complex leja expmv:", leja_expmv)
+    print("true expmv:", expected_expmv)
 
     err = jnp.abs(expected_expmv-leja_expmv)
     print("error:", err)
 
     plt.figure()
-    plt.contour(jnp.real(zs.reshape(zr_grid.shape)), jnp.imag(zs.reshape(zr_grid.shape)), jnp.log(err.reshape(zr_grid.shape)))
-    plt.savefig('fast_leja_points_error.png')
+    #plt.contour(jnp.real(zs.reshape(zr_grid.shape)),
+    #            jnp.imag(zs.reshape(zr_grid.shape)),
+    #            jnp.log(err.reshape(zr_grid.shape)), colors='k', vmin=-14)
+    plt.contourf(jnp.real(zs.reshape(zr_grid.shape)),
+                 jnp.imag(zs.reshape(zr_grid.shape)),
+                 jnp.log(err.reshape(zr_grid.shape)), vmin=-14, extend='both')
+    plt.title("Leja interpolation error $\mathrm{ln}|e^{Z}u - p(Z)_{leja}|$ error \n a: %0.2f, c: %0.2f, shift: %0.2f, scale: %0.2f" % (a, c, shift, scale))
+    plt.xlabel("Re")
+    plt.ylabel("Im")
+    plt.colorbar()
+    plt.scatter(np.real(lp), np.imag(lp), c='r', s=8)
+    plt.grid(ls='--')
+    plt.savefig('leja_points_conjugate_ellipse_error_a%0.2f.png' % a, dpi=120)
     plt.close()
 
+
 if __name__ == "__main__":
-    main()
-    main2()
+    example_fast_leja_points()
+    example_leja_conjugate_points()
+    example_leja_conjugate_ellipse_error(a=-2.0, c=4.)
+    example_leja_conjugate_ellipse_error(a=-1.0, c=4.)
+    example_leja_conjugate_ellipse_error(a=0.0, c=4.)
