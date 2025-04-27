@@ -43,13 +43,14 @@ def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
     elif h1 <= tol:
         # imaginary points
         n_bigger = 4 + (n-3)*2
-        zt = gen_leja_circle(n_bigger, conjugate=True)
-        zt[:3] = np.imag(zt[[0,2,3]])
-        zt[3:n] = np.imag(zt[4:n_bigger:2])
-        zt = 1.j * h2 * zt[:n]
+        ztc = gen_leja_circle(n_bigger, conjugate=True)
+        zt = np.zeros(n, dtype=np.complex128)
+        zt[:3] = np.imag(ztc[[0,2,3]])
+        zt[3:n] = np.imag(ztc[4:n_bigger:2])
+        zt = 1.j * h2 * zt
     else:
         zt = gen_leja_circle(n, conjugate=True)
-        zt = np.real(zt) * h1 + np.imag(zt) * h2 * 1j
+        zt = h1 * np.real(zt) + 1j * h2 * np.imag(zt)
 
     return zt, scale, shift
 
@@ -203,9 +204,9 @@ def newton_poly_div_diff(x: jax.Array, y: jax.Array):
         y: value of the function at x points.
     """
     m = len(x)
-    a = y.at[:].get()
+    a = y.at[:].get() # TODO why not a = y?
     for k in range(1, m):
-        a = a.at[k:m].set( (a.at[k:m].get() - a.at[k - 1].get())/(x.at[k:m].get() - x.at[k - 1].get()) )
+        a = a.at[k:m].set( (a[k:m] - a[k-1]) / (x[k:m] - x[k-1]) )
     return a
 
 
@@ -261,11 +262,71 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         rm = (dt*a_lo.matvec(qm) - shift*qm)/scale + jnp.pow(jnp.imag(imag_leja_x[i-1]), 2)*rm
         # estimate error correction
         poly_err = jnp.linalg.norm(qm) * jnp.abs(coeffs[i]) + err_r
-        # jax.debug.print("i: {}, err: {}, coeffs[i]: {}, coeffs[i-1]: {}", i, poly_err, coeffs[i], coeffs[i-1])
+        jax.debug.print("i: {}, err: {}, coeffs[i]: {}, coeffs[i-1]: {}", i, poly_err, coeffs[i], coeffs[i-1])
         i += 2
         return i, rm, pm, qm, poly_err
     def cond_leja_poly(args):
         i, rm, pm, qm, poly_err = args
+        #jax.debug.print("i: {}, h: {}, err: {}, scale: {}", i, dt, poly_err, scale)
+        tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e3)
+        iter_check = (i < n_leja)
+        return (tol_check) & (iter_check) # | (i < 3)
+    i, rm, pm, _qm, err = lax.while_loop(
+            cond_leja_poly, body_leja_poly, (2, rm, pm, qm, 1.0e2))
+    converged = (i < n_leja) & (err < beta*1.0e3)
+    # expmv, n_iters, converged
+    return pm, i, converged
+
+@jax.jit
+def complex_conj_leja_expmv2(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, coeffs: jax.Array, tol: float):
+    r"""
+    Interpolation approx :math:`\matrm{exp}(\delta t A)u` at the conjugate complex
+    leja points.
+    Args:
+        a_lo:  LinOp linear operator which must implement matvec.
+        dt:  (Sub)step size.
+        u: vector to which the matrix exponential is applied.
+        shift:  shift applied to leja points.
+        scale:  scale applied to leja points.
+        imag_leja_x:  The unscaled complex leja sequence
+    """
+    print(f"jit-compiling complex_conj_leja_expmv")
+    n_leja = len(leja_x)
+    converged = False
+
+    # norm of u for rel err est
+    beta = jnp.linalg.norm(u)
+
+    # leading const term in poly
+    pm = jnp.real(coeffs[0]) * u
+
+    # initial r
+    rm = (dt*a_lo.matvec(u) - (shift + scale*jnp.real(leja_x[0]))*u) / scale
+
+    # storage vecs for recurrence
+    qm = u * 0.0
+
+    # jax version of above
+    def body_leja_poly(args):
+        # unpack args
+        i, rm, pm, qm, _ = args
+        # compute error estimate
+        err_r = jnp.real(coeffs[i-1])*jnp.linalg.norm(rm)
+        # compute new term in the polynomial approx
+        qm = (dt*a_lo.matvec(rm) - (shift + scale*jnp.real(leja_x[i-1]))*rm)/scale
+        # div diff coeffs[i] even is real
+        # div diff coeffs[i-1] odd is complex
+        pm = pm + jnp.real(coeffs[i-1])*rm + jnp.real(coeffs[i])*qm
+        # update r
+        rm = (dt*a_lo.matvec(qm) - (shift + scale*jnp.real(leja_x[i-1]))*qm)/scale + jnp.pow(jnp.imag(leja_x[i-1]), 2)*rm
+        # estimate error correction
+        poly_err = jnp.linalg.norm(qm) * jnp.abs(coeffs[i]) + err_r
+        jax.debug.print("i: {}, err: {}, coeffs[i]: {}, coeffs[i-1]: {}", i, poly_err, coeffs[i], coeffs[i-1])
+        i += 2
+        return i, rm, pm, qm, poly_err
+    def cond_leja_poly(args):
+        i, rm, pm, qm, poly_err = args
+        #jax.debug.print("i: {}, h: {}, err: {}, scale: {}", i, dt, poly_err, scale)
         tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e3)
         iter_check = (i < n_leja)
         return (tol_check) & (iter_check) # | (i < 3)
@@ -638,6 +699,9 @@ def example_leja_conjugate_ellipse_error(a=0, c=4.):
 
     #lpc = gen_leja_circle(n=20, conjugate=True)
     lp, scale, shift = gen_leja_conjugate(n=26, a=a, b=0., c=c)
+    if a < 0:
+        #TODO: implement version of leja_imag that does not require removing the second real point
+        lp = np.hstack((lp[0], lp[2:]))
     print([scale, shift])
     print(lp[:,None])
 
@@ -670,10 +734,10 @@ def example_leja_conjugate_ellipse_error(a=0, c=4.):
     coeffs_dd = leja_coeffs_exp_dd(lp, shift, scale)
     coeffs_exp = leja_coeffs_exp(lp, shift, scale)
     print("===div diffs===")
-    # print(coeffs_dd)
+    print(coeffs_dd)
     print(coeffs_exp)
     # shift, scale = 0., 1.0
-    leja_expmv, iter, converged = complex_conj_leja_expmv(
+    leja_expmv, iter, converged = complex_conj_leja_expmv2(
             a_lop, 1., u, shift, scale, lp, coeffs_exp, 1e-6)
     print([iter, converged])
     print("conj complex leja expmv:", leja_expmv)
