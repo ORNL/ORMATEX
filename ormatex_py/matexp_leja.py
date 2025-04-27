@@ -48,11 +48,13 @@ def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
         zt[:3] = np.imag(ztc[[0,2,3]])
         zt[3:n] = np.imag(ztc[4:n_bigger:2])
         zt = 1.j * h2 * zt
+        n_real = 1
     else:
         zt = gen_leja_circle(n, conjugate=True)
         zt = h1 * np.real(zt) + 1j * h2 * np.imag(zt)
+        n_real = 2
 
-    return zt, scale, shift
+    return zt, n_real, scale, shift
 
 
 def gen_leja_circle(n: int=64, conjugate=False):
@@ -211,10 +213,10 @@ def newton_poly_div_diff(x: jax.Array, y: jax.Array):
 
 
 @jax.jit
-def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, imag_leja_x: jax.Array, coeffs: jax.Array, tol: float):
+def complex_conj_imag_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, imag_leja_x: jax.Array, coeffs: jax.Array, tol: float):
     r"""
     Interpolation approx :math:`\matrm{exp}(\delta t A)u` at the conjugate complex
-    leja points.  The complex conj. leja points are symmetric about the real line,
+    imaginary leja points.  The complex conj. leja points are symmetric about the real line,
     and admit a 2 term recurrenace relationship to compute the polynomial
     terms as described in
 
@@ -277,63 +279,92 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     # expmv, n_iters, converged
     return pm, i, converged
 
-@jax.jit
-def complex_conj_leja_expmv2(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, coeffs: jax.Array, tol: float):
+@partial(jax.jit, static_argnames='n_leja_real')
+def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, n_leja_real: int, coeffs: jax.Array, tol: float):
     r"""
-    Interpolation approx :math:`\matrm{exp}(\delta t A)u` at the conjugate complex
+    Interpolation approx :math:`\matrm{exp}(\delta t A)u` at real and conjugate complex
     leja points.
+
+    leja_x[i] is real                for 0 <= i < n_leja_real
+    leja_x[i+1] = conj(leja_x[i])    for i >= n_leja_real
+
+    Note: this method does not check if leja_x has the assumed structure
+
     Args:
         a_lo:  LinOp linear operator which must implement matvec.
         dt:  (Sub)step size.
-        u: vector to which the matrix exponential is applied.
+        u:  vector to which the matrix function is applied.
         shift:  shift applied to leja points.
         scale:  scale applied to leja points.
-        imag_leja_x:  The unscaled complex leja sequence
+        leja_x:  unscaled complex leja sequence.
+        n_leja_real: number of real leja points at the beginning of leja_x (one or two, usually).
+        coeffs:  divied differences of the function applied to the matrix.
     """
     print(f"jit-compiling complex_conj_leja_expmv")
     n_leja = len(leja_x)
-    converged = False
+    assert(n_leja_real < n_leja)
 
-    # norm of u for rel err est
-    beta = jnp.linalg.norm(u)
+    # apply scale and shift to leja points for readability
+    leja_x_sc = shift + scale*leja_x
 
-    # leading const term in poly
-    pm = jnp.real(coeffs[0]) * u
+    # norm of u for error_estimate
+    norm_u = jnp.linalg.norm(u)
+    err_est = 2. * norm_u
 
-    # initial r
-    rm = (dt*a_lo.matvec(u) - (shift + scale*jnp.real(leja_x[0]))*u) / scale
+    # decay coeff. for running average of err_est
+    gamma = 1./2.
+    decay_fun = lambda e_new, e_old: gamma * e_new + (1.-gamma) * e_old
 
-    # storage vecs for recurrence
-    qm = u * 0.0
+    converged = (norm_u == 0.)
 
-    # jax version of above
+    # leading constant term in polynomial (real part for n_leja_real==0)
+    vm = u
+    pm = jnp.real(coeffs[0]) * vm
+
+    # real leja points at the start
+    # use a static loop and no tolerance check
+    i = 1
+    while i <= n_leja_real:
+        # compute new matvec (assume leja_x[i-1) is real in exact arithmetic)
+        vm = (dt*a_lo.matvec(vm) - jnp.real(leja_x_sc[i-1])*vm) / scale
+        # apply update (for i==n_leja_real, coeff[i] is complex, we just compute the real part)
+        pm += jnp.real(coeffs[i]) * vm
+        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(vm), err_est)
+        jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
+        i += 1
+
+    # jax version of the update for a conjugate part
     def body_leja_poly(args):
         # unpack args
-        i, rm, pm, qm, _ = args
-        # compute error estimate
-        err_r = jnp.real(coeffs[i-1])*jnp.linalg.norm(rm)
-        # compute new term in the polynomial approx
-        qm = (dt*a_lo.matvec(rm) - (shift + scale*jnp.real(leja_x[i-1]))*rm)/scale
-        # div diff coeffs[i] even is real
-        # div diff coeffs[i-1] odd is complex
-        pm = pm + jnp.real(coeffs[i-1])*rm + jnp.real(coeffs[i])*qm
-        # update r
-        rm = (dt*a_lo.matvec(qm) - (shift + scale*jnp.real(leja_x[i-1]))*qm)/scale + jnp.pow(jnp.imag(leja_x[i-1]), 2)*rm
-        # estimate error correction
-        poly_err = jnp.linalg.norm(qm) * jnp.abs(coeffs[i]) + err_r
-        jax.debug.print("i: {}, err: {}, coeffs[i]: {}, coeffs[i-1]: {}", i, poly_err, coeffs[i], coeffs[i-1])
+        i, vm, pm, err_est, _ = args
+
+        # compute new matvec (first one of conjugate pair, real part of complex matvec)
+        qm = (dt*a_lo.matvec(vm) - jnp.real(leja_x_sc[i-1])*vm) / scale
+        # real part of first update (coeff[i] is real in exact arithmetic)
+        pm += jnp.real(coeffs[i]) * qm
+        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(qm), err_est)
+        jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
+
+        # compute new matvec (second one of conjugate pair, vm is real)
+        vm = (dt*a_lo.matvec(qm) - jnp.real(leja_x_sc[i-1])*qm) / scale \
+            + ((jnp.imag(leja_x_sc[i-1])/scale)**2)*vm
+        # real part of second update (coeff[i+1] is complex, but vm real)
+        pm += jnp.real(coeffs[i+1]) * vm
+        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i+1])) * jnp.linalg.norm(vm), err_est)
+        jax.debug.print("i: {}, err: {}, coeffs[i]: {}", i+1, err_est, coeffs[i+1])
+
         i += 2
-        return i, rm, pm, qm, poly_err
+        converged = err_est < tol*norm_u
+
+        return i, vm, pm, err_est, converged
     def cond_leja_poly(args):
-        i, rm, pm, qm, poly_err = args
-        #jax.debug.print("i: {}, h: {}, err: {}, scale: {}", i, dt, poly_err, scale)
-        tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e3)
-        iter_check = (i < n_leja)
-        return (tol_check) & (iter_check) # | (i < 3)
-    i, rm, pm, _qm, err = lax.while_loop(
-            cond_leja_poly, body_leja_poly, (2, rm, pm, qm, 1.0e2))
-    converged = (i < n_leja) & (err < beta*1.0e3)
-    # expmv, n_iters, converged
+        i, _, _, err_est, converged = args
+        cond = (i+1 < n_leja) & (err_est <= 1.e3*norm_u) & ~converged
+        jax.debug.print("i: {}, cond: {}, converged: {}", i, cond, converged)
+        return cond
+    i, _, pm, err_est, converged = lax.while_loop(
+            cond_leja_poly, body_leja_poly, (i, vm, pm, err_est, converged))
+
     return pm, i, converged
 
 
@@ -450,7 +481,7 @@ def leja_coeffs_exp(leja_x: jax.Array, shift: float, scale: float, h: float=1.0)
     Xi = jnp.diag(leja_x, 0) + jnp.diag(jnp.ones(n_leja-1), -1)
     Xi_shift = jnp.identity(n_leja)*shift + scale*Xi
     # extract the first column
-    coeffs = jax.scipy.linalg.expm(h*Xi_shift).at[:, 0].get()
+    coeffs = jax.scipy.linalg.expm(h*Xi_shift)[:, 0]
     return coeffs
 
 
@@ -653,7 +684,7 @@ def example_fast_leja_points():
     print("===div diffs===")
     # print(coeffs_dd)
     print(coeffs_exp)
-    leja_expmv, iter, converged = complex_conj_leja_expmv(
+    leja_expmv, iter, converged = complex_conj_imag_leja_expmv(
             a_lop, dt, u, shift, scale, ip, coeffs_exp, 1e-6)
     print("conj complex leja expmv:", leja_expmv)
     print("true expmv:", expected_expmv)
@@ -663,7 +694,7 @@ def example_leja_conjugate_points():
     import matplotlib.pyplot as plt
     a = -2. # use 0 for imaginary interval
     c = 10.
-    lpc, scalec, shiftc = gen_leja_conjugate(n=26, a=a, b=0., c=c)
+    lpc, _, scalec, shiftc = gen_leja_conjugate(n=26, a=a, b=0., c=c)
     print([scalec, shiftc])
     print(lpc[:,None])
 
@@ -693,15 +724,13 @@ def example_leja_conjugate_points():
     plt.close()
 
 
-def example_leja_conjugate_ellipse_error(a=0, c=4.):
+def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     # a=0 for imaginary interval
     import matplotlib.pyplot as plt
 
     #lpc = gen_leja_circle(n=20, conjugate=True)
-    lp, scale, shift = gen_leja_conjugate(n=26, a=a, b=0., c=c)
-    if a < 0:
-        #TODO: implement version of leja_imag that does not require removing the second real point
-        lp = np.hstack((lp[0], lp[2:]))
+    n_max = 16 # 32
+    lp, n_leja_real, scale, shift = gen_leja_conjugate(n=n_max, a=a, b=b, c=c)
     print([scale, shift])
     print(lp[:,None])
 
@@ -718,10 +747,11 @@ def example_leja_conjugate_ellipse_error(a=0, c=4.):
     plt.close()
 
     # generate a diagonal matrix and wrap as a linear operator
-    x_grid = jnp.linspace(-5,5,100)
-    zr_grid, zc_grid = jnp.meshgrid(x_grid, x_grid)
+    xr_grid = jnp.linspace(-5,1,100)
+    xi_grid = jnp.linspace(-4,4,100)
+    zr_grid, zi_grid = jnp.meshgrid(xr_grid, xi_grid)
 
-    zs = zr_grid.flatten() + 1.j * zc_grid.flatten()
+    zs = zr_grid.flatten() + 1.j * zi_grid.flatten()
 
     a_lop = DiagLinOp(zs)
     u = jnp.ones(zs.shape, dtype=jnp.complex64)
@@ -737,9 +767,9 @@ def example_leja_conjugate_ellipse_error(a=0, c=4.):
     print(coeffs_dd)
     print(coeffs_exp)
     # shift, scale = 0., 1.0
-    leja_expmv, iter, converged = complex_conj_leja_expmv2(
-            a_lop, 1., u, shift, scale, lp, coeffs_exp, 1e-6)
-    print([iter, converged])
+    leja_expmv, i, converged = complex_conj_leja_expmv(
+            a_lop, 1., u, shift, scale, lp, n_leja_real, coeffs_exp, 1e-3)
+    print([i, converged])
     print("conj complex leja expmv:", leja_expmv)
     print("true expmv:", expected_expmv)
 
@@ -747,17 +777,14 @@ def example_leja_conjugate_ellipse_error(a=0, c=4.):
     print("error:", err)
 
     plt.figure()
-    #plt.contour(jnp.real(zs.reshape(zr_grid.shape)),
-    #            jnp.imag(zs.reshape(zr_grid.shape)),
-    #            jnp.log(err.reshape(zr_grid.shape)), colors='k', vmin=-14)
     plt.contourf(jnp.real(zs.reshape(zr_grid.shape)),
                  jnp.imag(zs.reshape(zr_grid.shape)),
-                 jnp.log(err.reshape(zr_grid.shape)), vmin=-14, extend='both')
-    plt.title("Leja interpolation error $\mathrm{ln}|e^{Z}u - p(Z)_{leja}|$ error \n a: %0.2f, c: %0.2f, shift: %0.2f, scale: %0.2f" % (a, c, shift, scale))
+                 jnp.log(err.reshape(zr_grid.shape))/jnp.log(10.), vmin=-7, extend='both')
+    plt.title("Leja interpolation error $\mathrm{log}|e^{Z}u - p(Z)_{leja}|$ error \n a: %0.2f, c: %0.2f, shift: %0.2f, scale: %0.2f" % (a, c, shift, scale))
     plt.xlabel("Re")
     plt.ylabel("Im")
     plt.colorbar()
-    plt.scatter(np.real(lp), np.imag(lp), c='r', s=8)
+    plt.scatter(np.real(shift + scale*lp[:i]), np.imag(shift+ scale*lp[:i]), c='r', s=8)
     plt.grid(ls='--')
     plt.savefig('leja_points_conjugate_ellipse_error_a%0.2f.png' % a, dpi=120)
     plt.close()
@@ -766,6 +793,6 @@ def example_leja_conjugate_ellipse_error(a=0, c=4.):
 if __name__ == "__main__":
     example_fast_leja_points()
     example_leja_conjugate_points()
-    example_leja_conjugate_ellipse_error(a=-2.0, c=4.)
-    example_leja_conjugate_ellipse_error(a=-1.0, c=4.)
-    example_leja_conjugate_ellipse_error(a=0.0, c=4.)
+    example_leja_conjugate_ellipse_error(a=-2.0, c=3.5)
+    example_leja_conjugate_ellipse_error(a=-4.5, b=.5, c=3.5)
+    example_leja_conjugate_ellipse_error(a=0.0, c=3.5)
