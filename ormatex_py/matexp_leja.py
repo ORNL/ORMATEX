@@ -39,10 +39,16 @@ def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
         assert(False)
     elif h2 <= tol:
         # real points
-        assert(False)
+        n_bigger = 2*(n - 1)
+        ztc = gen_leja_circle(n_bigger, conjugate=True)
+        zt = np.zeros(n)
+        zt[:2] = np.real(ztc[:2])
+        zt[2:n] = np.real(ztc[2:n_bigger:2])
+        zt = h1 * zt
+        n_real = n
     elif h1 <= tol:
         # imaginary points
-        n_bigger = 4 + (n-3)*2
+        n_bigger = 2*(n - 1)
         ztc = gen_leja_circle(n_bigger, conjugate=True)
         zt = np.zeros(n, dtype=np.complex128)
         zt[:3] = np.imag(ztc[[0,2,3]])
@@ -302,6 +308,8 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     """
     print(f"jit-compiling complex_conj_leja_expmv")
     n_leja = len(leja_x)
+    if (n_leja_real == n_leja):
+        return real_leja_expmv(a_lo, dt, u, shift, scale, leja_x, coeffs, tol)
     assert(n_leja_real < n_leja)
 
     # apply scale and shift to leja points for readability
@@ -312,7 +320,8 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     err_est = 2. * norm_u
 
     # decay coeff. for running average of err_est
-    gamma = 1./2.
+    #TODO exponential weighting is too pessimistic for exponentially decaying sequence
+    gamma = .9
     decay_fun = lambda e_new, e_old: gamma * e_new + (1.-gamma) * e_old
 
     converged = (norm_u == 0.)
@@ -371,7 +380,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
 @jax.jit
 def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, coeffs: jax.Array, tol: float):
     r"""
-    Computes leja polynomial interpolation to approx :math:`\matrm{exp}(\delta t A)u`.
+    Computes leja polynomial interpolation to approx :math:`\mathrm{exp}(\delta t A)u`.
 
     Ref:  L. Bergamaschi.  M. Caliari. A. Martinez and M. Vianello.
         Comparing Leja and Krylov Approximations of Large Scale
@@ -386,38 +395,52 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
         leja_x:  The unscaled leja points
         tol:  Tolerance of the polynomial interpolation such that
             :math:`|| p - exp(\delta t A)u || < tol` where p is
-            the leja polynomial approximation to :math:`\matrm{exp}(\delta t A)u`.
+            the leja polynomial approximation to :math:`\mathrm{exp}(\delta t A)u`.
     """
     print(f"jit-compiling leja_expmv")
     n_leja = len(leja_x)
-    converged = False
 
-    poly_expmv = coeffs[0] * u
-    y = u.at[:].get()
-    beta = jnp.linalg.norm(u)
+    # apply scale and shift to leja points for readability
+    leja_x_sc = shift + scale*leja_x
 
-    # jax version of above
+    # norm of u for error_estimate
+    norm_u = jnp.linalg.norm(u)
+    err_est = 2. * norm_u
+
+    # decay coeff. for running average of err_est
+    gamma = .9
+    decay_fun = lambda e_new, e_old: gamma * e_new + (1.-gamma) * e_old
+
+    converged = (norm_u == 0.)
+
+    # leading constant term in polynomia
+    pm = coeffs[0] * u
+    vm = u
+
     def body_leja_poly(args):
-        # unpack args: (i, y, poly, err)
-        i, y, poly_expmv, _ = args
-        # compute new term in the polynomial approx
-        y = dt*a_lo.matvec(y) / scale - ((shift/scale + leja_x[i-1]) * y)
-        poly_expmv += coeffs[i] * y
-        # estimate error
-        poly_err = jnp.linalg.norm(y) * jnp.abs(coeffs[i])
+        # unpack args
+        i, vm, pm, err_est, _ = args
+
+        # compute new matvec
+        vm = (dt*a_lo.matvec(vm) - leja_x_sc[i-1]*vm) / scale
+        # polynomial update
+        pm += coeffs[i] * vm
+        err_est = decay_fun(jnp.abs(coeffs[i]) * jnp.linalg.norm(vm), err_est)
+        jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
+
         i += 1
-        return i, y, poly_expmv, poly_err
+        converged = err_est < tol*norm_u
+
+        return i, vm, pm, err_est, converged
     def cond_leja_poly(args):
-        i, y, poly_expmv, poly_err = args
-        # jax.debug.print("i: {}, h: {}, err: {}, scale: {}", i, dt, poly_err, scale)
-        tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e3)
-        iter_check = (i < n_leja)
-        return (tol_check) & (iter_check) # | (i < 3)
-    i, y, poly_expmv, err = lax.while_loop(
-            cond_leja_poly, body_leja_poly, (1, y, poly_expmv, 1.0e2))
-    converged = (i < n_leja) & (err < beta*1.0e3)
-    # expmv, n_iters, converged
-    return poly_expmv, i, converged
+        i, _, _, err_est, converged = args
+        cond = (i+1 < n_leja) & (err_est <= 1.e3*norm_u) & ~converged
+        jax.debug.print("i: {}, cond: {}, converged: {}", i, cond, converged)
+        return cond
+    i, _, pm, err_est, converged = lax.while_loop(
+            cond_leja_poly, body_leja_poly, (1, vm, pm, err_est, converged))
+
+    return pm, i, converged
 
 
 def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=None, scale_factor: float=1.0):
@@ -728,11 +751,11 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     # a=0 for imaginary interval
     import matplotlib.pyplot as plt
 
+    np.set_printoptions(precision=3)
+
     #lpc = gen_leja_circle(n=20, conjugate=True)
-    n_max = 16 # 32
+    n_max = 17 # 32
     lp, n_leja_real, scale, shift = gen_leja_conjugate(n=n_max, a=a, b=b, c=c)
-    print([scale, shift])
-    print(lp[:,None])
 
     # plot leja points on the complex plane
     plt.figure()
@@ -747,8 +770,8 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     plt.close()
 
     # generate a diagonal matrix and wrap as a linear operator
-    xr_grid = jnp.linspace(-5,1,100)
-    xi_grid = jnp.linspace(-4,4,100)
+    xr_grid = jnp.linspace(-3,1,100)
+    xi_grid = jnp.linspace(-6,6,100)
     zr_grid, zi_grid = jnp.meshgrid(xr_grid, xi_grid)
 
     zs = zr_grid.flatten() + 1.j * zi_grid.flatten()
@@ -760,16 +783,21 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     expected_expmv = jnp.exp(zs)
     lp = jnp.asarray(lp)
 
+    if scale < 1e-1:
+        new_scale = np.sqrt(3.**2 + 6.**2)/2
+        lp = lp * scale / new_scale
+        scale = new_scale
+
     # compute polynomial coeffs by div diff for complex conj leja sequence
+    print([scale, shift])
     coeffs_dd = leja_coeffs_exp_dd(lp, shift, scale)
     coeffs_exp = leja_coeffs_exp(lp, shift, scale)
     print("===div diffs===")
-    print(coeffs_dd)
-    print(coeffs_exp)
+    print(np.hstack((lp[:,None], coeffs_exp[:,None], coeffs_dd[:,None])))
     # shift, scale = 0., 1.0
     leja_expmv, i, converged = complex_conj_leja_expmv(
-            a_lop, 1., u, shift, scale, lp, n_leja_real, coeffs_exp, 1e-3)
-    print([i, converged])
+            a_lop, 1., u, shift, scale, lp, n_leja_real, coeffs_exp, 1e-2)
+    print([int(i), bool(converged)])
     print("conj complex leja expmv:", leja_expmv)
     print("true expmv:", expected_expmv)
 
@@ -780,7 +808,7 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     plt.contourf(jnp.real(zs.reshape(zr_grid.shape)),
                  jnp.imag(zs.reshape(zr_grid.shape)),
                  jnp.log(err.reshape(zr_grid.shape))/jnp.log(10.), vmin=-7, extend='both')
-    plt.title("Leja interpolation error $\mathrm{log}|e^{Z}u - p(Z)_{leja}|$ error \n a: %0.2f, c: %0.2f, shift: %0.2f, scale: %0.2f" % (a, c, shift, scale))
+    plt.title("Leja interpolation error $\\mathrm{log}|e^{Z}u - p(Z)_{leja}|$ error \n a: %0.2f, c: %0.2f, shift: %0.2f, scale: %0.2f" % (a, c, shift, scale))
     plt.xlabel("Re")
     plt.ylabel("Im")
     plt.colorbar()
@@ -793,6 +821,8 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
 if __name__ == "__main__":
     example_fast_leja_points()
     example_leja_conjugate_points()
-    example_leja_conjugate_ellipse_error(a=-2.0, c=3.5)
-    example_leja_conjugate_ellipse_error(a=-4.5, b=.5, c=3.5)
-    example_leja_conjugate_ellipse_error(a=0.0, c=3.5)
+    #example_leja_conjugate_ellipse_error(a=-2.0, c=3.5)
+    example_leja_conjugate_ellipse_error(a=-2.5, b=.5, c=5.5)
+    example_leja_conjugate_ellipse_error(a=0, b=0, c=6)
+    example_leja_conjugate_ellipse_error(a=-3, b=1, c=0)
+    example_leja_conjugate_ellipse_error(a=-1e-5, b=0, c=1e-5)
