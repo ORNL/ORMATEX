@@ -154,7 +154,7 @@ def gen_complex_conj_leja_fast(beta: float, n: int=100):
     # take complex conjugate of odd m points
     imag_odd_leja_x = leja_x[0::2] * -1j
     # rejoin full conj complex leja fast sequence
-    leja_x = np.ones(len(leja_x), dtype=np.complex64)
+    leja_x = np.ones(len(leja_x), dtype=np.complex64) # can use np.complex128?
     leja_x[0::2] = imag_even_leja_x
     leja_x[1::2] = imag_odd_leja_x
     #leja_x[1::2] = imag_even_leja_x
@@ -777,7 +777,7 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     zs = zr_grid.flatten() + 1.j * zi_grid.flatten()
 
     a_lop = DiagLinOp(zs)
-    u = jnp.ones(zs.shape, dtype=jnp.complex64)
+    u = jnp.ones(zs.shape, dtype=jnp.complex128)
 
     # calc exp(a_lop) * u
     expected_expmv = jnp.exp(zs)
@@ -819,6 +819,8 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
 
 
 if __name__ == "__main__":
+    #jax.config.update("jax_enable_x64", True)
+
     example_fast_leja_points()
     example_leja_conjugate_points()
     #example_leja_conjugate_ellipse_error(a=-2.0, c=3.5)
@@ -826,3 +828,4 @@ if __name__ == "__main__":
     example_leja_conjugate_ellipse_error(a=0, b=0, c=6)
     example_leja_conjugate_ellipse_error(a=-3, b=1, c=0)
     example_leja_conjugate_ellipse_error(a=-1e-5, b=0, c=1e-5)
+    example_leja_conjugate_ellipse_error(a=-2.99, b=.99, c=.01)
