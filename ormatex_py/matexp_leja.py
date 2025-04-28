@@ -320,9 +320,8 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     err_est = 2. * norm_u
 
     # decay coeff. for running average of err_est
-    #TODO exponential weighting is too pessimistic for exponentially decaying sequence
-    gamma = .9
-    decay_fun = lambda e_new, e_old: gamma * e_new + (1.-gamma) * e_old
+    gamma = .5
+    decay_fun = lambda e_new, e_old: jnp.exp(gamma * jnp.log(e_new) + (1.-gamma) * jnp.log(e_old))
 
     converged = (norm_u == 0.)
 
@@ -334,7 +333,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     # use a static loop and no tolerance check
     i = 1
     while i <= n_leja_real:
-        # compute new matvec (assume leja_x[i-1) is real in exact arithmetic)
+        # compute new matvec (assume leja_x[i-1]) is real in exact arithmetic)
         vm = (dt*a_lo.matvec(vm) - jnp.real(leja_x_sc[i-1])*vm) / scale
         # apply update (for i==n_leja_real, coeff[i] is complex, we just compute the real part)
         pm += jnp.real(coeffs[i]) * vm
@@ -408,8 +407,8 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
     err_est = 2. * norm_u
 
     # decay coeff. for running average of err_est
-    gamma = .9
-    decay_fun = lambda e_new, e_old: gamma * e_new + (1.-gamma) * e_old
+    gamma = .5
+    decay_fun = lambda e_new, e_old: jnp.exp(gamma * jnp.log(e_new) + (1.-gamma) * jnp.log(e_old))
 
     converged = (norm_u == 0.)
 
