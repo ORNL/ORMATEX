@@ -19,7 +19,7 @@ def test_lotka_volterra_auto():
     """
     sys = LotkaVolterra()
     dt_list = [0.01, 0.0125, 0.02, 0.05]
-    methods = ["epi2", "epi2_leja", "epi3", "exprb3"]
+    methods = ["epi2", "epi2_leja_im", "epi3", "exprb3"]
     methods_order = [2.0, 2.0, 3.0, 3.0]
     for method, order in zip(methods, methods_order):
         err_dt = []

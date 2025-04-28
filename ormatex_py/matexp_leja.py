@@ -270,12 +270,12 @@ def complex_conj_imag_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: fl
         rm = (dt*a_lo.matvec(qm) - shift*qm)/scale + jnp.pow(jnp.imag(imag_leja_x[i-1]), 2)*rm
         # estimate error correction
         poly_err = jnp.linalg.norm(qm) * jnp.abs(coeffs[i]) + err_r
-        jax.debug.print("i: {}, err: {}, coeffs[i]: {}, coeffs[i-1]: {}", i, poly_err, coeffs[i], coeffs[i-1])
+        # jax.debug.print("i: {}, err: {}, coeffs[i]: {}, coeffs[i-1]: {}", i, poly_err, coeffs[i], coeffs[i-1])
         i += 2
         return i, rm, pm, qm, poly_err
     def cond_leja_poly(args):
         i, rm, pm, qm, poly_err = args
-        #jax.debug.print("i: {}, h: {}, err: {}, scale: {}", i, dt, poly_err, scale)
+        # jax.debug.print("i: {}, h: {}, err: {}, scale: {}", i, dt, poly_err, scale)
         tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e3)
         iter_check = (i < n_leja)
         return (tol_check) & (iter_check) # | (i < 3)
@@ -284,6 +284,7 @@ def complex_conj_imag_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: fl
     converged = (i < n_leja) & (err < beta*1.0e3)
     # expmv, n_iters, converged
     return pm, i, converged
+
 
 @partial(jax.jit, static_argnames='n_leja_real')
 def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, n_leja_real: int, coeffs: jax.Array, tol: float):
@@ -338,7 +339,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         # apply update (for i==n_leja_real, coeff[i] is complex, we just compute the real part)
         pm += jnp.real(coeffs[i]) * vm
         err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(vm), err_est)
-        jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
+        # jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
         i += 1
 
     # jax version of the update for a conjugate part
@@ -351,7 +352,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         # real part of first update (coeff[i] is real in exact arithmetic)
         pm += jnp.real(coeffs[i]) * qm
         err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(qm), err_est)
-        jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
+        # jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
 
         # compute new matvec (second one of conjugate pair, vm is real)
         vm = (dt*a_lo.matvec(qm) - jnp.real(leja_x_sc[i-1])*qm) / scale \
@@ -359,7 +360,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         # real part of second update (coeff[i+1] is complex, but vm real)
         pm += jnp.real(coeffs[i+1]) * vm
         err_est = decay_fun(jnp.abs(jnp.real(coeffs[i+1])) * jnp.linalg.norm(vm), err_est)
-        jax.debug.print("i: {}, err: {}, coeffs[i]: {}", i+1, err_est, coeffs[i+1])
+        # jax.debug.print("i: {}, err: {}, coeffs[i]: {}", i+1, err_est, coeffs[i+1])
 
         i += 2
         converged = err_est < tol*norm_u
@@ -368,7 +369,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     def cond_leja_poly(args):
         i, _, _, err_est, converged = args
         cond = (i+1 < n_leja) & (err_est <= 1.e3*norm_u) & ~converged
-        jax.debug.print("i: {}, cond: {}, converged: {}", i, cond, converged)
+        # jax.debug.print("i: {}, cond: {}, converged: {}", i, cond, converged)
         return cond
     i, _, pm, err_est, converged = lax.while_loop(
             cond_leja_poly, body_leja_poly, (i, vm, pm, err_est, converged))
@@ -425,7 +426,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
         # polynomial update
         pm += coeffs[i] * vm
         err_est = decay_fun(jnp.abs(coeffs[i]) * jnp.linalg.norm(vm), err_est)
-        jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
+        # jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
 
         i += 1
         converged = err_est < tol*norm_u
@@ -434,7 +435,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
     def cond_leja_poly(args):
         i, _, _, err_est, converged = args
         cond = (i+1 < n_leja) & (err_est <= 1.e3*norm_u) & ~converged
-        jax.debug.print("i: {}, cond: {}, converged: {}", i, cond, converged)
+        # jax.debug.print("i: {}, cond: {}, converged: {}", i, cond, converged)
         return cond
     i, _, pm, err_est, converged = lax.while_loop(
             cond_leja_poly, body_leja_poly, (1, vm, pm, err_est, converged))
@@ -507,21 +508,26 @@ def leja_coeffs_exp(leja_x: jax.Array, shift: float, scale: float, h: float=1.0)
     return coeffs
 
 
-def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja_x: jax.Array, n: int, shift: float, scale: float, tol: float=1.0e-10):
+def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja_x: jax.Array, n: int, shift: float, scale: float, tol: float=1.0e-10, substep: bool=True):
     r"""
-    Computs :math:`exp(\Delta t A)v` using substeps by:
+    Computes :math:`exp(\Delta t A)v` using the real leja point
+    interpolation method and substeps by:
 
-    .. code-block::
+    .. math::
 
-        v_{i+1} = exp(dt*A*tau_i)*v_{i}
+        v_{i+1} = \mathrm{exp}(\tau_i \tilde A) v_{i}
 
-    where :math:`\sum(tau_i) = 1`
+    where :math:`\sum(\tau_i) = 1`
+
+    Substepping is automatically applied by detecting divergence, or failure
+    to converge the leja polynomial approximation.
 
     Args:
         a_tilde_lo:  LinOp linear operator.
         tau_dt: inital substep size in (0, 1].
         v: vector to which the matrix exponential is applied
-        leja_x: leja points generated by the fast_leja_points function.
+        leja_x: leja points generated by the :func:`gen_leja_fast` function.
+        substep: Flag to enable automatic substepping. True by default.
     """
     # assert tau_dt > 0
     # substep size
@@ -540,13 +546,88 @@ def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja
     # coeffs = leja_coeffs_exp_dd(leja_x, shift, scale)
 
     # no substeps
-    # w, iter, converged = real_leja_expmv(
-    #         a_tilde_lo, 1.0, w_t, shift, scale, leja_x, coeffs, tol)
-    # return w[0:n], 1, converged, 1.0
+    if not substep:
+        w, iter, converged = real_leja_expmv(
+                a_tilde_lo, 1.0, w_t, shift, scale, leja_x, coeffs, tol)
+        return w[0:n], 1, converged, 1.0
 
     while True:
         w, iter, converged = real_leja_expmv(
                 a_tilde_lo, dts, w_t, shift, scale, leja_x, coeffs, tol)
+        tot_iter += iter
+        # print(i, converged, tau, dts, iter, scale)
+        if not converged:
+            # reduce the substep size
+            dts /= 1.2
+            last_converged = False
+        else:
+            # the maximum accepted step size
+            max_tau_dt = max(max_tau_dt, dts)
+            # accept the substep
+            tau = tau + dts
+            w_t = w
+            # clip substep size
+            dts = min(dts, 1.0 - tau)
+            last_converged = True
+        if tau >= 1.0:
+            break
+        i += 1
+        if i > max_substeps:
+            raise RuntimeError("Max substeps reached")
+    return w_t[0:n], tot_iter, converged, max_tau_dt
+
+
+def complex_conj_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja_x: jax.Array, n_leja_real: int, n: int, shift: float, scale: float, tol: float=1.0e-10, substep: bool=True):
+    r"""
+    Computes :math:`exp(\Delta t A)v` using complex conjugate leja points and
+    with substeps by:
+
+    .. math::
+
+        v_{i+1} = \mathrm{exp}(\tau_i \tilde A) v_{i}
+
+    where :math:`\sum(\tau_i) = 1`
+
+    Substepping is automatically applied by detecting divergence, or failure
+    to converge the leja polynomial approximation.
+
+    Args:
+        a_tilde_lo:  LinOp linear operator.
+        tau_dt: inital substep size in (0, 1].
+        v: vector to which the matrix exponential is applied
+        leja_x: leja points generated by the :func:`gen_leja_conjugate` function.
+        n_leja_real: number of real points at the start of the leja sequence.
+          This value is returned by :func:`gen_leja_conjugate`.
+          `n_leja_real==2` for a circle or ellipse, but can be equal to len(leja_x)
+          in the case of purely real leja points.  If n_leja_real is equal to
+          len(leja_x) then this method is equal to the :func:`real_leja_expmv_substep` method.
+        substep: Flag to enable automatic substepping. True by default.
+    """
+    # assert tau_dt > 0
+    # substep size
+    dts = min(tau_dt, 1.0)
+    # substep time
+    tau = 0.0
+    # current substep solution
+    w_t = v
+    tot_iter = 0
+    i, max_substeps = 0, 1000
+    max_tau_dt = 0.0
+    last_converged = False
+
+    # Compute leja polynomial coefficients
+    coeffs = leja_coeffs_exp(leja_x, shift, scale)
+    # coeffs = leja_coeffs_exp_dd(leja_x, shift, scale)
+
+    # no substeps
+    if not substep:
+        w, iter, converged = complex_conj_leja_expmv(
+                a_tilde_lo, 1.0, w_t, shift, scale, leja_x, n_leja_real, coeffs, tol)
+        return w[0:n], 1, converged, 1.0
+
+    while True:
+        w, iter, converged = complex_conj_leja_expmv(
+                a_tilde_lo, dts, w_t, shift, scale, leja_x, n_leja_real, coeffs, tol)
         tot_iter += iter
         # print(i, converged, tau, dts, iter, scale)
         if not converged:
@@ -753,7 +834,7 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     np.set_printoptions(precision=3)
 
     #lpc = gen_leja_circle(n=20, conjugate=True)
-    n_max = 17 # 32
+    n_max = 21 # 32
     lp, n_leja_real, scale, shift = gen_leja_conjugate(n=n_max, a=a, b=b, c=c)
 
     # plot leja points on the complex plane
@@ -818,11 +899,11 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
 
 
 if __name__ == "__main__":
-    #jax.config.update("jax_enable_x64", True)
+    jax.config.update("jax_enable_x64", True)
 
     example_fast_leja_points()
     example_leja_conjugate_points()
-    #example_leja_conjugate_ellipse_error(a=-2.0, c=3.5)
+    example_leja_conjugate_ellipse_error(a=-2.0, c=3.5)
     example_leja_conjugate_ellipse_error(a=-2.5, b=.5, c=5.5)
     example_leja_conjugate_ellipse_error(a=0, b=0, c=6)
     example_leja_conjugate_ellipse_error(a=-3, b=1, c=0)

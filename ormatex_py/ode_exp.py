@@ -10,7 +10,8 @@ from functools import partial
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd
-from ormatex_py.matexp_leja import gen_leja_fast, build_a_tilde, leja_shift_scale, real_leja_expmv_substep
+from ormatex_py.matexp_leja import gen_leja_fast, gen_leja_conjugate, build_a_tilde, \
+        leja_shift_scale, real_leja_expmv_substep, complex_conj_leja_expmv_substep
 try:
     import ormatex_py.ormatex as ormatex_rs
     HAS_ORMATEX_RUST = True
@@ -337,7 +338,7 @@ class ExpRBIntegrator(IntegrateSys):
 
 class ExpLejaIntegrator(IntegrateSys):
 
-    _valid_methods = {"epi2_leja": 2, }
+    _valid_methods = {"epi2_leja_re": 2, "epi2_leja_im": 2,}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2_leja", **kwargs):
         # Exponential integration method
@@ -347,26 +348,28 @@ class ExpLejaIntegrator(IntegrateSys):
         order = self._valid_methods[self.method]
         # Relative tol for leja polynomial approx
         self.leja_tol = kwargs.get("leja_tol", 1e-15)
-        # Optional max magnitude of real component
-        # of the eig spectrum of the sys jacobian.
-        self.leja_scale = kwargs.get("leja_scale", None)
+        # Optional max magnitude of real component of eigs(J*dt)
+        self.leja_a = kwargs.get("leja_a", None)
+        # Optional max magnitude of imag component of eigs(J*dt)
+        self.leja_c = kwargs.get("leja_c", None)
         # eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
         self._leja_bk = None
         self.istep = 0
         self.leja_max_power_iter = 80
         self.leja_max_eig_scale = 1.05
         self.leja_substep_size = 1.0
+        self.n_leja = kwargs.get("n_leja", 100)
         self.leja_x = jnp.asarray(
-                gen_leja_fast(a=-2, b=2, n=kwargs.get("n_leja", 200)))
+                gen_leja_fast(a=-2, b=2, n=self.n_leja))
         super().__init__(sys, t0, y0, order, method, **kwargs)
 
-    def _step_epi2(self, dt: float) -> StepResult:
+    def _step_epi2_re(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
             dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
-        doi:
+        using the real leja point method (ReLPM).
         """
         t = self.t
         yt = self.y_hist[0] # y_t
@@ -382,7 +385,7 @@ class ExpLejaIntegrator(IntegrateSys):
         # build augmented linear system
         a_tilde_lo, v, n = build_a_tilde(sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt])
 
-        if self.leja_scale is None:
+        if self.leja_a is None:
             # estimate largest magnitude eigenvalue and corrosponding eigenvec
             # by power iter.  Store eigenvector for next step
             # to speed convergence of power iterations in
@@ -391,8 +394,8 @@ class ExpLejaIntegrator(IntegrateSys):
                     a_tilde_lo, v.shape[0], self.leja_max_power_iter,
                     self._leja_bk, self.leja_max_eig_scale)
         else:
-            shift = self.leja_scale / 2.
-            scale = np.abs(self.leja_scale / 4.)
+            shift = self.leja_a / 2.
+            scale = np.abs(self.leja_a / 4.)
 
         # import pdb; pdb.set_trace()
         # compute phi-vector products by leja interpolation
@@ -413,9 +416,71 @@ class ExpLejaIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    def _step_epi2_im(self, dt: float) -> StepResult:
+        """
+        Computes the solution update by:
+        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        using a complex conjugate Leja point method (CLaMP).
+        """
+        t = self.t
+        yt = self.y_hist[0] # y_t
+
+        sys_jac_lop = self.sys.fjac(t, yt)
+        fyt = sys_jac_lop._frhs_cached()
+
+        # time derivative
+        fytt = sys_jac_lop._fdt()
+
+        vb0 = jnp.zeros(yt.shape)
+
+        # build augmented linear system
+        a_tilde_lo, v, n = build_a_tilde(sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt])
+
+        if self.leja_a is None:
+            # estimate largest magnitude eigenvalue and corrosponding eigenvec
+            # by power iter.  Store eigenvector for next step
+            # to speed convergence of power iterations in
+            # subsequent calls to power iter method.
+            _, _, max_eig, self._leja_bk, _power_iters = leja_shift_scale(
+                    a_tilde_lo, v.shape[0], self.leja_max_power_iter,
+                    self._leja_bk, self.leja_max_eig_scale)
+            leja_a = -jnp.abs(max_eig)
+        else:
+            leja_a = self.leja_a
+        if self.leja_c is None:
+            leja_c = 1.0
+        else:
+            leja_c = self.leja_c
+
+        # generate leja sequence on the ellipse bounding the spectrum of the sys Jacobian
+        leja_x, n_leja_real, scale, shift = gen_leja_conjugate(n=self.n_leja, a=leja_a, b=0., c=leja_c)
+        leja_x = jnp.asarray(leja_x)
+
+        # compute phi-vector products by leja interpolation
+        y_update, leja_iters, converged, max_tau_dt = complex_conj_leja_expmv_substep(
+                a_tilde_lo, 1.1*self.leja_substep_size, v, leja_x, n_leja_real,
+                n, shift, scale, self.leja_tol)
+
+        if not converged:
+            raise RuntimeError("Leja not converged")
+
+        y_new = yt + y_update
+        y_err = -1.0
+        self.istep += 1
+
+        wgt = min(self.istep, 10)
+        self.leja_substep_size = (1. / wgt) * max_tau_dt + \
+                ((wgt-1) / wgt) * self.leja_substep_size
+
+        return StepResult(t+dt, dt, y_new, y_err)
+
     def step(self, dt: float) -> StepResult:
-        if self.method == "epi2_leja":
-            return self._step_epi2(dt)
+        if self.method == "epi2_leja_re":
+            return self._step_epi2_re(dt)
+        elif self.method == "epi2_leja_im":
+            return self._step_epi2_im(dt)
         else:
             raise NotImplementedError
 
