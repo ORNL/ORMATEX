@@ -397,8 +397,8 @@ class ExpLejaIntegrator(IntegrateSys):
                     a_tilde_lo, v.shape[0], self.leja_max_power_iter,
                     self._leja_bk, self.leja_max_eig_scale)
         else:
-            shift = self.leja_a / 2.
-            scale = np.abs(self.leja_a / 4.)
+            shift = dt*self.leja_a / 2.
+            scale = np.abs(dt*self.leja_a / 4.)
 
         # import pdb; pdb.set_trace()
         # compute phi-vector products by leja interpolation
@@ -453,11 +453,11 @@ class ExpLejaIntegrator(IntegrateSys):
                     self._leja_bk, self.leja_max_eig_scale)
             leja_a = -jnp.abs(max_eig)
         else:
-            leja_a = self.leja_a
+            leja_a = self.leja_a * dt
         if self.leja_c is None:
             leja_c = 0.0
         else:
-            leja_c = self.leja_c
+            leja_c = self.leja_c * dt
 
         # generate leja sequence on the ellipse bounding the spectrum of the sys Jacobian
         leja_x, n_leja_real, scale, shift = gen_leja_conjugate(n=self.n_leja, a=leja_a, b=0., c=leja_c)

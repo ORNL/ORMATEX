@@ -342,4 +342,5 @@ if __name__ == "__main__":
     else:
         main(args.dt, args.method, args.per, args.mr, args.p,
              tf=args.tf, jac_plot=True, nu=args.nu,
-             leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep, leja_tol=args.leja_tol)
+             leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep,
+             leja_tol=args.leja_tol)
