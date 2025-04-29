@@ -1,6 +1,13 @@
 """
 Matrix function evaluation using leja point
 interpolation routines.
+
+NOTE: When running on a CPU target, it is recommended to
+use the following env variables for best performance:
+
+    OMP_NUM_THREADS=4 XLA_FLAGS=--xla_cpu_use_thunk_runtime=false python rad_1d_3s.py <args>
+
+Ref: https://github.com/jax-ml/jax/discussions/25711
 """
 from functools import partial
 import numpy as np
@@ -239,7 +246,7 @@ def complex_conj_imag_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: fl
         scale:  scale applied to leja points.
         imag_leja_x:  The unscaled complex leja sequence
     """
-    print(f"jit-compiling complex_conj_leja_expmv")
+    print(f"jit-compiling complex_conj_imag_leja_expmv")
     n_leja = len(imag_leja_x)
     converged = False
 
@@ -286,6 +293,11 @@ def complex_conj_imag_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: fl
     return pm, i, converged
 
 
+@jax.jit
+def decay_fun(e_new: float, e_old: float, gamma: float):
+    return jnp.exp(gamma * jnp.log(e_new) + (1.-gamma) * jnp.log(e_old))
+
+
 @partial(jax.jit, static_argnames='n_leja_real')
 def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, n_leja_real: int, coeffs: jax.Array, tol: float):
     r"""
@@ -311,7 +323,6 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     n_leja = len(leja_x)
     if (n_leja_real == n_leja):
         return real_leja_expmv(a_lo, dt, u, shift, scale, leja_x, coeffs, tol)
-    assert(n_leja_real < n_leja)
 
     # apply scale and shift to leja points for readability
     leja_x_sc = shift + scale*leja_x
@@ -322,7 +333,6 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
 
     # decay coeff. for running average of err_est
     gamma = .5
-    decay_fun = lambda e_new, e_old: jnp.exp(gamma * jnp.log(e_new) + (1.-gamma) * jnp.log(e_old))
 
     converged = (norm_u == 0.)
 
@@ -333,14 +343,21 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     # real leja points at the start
     # use a static loop and no tolerance check
     i = 1
-    while i <= n_leja_real:
+    # while i <= n_leja_real:
+    def body_real_leja_poly(args):
+        i, vm, pm, err_est = args
         # compute new matvec (assume leja_x[i-1]) is real in exact arithmetic)
         vm = (dt*a_lo.matvec(vm) - jnp.real(leja_x_sc[i-1])*vm) / scale
         # apply update (for i==n_leja_real, coeff[i] is complex, we just compute the real part)
         pm += jnp.real(coeffs[i]) * vm
-        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(vm), err_est)
+        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(vm), err_est, gamma)
         # jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
         i += 1
+        return i, vm, pm, err_est
+    def cond_real_leja_poly(args):
+        i, _, _, err_est = args
+        return (i <= n_leja_real)
+    i, vm, pm, _ = lax.while_loop(cond_real_leja_poly, body_real_leja_poly, (i, vm, pm, 1.0e2))
 
     # jax version of the update for a conjugate part
     def body_leja_poly(args):
@@ -351,7 +368,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         qm = (dt*a_lo.matvec(vm) - jnp.real(leja_x_sc[i-1])*vm) / scale
         # real part of first update (coeff[i] is real in exact arithmetic)
         pm += jnp.real(coeffs[i]) * qm
-        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(qm), err_est)
+        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(qm), err_est, gamma)
         # jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
 
         # compute new matvec (second one of conjugate pair, vm is real)
@@ -359,8 +376,10 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
             + ((jnp.imag(leja_x_sc[i-1])/scale)**2)*vm
         # real part of second update (coeff[i+1] is complex, but vm real)
         pm += jnp.real(coeffs[i+1]) * vm
-        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i+1])) * jnp.linalg.norm(vm), err_est)
+        norm_vm = jnp.linalg.norm(vm)
+        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i+1])) * norm_vm, err_est, gamma)
         # jax.debug.print("i: {}, err: {}, coeffs[i]: {}", i+1, err_est, coeffs[i+1])
+        # jax.debug.print("i: {}, norm_vm: {}, err: {}, coeffs[i]: {}", i+1, norm_vm, err_est, coeffs[i+1])
 
         i += 2
         converged = err_est < tol*norm_u
@@ -409,7 +428,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
 
     # decay coeff. for running average of err_est
     gamma = .5
-    decay_fun = lambda e_new, e_old: jnp.exp(gamma * jnp.log(e_new) + (1.-gamma) * jnp.log(e_old))
+    # decay_fun = lambda e_new, e_old: jnp.exp(gamma * jnp.log(e_new) + (1.-gamma) * jnp.log(e_old))
 
     converged = (norm_u == 0.)
 
@@ -425,7 +444,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
         vm = (dt*a_lo.matvec(vm) - leja_x_sc[i-1]*vm) / scale
         # polynomial update
         pm += coeffs[i] * vm
-        err_est = decay_fun(jnp.abs(coeffs[i]) * jnp.linalg.norm(vm), err_est)
+        err_est = decay_fun(jnp.abs(coeffs[i]) * jnp.linalg.norm(vm), err_est, gamma)
         # jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
 
         i += 1
@@ -549,13 +568,14 @@ def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja
     if not substep:
         w, iter, converged = real_leja_expmv(
                 a_tilde_lo, 1.0, w_t, shift, scale, leja_x, coeffs, tol)
-        return w[0:n], 1, converged, 1.0
+        return w[0:n], iter, converged, 1.0
 
     while True:
         w, iter, converged = real_leja_expmv(
                 a_tilde_lo, dts, w_t, shift, scale, leja_x, coeffs, tol)
         tot_iter += iter
         # print(i, converged, tau, dts, iter, scale)
+        print("sub_i: %d, converged: %d, sub_dt: %0.3f, iter: %d, shift: %0.3f, scale: %0.3f" % (i, converged, dts, iter, shift, scale))
         if not converged:
             # reduce the substep size
             dts /= 1.2
@@ -623,13 +643,13 @@ def complex_conj_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Arr
     if not substep:
         w, iter, converged = complex_conj_leja_expmv(
                 a_tilde_lo, 1.0, w_t, shift, scale, leja_x, n_leja_real, coeffs, tol)
-        return w[0:n], 1, converged, 1.0
+        return w[0:n], iter, converged, 1.0
 
     while True:
         w, iter, converged = complex_conj_leja_expmv(
                 a_tilde_lo, dts, w_t, shift, scale, leja_x, n_leja_real, coeffs, tol)
         tot_iter += iter
-        # print(i, converged, tau, dts, iter, scale)
+        print("sub_i: %d, converged: %d, sub_dt: %0.3f, iter: %d, shift: %0.3f, scale: %0.3f" % (i, converged, dts, iter, shift, scale))
         if not converged:
             # reduce the substep size
             dts /= 1.2

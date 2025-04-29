@@ -277,6 +277,10 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-dt", help="time step size", type=float, default=0.1)
+    parser.add_argument("-leja_tol", help="optional leja integrator tolerance", type=float, default=1.0e-8)
+    parser.add_argument("-leja_a", help="optional min real part of the J*dt spectrum. If None, power iter is used to determine this value.", type=float, default=None)
+    parser.add_argument("-leja_c", help="optional max complex part of the J*dt spectrum", type=float, default=1.0)
+    parser.add_argument("-leja_substep", help="optional to enable substepping the leja integrator", action='store_true', default=False)
     parser.add_argument("-nu", help="diffusion coeff", type=float, default=1e-10)
     parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
@@ -299,7 +303,9 @@ if __name__ == "__main__":
             mae_rl_sweep[method_str] = []
             for dt in dts:
                 mae, mae_rl = main(dt, method, True, args.mr, args.p,
-                                   tf=args.tf, pfd_method=pfd_method, nu=args.nu)
+                                   tf=args.tf, pfd_method=pfd_method, nu=args.nu,
+                                   leja_a=args.leja_a, leja_c=args.leja_c,
+                                   leja_substep=args.leja_substep, leja_tol=args.leja_tol)
                 mae_sweep[method_str].append(([dt] + mae))
                 mae_rl_sweep[method_str].append(([dt] + mae_rl))
             print("=== Method: %s" % method_str)
@@ -335,4 +341,5 @@ if __name__ == "__main__":
         plt.close()
     else:
         main(args.dt, args.method, args.per, args.mr, args.p,
-             tf=args.tf, jac_plot=True, nu=args.nu)
+             tf=args.tf, jac_plot=True, nu=args.nu,
+             leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep, leja_tol=args.leja_tol)

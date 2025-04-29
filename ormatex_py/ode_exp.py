@@ -352,13 +352,16 @@ class ExpLejaIntegrator(IntegrateSys):
         self.leja_a = kwargs.get("leja_a", None)
         # Optional max magnitude of imag component of eigs(J*dt)
         self.leja_c = kwargs.get("leja_c", None)
+        # Option to enable substepping
+        self.leja_substep = kwargs.get("leja_substep", True)
+        # Initial substep size
+        self.leja_substep_size = 1.0
         # eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
         self._leja_bk = None
         self.istep = 0
         self.leja_max_power_iter = 80
         self.leja_max_eig_scale = 1.05
-        self.leja_substep_size = 1.0
-        self.n_leja = kwargs.get("n_leja", 100)
+        self.n_leja = kwargs.get("n_leja", 150)
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=self.n_leja))
         super().__init__(sys, t0, y0, order, method, **kwargs)
@@ -400,8 +403,10 @@ class ExpLejaIntegrator(IntegrateSys):
         # import pdb; pdb.set_trace()
         # compute phi-vector products by leja interpolation
         y_update, leja_iters, converged, max_tau_dt = real_leja_expmv_substep(
-                a_tilde_lo, 1.1*self.leja_substep_size, v, self.leja_x,
-                n, shift, scale, self.leja_tol)
+                a_tilde_lo, 1.01*self.leja_substep_size, v, self.leja_x,
+                n, shift, scale, self.leja_tol, self.leja_substep)
+
+        print("=== Total leja iters: %d, shift: %0.3f, scale: %0.3f" % (leja_iters, shift, scale))
 
         if not converged:
             raise RuntimeError("Leja not converged")
@@ -422,7 +427,7 @@ class ExpLejaIntegrator(IntegrateSys):
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
             dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
-        using a complex conjugate Leja point method (CLaMP).
+        using a complex conjugate Leja point method (CLaPM).
         """
         t = self.t
         yt = self.y_hist[0] # y_t
@@ -450,7 +455,7 @@ class ExpLejaIntegrator(IntegrateSys):
         else:
             leja_a = self.leja_a
         if self.leja_c is None:
-            leja_c = 1.0
+            leja_c = 0.0
         else:
             leja_c = self.leja_c
 
@@ -460,8 +465,10 @@ class ExpLejaIntegrator(IntegrateSys):
 
         # compute phi-vector products by leja interpolation
         y_update, leja_iters, converged, max_tau_dt = complex_conj_leja_expmv_substep(
-                a_tilde_lo, 1.1*self.leja_substep_size, v, leja_x, n_leja_real,
-                n, shift, scale, self.leja_tol)
+                a_tilde_lo, 1.01*self.leja_substep_size, v, leja_x, n_leja_real,
+                n, shift, scale, self.leja_tol, self.leja_substep)
+
+        print("=== Total leja iters: %d, leja_a: %0.3f, leja_c: %0.3f, shift: %0.3f, scale: %0.3f" % (leja_iters, leja_a, leja_c, shift, scale))
 
         if not converged:
             raise RuntimeError("Leja not converged")
