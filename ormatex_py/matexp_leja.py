@@ -483,7 +483,8 @@ def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=Non
     else:
         b0 = jax.random.uniform(jax.random.key(42), (dim,))
     max_eig, b, iters = power_iter(a_tilde_lo, b0, max_power_iter)
-    alpha = max_eig * scale_factor
+    max_eig *= scale_factor
+    alpha = max_eig
     beta = 0.  # assume min |eig(A)| is 0
     shift = (alpha - beta) / 2.
     scale = jnp.abs(beta - alpha) / 4.

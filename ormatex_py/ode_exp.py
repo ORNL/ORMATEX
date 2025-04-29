@@ -360,7 +360,7 @@ class ExpLejaIntegrator(IntegrateSys):
         self._leja_bk = None
         self.istep = 0
         self.leja_max_power_iter = 80
-        self.leja_max_eig_scale = 1.05
+        self.leja_max_eig_scale = 2.0
         self.n_leja = kwargs.get("n_leja", 150)
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=self.n_leja))
