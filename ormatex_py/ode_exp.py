@@ -359,9 +359,9 @@ class ExpLejaIntegrator(IntegrateSys):
         # eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
         self._leja_bk = None
         self.istep = 0
-        self.leja_max_power_iter = 80
-        self.leja_max_eig_scale = 2.0
-        self.n_leja = kwargs.get("n_leja", 150)
+        self.leja_max_power_iter = 100
+        self.leja_max_re_eig_scale = kwargs.get("leja_max_re_eig_scale", 1.2)
+        self.n_leja = kwargs.get("n_leja", 300)
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=self.n_leja))
         super().__init__(sys, t0, y0, order, method, **kwargs)
@@ -395,7 +395,7 @@ class ExpLejaIntegrator(IntegrateSys):
             # subsequent calls to power iter method.
             shift, scale, max_eig, self._leja_bk, _power_iters = leja_shift_scale(
                     a_tilde_lo, v.shape[0], self.leja_max_power_iter,
-                    self._leja_bk, self.leja_max_eig_scale)
+                    self._leja_bk, self.leja_max_re_eig_scale)
         else:
             shift = dt*self.leja_a / 2.
             scale = np.abs(dt*self.leja_a / 4.)
@@ -403,7 +403,7 @@ class ExpLejaIntegrator(IntegrateSys):
         # import pdb; pdb.set_trace()
         # compute phi-vector products by leja interpolation
         y_update, leja_iters, converged, max_tau_dt = real_leja_expmv_substep(
-                a_tilde_lo, 1.01*self.leja_substep_size, v, self.leja_x,
+                a_tilde_lo, 1.1*self.leja_substep_size, v, self.leja_x,
                 n, shift, scale, self.leja_tol, self.leja_substep)
 
         print("=== Total leja iters: %d, shift: %0.3f, scale: %0.3f" % (leja_iters, shift, scale))
@@ -443,6 +443,7 @@ class ExpLejaIntegrator(IntegrateSys):
         # build augmented linear system
         a_tilde_lo, v, n = build_a_tilde(sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt])
 
+        _power_iters = 0
         if self.leja_a is None:
             # estimate largest magnitude eigenvalue and corrosponding eigenvec
             # by power iter.  Store eigenvector for next step
@@ -450,7 +451,7 @@ class ExpLejaIntegrator(IntegrateSys):
             # subsequent calls to power iter method.
             _, _, max_eig, self._leja_bk, _power_iters = leja_shift_scale(
                     a_tilde_lo, v.shape[0], self.leja_max_power_iter,
-                    self._leja_bk, self.leja_max_eig_scale)
+                    self._leja_bk, self.leja_max_re_eig_scale)
             leja_a = -jnp.abs(max_eig)
         else:
             leja_a = self.leja_a * dt
@@ -465,10 +466,10 @@ class ExpLejaIntegrator(IntegrateSys):
 
         # compute phi-vector products by leja interpolation
         y_update, leja_iters, converged, max_tau_dt = complex_conj_leja_expmv_substep(
-                a_tilde_lo, 1.01*self.leja_substep_size, v, leja_x, n_leja_real,
+                a_tilde_lo, 1.1*self.leja_substep_size, v, leja_x, n_leja_real,
                 n, shift, scale, self.leja_tol, self.leja_substep)
 
-        print("=== Total leja iters: %d, leja_a: %0.3f, leja_c: %0.3f, shift: %0.3f, scale: %0.3f" % (leja_iters, leja_a, leja_c, shift, scale))
+        print("=== Power iters: %d, Total leja iters: %d, leja_a: %0.3f, leja_c: %0.3f, shift: %0.3f, scale: %0.3f" % (_power_iters, leja_iters, leja_a, leja_c, shift, scale))
 
         if not converged:
             raise RuntimeError("Leja not converged")

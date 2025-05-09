@@ -6,6 +6,13 @@ The purpose of this example is to benchmark the various
 exponential integration methods to ensure the expected accuracy
 and order of accuracy is obtained when compared with
 the analytic result.
+
+NOTE: When running on a CPU target, it is recommended to
+use the following env variables for best performance:
+
+    OMP_NUM_THREADS=4 XLA_FLAGS=--xla_cpu_use_thunk_runtime=false python rad_1d_3s.py <args>
+
+Ref: https://github.com/jax-ml/jax/discussions/25711
 """
 import numpy as np
 import scipy as sp

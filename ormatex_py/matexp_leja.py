@@ -5,7 +5,7 @@ interpolation routines.
 NOTE: When running on a CPU target, it is recommended to
 use the following env variables for best performance:
 
-    OMP_NUM_THREADS=4 XLA_FLAGS=--xla_cpu_use_thunk_runtime=false python rad_1d_3s.py <args>
+    OMP_NUM_THREADS=4 XLA_FLAGS=--xla_cpu_use_thunk_runtime=false
 
 Ref: https://github.com/jax-ml/jax/discussions/25711
 """
@@ -174,7 +174,7 @@ def gen_complex_conj_leja_fast(beta: float, n: int=100):
 
 
 @partial(jax.jit, static_argnums=(2,3))
-def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-3):
+def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-2):
     """
     Performs power iteration to find dominant eigenvalue of system
 
@@ -277,12 +277,10 @@ def complex_conj_imag_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: fl
         rm = (dt*a_lo.matvec(qm) - shift*qm)/scale + jnp.pow(jnp.imag(imag_leja_x[i-1]), 2)*rm
         # estimate error correction
         poly_err = jnp.linalg.norm(qm) * jnp.abs(coeffs[i]) + err_r
-        # jax.debug.print("i: {}, err: {}, coeffs[i]: {}, coeffs[i-1]: {}", i, poly_err, coeffs[i], coeffs[i-1])
         i += 2
         return i, rm, pm, qm, poly_err
     def cond_leja_poly(args):
         i, rm, pm, qm, poly_err = args
-        # jax.debug.print("i: {}, h: {}, err: {}, scale: {}", i, dt, poly_err, scale)
         tol_check = (poly_err > tol*beta) & (poly_err < beta*1.0e3)
         iter_check = (i < n_leja)
         return (tol_check) & (iter_check) # | (i < 3)
@@ -343,21 +341,13 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     # real leja points at the start
     # use a static loop and no tolerance check
     i = 1
-    # while i <= n_leja_real:
-    def body_real_leja_poly(args):
-        i, vm, pm, err_est = args
+    while i <= n_leja_real:
         # compute new matvec (assume leja_x[i-1]) is real in exact arithmetic)
         vm = (dt*a_lo.matvec(vm) - jnp.real(leja_x_sc[i-1])*vm) / scale
         # apply update (for i==n_leja_real, coeff[i] is complex, we just compute the real part)
         pm += jnp.real(coeffs[i]) * vm
         err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(vm), err_est, gamma)
-        # jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
         i += 1
-        return i, vm, pm, err_est
-    def cond_real_leja_poly(args):
-        i, _, _, err_est = args
-        return (i <= n_leja_real)
-    i, vm, pm, _ = lax.while_loop(cond_real_leja_poly, body_real_leja_poly, (i, vm, pm, 1.0e2))
 
     # jax version of the update for a conjugate part
     def body_leja_poly(args):
@@ -369,7 +359,6 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         # real part of first update (coeff[i] is real in exact arithmetic)
         pm += jnp.real(coeffs[i]) * qm
         err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(qm), err_est, gamma)
-        # jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
 
         # compute new matvec (second one of conjugate pair, vm is real)
         vm = (dt*a_lo.matvec(qm) - jnp.real(leja_x_sc[i-1])*qm) / scale \
@@ -378,8 +367,6 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         pm += jnp.real(coeffs[i+1]) * vm
         norm_vm = jnp.linalg.norm(vm)
         err_est = decay_fun(jnp.abs(jnp.real(coeffs[i+1])) * norm_vm, err_est, gamma)
-        # jax.debug.print("i: {}, err: {}, coeffs[i]: {}", i+1, err_est, coeffs[i+1])
-        # jax.debug.print("i: {}, norm_vm: {}, err: {}, coeffs[i]: {}", i+1, norm_vm, err_est, coeffs[i+1])
 
         i += 2
         converged = err_est < tol*norm_u
@@ -388,7 +375,6 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
     def cond_leja_poly(args):
         i, _, _, err_est, converged = args
         cond = (i+1 < n_leja) & (err_est <= 1.e3*norm_u) & ~converged
-        # jax.debug.print("i: {}, cond: {}, converged: {}", i, cond, converged)
         return cond
     i, _, pm, err_est, converged = lax.while_loop(
             cond_leja_poly, body_leja_poly, (i, vm, pm, err_est, converged))
@@ -445,7 +431,6 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
         # polynomial update
         pm += coeffs[i] * vm
         err_est = decay_fun(jnp.abs(coeffs[i]) * jnp.linalg.norm(vm), err_est, gamma)
-        # jax.debug.print("i: {}, err: {} coeffs[i]: {}", i, err_est, coeffs[i])
 
         i += 1
         converged = err_est < tol*norm_u
@@ -454,7 +439,6 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
     def cond_leja_poly(args):
         i, _, _, err_est, converged = args
         cond = (i+1 < n_leja) & (err_est <= 1.e3*norm_u) & ~converged
-        # jax.debug.print("i: {}, cond: {}, converged: {}", i, cond, converged)
         return cond
     i, _, pm, err_est, converged = lax.while_loop(
             cond_leja_poly, body_leja_poly, (1, vm, pm, err_est, converged))
