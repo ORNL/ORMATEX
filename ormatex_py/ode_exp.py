@@ -307,7 +307,7 @@ class ExpRBIntegrator(IntegrateSys):
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def step(self, dt: float) -> StepResult:
+    def step(self, dt: float, frhs_kwargs: dict={}) -> StepResult:
         if self.method == "exprb2":
             return self._step_exprb2(dt)
         elif self.method == "exprb3":
@@ -366,7 +366,7 @@ class ExpLejaIntegrator(IntegrateSys):
                 gen_leja_fast(a=-2, b=2, n=self.n_leja))
         super().__init__(sys, t0, y0, order, method, **kwargs)
 
-    def _step_epi2_re(self, dt: float) -> StepResult:
+    def _step_epi2_re(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
@@ -377,7 +377,7 @@ class ExpLejaIntegrator(IntegrateSys):
         t = self.t
         yt = self.y_hist[0] # y_t
 
-        sys_jac_lop = self.sys.fjac(t, yt)
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
         fyt = sys_jac_lop._frhs_cached()
 
         # time derivative
@@ -421,7 +421,7 @@ class ExpLejaIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_epi2_im(self, dt: float) -> StepResult:
+    def _step_epi2_im(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
@@ -432,7 +432,7 @@ class ExpLejaIntegrator(IntegrateSys):
         t = self.t
         yt = self.y_hist[0] # y_t
 
-        sys_jac_lop = self.sys.fjac(t, yt)
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
         fyt = sys_jac_lop._frhs_cached()
 
         # time derivative
@@ -469,7 +469,7 @@ class ExpLejaIntegrator(IntegrateSys):
                 a_tilde_lo, 1.1*self.leja_substep_size, v, leja_x, n_leja_real,
                 n, shift, scale, self.leja_tol, self.leja_substep)
 
-        print("=== Power iters: %d, Total leja iters: %d, leja_a: %0.3f, leja_c: %0.3f, shift: %0.3f, scale: %0.3f" % (_power_iters, leja_iters, leja_a, leja_c, shift, scale))
+        print("=t: %0.2f, Pwr itrs: %d, Leja itrs: %d, leja_a: %0.2f, leja_c: %0.2f, shift: %0.2f, scale: %0.2f" % (t, _power_iters, leja_iters, leja_a, leja_c, shift, scale))
 
         if not converged:
             raise RuntimeError("Leja not converged")
@@ -484,11 +484,11 @@ class ExpLejaIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def step(self, dt: float) -> StepResult:
+    def step(self, dt: float, frhs_kwargs: dict={}) -> StepResult:
         if self.method == "epi2_leja_re":
-            return self._step_epi2_re(dt)
+            return self._step_epi2_re(dt, frhs_kwargs)
         elif self.method == "epi2_leja_im":
-            return self._step_epi2_im(dt)
+            return self._step_epi2_im(dt, frhs_kwargs)
         else:
             raise NotImplementedError
 
@@ -742,7 +742,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def step(self, dt: float) -> StepResult:
+    def step(self, dt: float, frhs_kwargs: dict={}) -> StepResult:
         if self.method == "exp1":
             return self._step_exp1(dt)
         elif self.method == "exp2":

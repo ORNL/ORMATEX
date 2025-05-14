@@ -153,9 +153,11 @@ def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2", **kwargs):
     callback_res = {"callback_before_step": [], "callback_after_step_accept": []}
     for i in range(nsteps):
         if callable(callback_before_step):
-            callback_res["callback_before_step"].append(
-                    callback_before_step(sys_int.sys, t_res[-1], y_res[-1]))
-        res = sys_int.step(dt)
+            cb_out = callback_before_step(sys_int.sys, t_res[-1], y_res[-1])
+            callback_res["callback_before_step"].append(cb_out)
+            res = sys_int.step(dt, frhs_kwargs=cb_out)
+        else:
+            res = sys_int.step(dt)
         # log the results for plotting
         t_res.append(res.t)
         y_res.append(res.y)

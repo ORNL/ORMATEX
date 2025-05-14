@@ -21,6 +21,7 @@ import os
 import jax
 import jax.numpy as jnp
 from jax.experimental import sparse as jsp
+from jax.experimental.sparse import BCSR
 import equinox as eqx
 
 import skfem as fem
@@ -56,7 +57,8 @@ class RAD_SEM(OdeSplitSys):
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         # get stiffness matrix and mass vector
-        self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
+        A, self.Ml, _ = sys_assembler.assemble(**kwargs)
+        self.A = BCSR.from_bcoo(A)
         # get collocation points
         self.xs = sys_assembler.collocation_points()
 
