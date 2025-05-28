@@ -839,7 +839,7 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     np.set_printoptions(precision=3)
 
     #lpc = gen_leja_circle(n=20, conjugate=True)
-    n_max = 21 # 32
+    n_max = 32 # 32
     lp, n_leja_real, scale, shift = gen_leja_conjugate(n=n_max, a=a, b=b, c=c)
 
     # plot leja points on the complex plane
@@ -881,7 +881,7 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     print(np.hstack((lp[:,None], coeffs_exp[:,None], coeffs_dd[:,None])))
     # shift, scale = 0., 1.0
     leja_expmv, i, converged = complex_conj_leja_expmv(
-            a_lop, 1., u, shift, scale, lp, n_leja_real, coeffs_exp, 1e-2)
+            a_lop, 1., u, shift, scale, lp, n_leja_real, coeffs_exp, 1e-3)
     print([int(i), bool(converged)])
     print("conj complex leja expmv:", leja_expmv)
     print("true expmv:", expected_expmv)

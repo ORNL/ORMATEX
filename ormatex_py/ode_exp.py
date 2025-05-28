@@ -106,7 +106,7 @@ class ExpRBIntegrator(IntegrateSys):
 
     # lowest order EPI multistep method is single step
     # but implemented using KIOPS, which is different for nonhomogeneous
-    def _step_epi2(self, dt: float) -> StepResult:
+    def _step_epi2(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
@@ -117,7 +117,7 @@ class ExpRBIntegrator(IntegrateSys):
         t = self.t
         yt = self.y_hist[0] # y_t
 
-        sys_jac_lop = self.sys.fjac(t, yt)
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
         fyt = sys_jac_lop._frhs_cached()
 
         # time derivative
@@ -133,7 +133,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_epi3(self, dt: float) -> StepResult:
+    def _step_epi3(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
@@ -147,7 +147,7 @@ class ExpRBIntegrator(IntegrateSys):
         yp = self.y_hist[1] # y_{t-1}
         tp = self.t_hist[1]
 
-        sys_jac_lop = self.sys.fjac(t, yt)
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
         fyt = sys_jac_lop._frhs_cached()
 
         # time derivative
@@ -230,7 +230,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_exprb2_pfd(self, dt: float) -> StepResult:
+    def _step_exprb2_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
@@ -239,7 +239,8 @@ class ExpRBIntegrator(IntegrateSys):
         """
         t = self.t
         yt = self.y_hist[0]
-        sys_jac_lop = self.sys.fjac(t, yt)
+        # sys_jac_lop = self.sys.fjac(t, yt)
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
         fyt = sys_jac_lop._frhs_cached()
 
         J = sys_jac_lop.dense()
@@ -313,16 +314,16 @@ class ExpRBIntegrator(IntegrateSys):
         elif self.method == "exprb3":
             return self._step_exprb3(dt)
         elif self.method == "epi2":
-            return self._step_epi2(dt)
+            return self._step_epi2(dt, frhs_kwargs)
         elif self.method == "epi3":
             if len(self.y_hist) >= 2:
-                return self._step_epi3(dt)
+                return self._step_epi3(dt, frhs_kwargs)
             else:
-                return self._step_epi2(dt)
+                return self._step_epi2(dt, frhs_kwargs)
         elif self.method == "exprb2_dense":
             return self._step_exprb2_dense(dt)
         elif self.method == "exprb2_pfd":
-            return self._step_exprb2_pfd(dt)
+            return self._step_exprb2_pfd(dt, frhs_kwargs)
         elif self.method == "exprb2_pfd_rs" and HAS_ORMATEX_RUST:
             return self._step_exprb2_pfd_rs(dt)
         elif self.method == "exp_pfd_rs" and HAS_ORMATEX_RUST:
