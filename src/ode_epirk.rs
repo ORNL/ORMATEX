@@ -207,6 +207,13 @@ where
         let y_new = y1.as_ref() + faer::Scale(2.0/3.0)*
             self.expm.apply_phi_linop(sys_jac_lop.as_ref(), dt, rn_dt.as_ref(), 2);
 
+        // only need single apply linop using kiops
+        // build vector of rhs
+        // let vb = vec![faer::Mat::zeros(),
+        // fy0_dt,
+        // faer::Scale::(2.0/3.0)*rn_dt.as_ref(),
+        // ];
+
         // estimate error in the step
         let y_err = (y_new.as_ref() - y1.as_ref()).as_ref().norm_l1().abs();
 

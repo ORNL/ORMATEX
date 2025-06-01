@@ -110,18 +110,122 @@ pub fn apply_linop(lop: &impl LinOp<f64>, q: MatRef<f64>) -> Mat<f64> {
 }
 
 
-/// Wrapper to shift a LinOp, A
+/// Wrapper to extend a LinOp, A
 /// and applies
 /// [[ A,  B],
 ///  [ 0,  K]]
 /// to a vector.
-/// Note: block matricies can be built in faer with
-/// mat.get_mut(1..5,3..6).copy_from(other.get(0..4, 0..3))
+///
+/// example use:
+/// let elop = ExtendedLinOp::new(lop, &vb);
+/// let v, n = elop.get_v(&vb);
+/// let mut res = faer::Mat::zeros(n, 1);
+/// elop.apply(res.as_mut(), v.as_ref(), ..);
 pub struct ExtendedLinOp<'a> {
     t: f64,
     inner_lop: Box<dyn LinOp<f64> + 'a>,
-    B: faer::Mat<f64>,
-    K: faer::Mat<f64>,
+    bmat: faer::Mat<f64>,
+    kmat: faer::Mat<f64>,
+}
+
+impl <'a> ExtendedLinOp<'a> {
+    pub fn new(t: f64, inner_lop: Box<dyn LinOp<f64> + 'a>, vb: &Vec<MatRef<f64>>) -> Self {
+        let n = vb[0].nrows();
+        let p = vb.len() - 1;
+        let mut bmat = faer::Mat::zeros(n, p);
+        let mut i = 0;
+        // reverse iter through vb
+        for k in (1..p).rev() {
+            bmat.as_mut().get_mut(.., i..i+1).copy_from(
+                vb[k].as_ref());
+            i += 1;
+        }
+        let mut kmat = faer::Mat::zeros(p, p);
+        kmat.as_mut().get_mut(0..p-1, 1..).copy_from(
+            faer::Mat::<f64>::identity(p-1, p-1));
+        Self {
+            t,
+            inner_lop,
+            bmat,
+            kmat
+        }
+    }
+
+    /// helper method to create rhs vector for this extended linop
+    pub fn get_v(vb: &Vec<MatRef<f64>>) -> (Mat<f64>, usize) {
+        let n = vb[0].nrows();
+        let p = vb.len() - 1;
+        // let mut unit_vec = faer::Mat::zeros(p, 1);
+        // unit_vec[(n, 0)] = 1.0;
+        let mut out: Mat<f64> = faer::Mat::zeros(n+p, 1);
+        out[(n+p, 0)] = 1.0;
+        out.as_mut().get_mut(0..n, 0..1).copy_from(vb[0].as_ref());
+        (out, n)
+    }
+}
+
+impl <'a>  fmt::Debug for ExtendedLinOp <'a>  {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "t={:?}, \n", self.t)
+    }
+}
+
+impl <'a> LinOp<f64> for ExtendedLinOp<'a>   {
+    fn apply_scratch(
+            &self,
+            rhs_ncols: usize,
+            parallelism: Par,
+        ) -> StackReq {
+        let _ = parallelism;
+        let _ = rhs_ncols;
+        StackReq::empty()
+    }
+
+    /// Number of rows in the linop
+    fn nrows(&self) -> usize {
+        self.inner_lop.nrows()
+    }
+
+    /// Number of cols in the linop
+    fn ncols(&self) -> usize {
+        self.inner_lop.ncols()
+    }
+
+    /// Apply the extended lop
+    fn apply(
+        &self,
+        mut out: MatMut<f64>,
+        rhs: MatRef<f64>,
+        parallelism: Par,
+        stack: &mut MemStack,
+        )
+    {
+        let n = self.bmat.nrows();
+        let p = self.bmat.ncols();
+
+        let mut av = faer::Mat::zeros(rhs.nrows(), rhs.ncols());
+        self.inner_lop.apply(
+            av.as_mut(),
+            rhs.get(0..n, ..),
+            parallelism,
+            stack);
+        let ab_v = faer::Scale(self.t) * av +
+            self.bmat.as_ref() * rhs.get(p..rhs.nrows(), ..);
+        let k_v = self.kmat.as_ref() * rhs.get(p..rhs.nrows(), ..);
+        out.as_mut().get_mut(0..ab_v.nrows(), ..).copy_from(ab_v.as_ref());
+        out.as_mut().get_mut(ab_v.nrows().., ..).copy_from(k_v);
+    }
+
+    fn conj_apply(
+            &self,
+            out: MatMut<'_, f64>,
+            rhs: MatRef<'_, f64>,
+            parallelism: Par,
+            stack: &mut MemStack,
+        ) {
+        // Not implented error!
+        panic!("Not Implemented");
+    }
 }
 
 
