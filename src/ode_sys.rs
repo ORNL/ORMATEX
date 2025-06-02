@@ -133,11 +133,11 @@ impl <'a> ExtendedLinOp<'a> {
         let n = vb[0].nrows();
         let p = vb.len() - 1;
         let mut bmat = faer::Mat::zeros(n, p);
-        let mut i = 0;
+        let mut i = 1;
         // build extended linear operator blocks
-        for k in (1..p).rev() {
-            bmat.as_mut().get_mut(.., i..i+1).copy_from(
-                vb[k].as_ref());
+        for k in (0..p).rev() {
+            bmat.as_mut().get_mut(.., k..k+1).copy_from(
+                vb[i].as_ref());
             i += 1;
         }
         let mut kmat = faer::Mat::zeros(p, p);
@@ -158,7 +158,7 @@ impl <'a> ExtendedLinOp<'a> {
         // let mut unit_vec = faer::Mat::zeros(p, 1);
         // unit_vec[(n, 0)] = 1.0;
         let mut out: Mat<f64> = faer::Mat::zeros(n+p, 1);
-        out[(n+p, 0)] = 1.0;
+        out[(n+p-1, 0)] = 1.0;
         out.as_mut().get_mut(0..n, 0..1).copy_from(vb[0].as_ref());
         (out, n)
     }
@@ -203,15 +203,15 @@ impl <'a> LinOp<f64> for ExtendedLinOp<'a>   {
         let n = self.bmat.nrows();
         let p = self.bmat.ncols();
 
-        let mut av = faer::Mat::zeros(rhs.nrows(), rhs.ncols());
+        let mut av = faer::Mat::zeros(n, rhs.ncols());
         self.inner_lop.apply(
             av.as_mut(),
             rhs.get(0..n, ..),
             parallelism,
             stack);
         let ab_v = faer::Scale(self.t) * av +
-            self.bmat.as_ref() * rhs.get(p.., ..);
-        let k_v = self.kmat.as_ref() * rhs.get(p..rhs.nrows(), ..);
+            self.bmat.as_ref() * rhs.get(rhs.nrows()-p.., ..);
+        let k_v = self.kmat.as_ref() * rhs.get(rhs.nrows()-p.., ..);
         out.as_mut().get_mut(0..ab_v.nrows(), ..).copy_from(ab_v.as_ref());
         out.as_mut().get_mut(ab_v.nrows().., ..).copy_from(k_v);
     }

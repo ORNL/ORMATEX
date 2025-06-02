@@ -88,7 +88,6 @@ impl KrylovExpm {
         (phi_k_1, phi_k_2, phi_k_3)
     }
 
-    /// Simplified KIOPS method without substepping or adaptive krylov dimension
     /// Similar to apply_phi_linop_3, this method evaluates linear combinations
     /// of phi functions using only a single matexp call, thus reducing the
     /// number of calls to arnoldi.
@@ -100,25 +99,24 @@ impl KrylovExpm {
     /// TODO: Implement krylov adaptivity.
     ///
     /// Args:
-    /// * `a_lo` - Linear operator, A, in [phi_0(A*dt) * v_0, phi_1(A*dt) * v_1, ...]
+    /// * `a_lo` - Linear operator, A, in [phi_0(A*dt) * v_0 + phi_1(A*dt) * v_1 + ...]
     /// * `dt` - time step scale.
-    /// * `vb` - Vec of rhs, [v] in [phi_0(A*dt) * v_0, phi_1 * v_1(A*dt), ...]
+    /// * `vb` - Vec of rhs, [v] in [phi_0(A*dt) * v_0 + ...]
     pub fn kiops_fixedsteps<'a>(
         &self,
-        a_lo: Box<dyn LinOp<f64> + 'a>,
+        // a_lo: Box<dyn LinOp<f64> + 'a>,
+        ext_a_lo: &ExtendedLinOp,
         dt: f64,
         vb: &Vec<MatRef<f64>>)
         -> Mat<f64>
     {
-        let p = vb.len() - 1;
-        // let n = vb[0].nrows();
-
-        // setup the extended linear operator
-        let ext_a_lo = ExtendedLinOp::new(dt, a_lo, &vb);
-        let (v0, n) = ext_a_lo.get_v(vb);
+        // setup the extended rhs vector
+        let (ext_v, n) = ext_a_lo.get_v(vb);
 
         // compute phi_0(dt*A_ext)*v_ext
-        let w = self.apply_linop(&ext_a_lo, 1.0, v0.as_ref());
+        let w = self.apply_linop(&ext_a_lo, dt, ext_v.as_ref());
+
+        // extract first n rows
         w.get(0..n, 0..1).to_owned()
     }
 }
