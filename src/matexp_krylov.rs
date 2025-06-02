@@ -3,6 +3,7 @@
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use crate::arnoldi::arnoldi_lop;
+use crate::ode_sys::ExtendedLinOp;
 use crate::matexp_pade;
 use crate::matexp_pade::DensePhikvEvaluator;
 
@@ -86,11 +87,45 @@ impl KrylovExpm {
             * unit_vec.as_ref() * faer::Scale(beta);
         (phi_k_1, phi_k_2, phi_k_3)
     }
+
+    /// Simplified KIOPS method without substepping or adaptive krylov dimension
+    /// Similar to apply_phi_linop_3, this method evaluates linear combinations
+    /// of phi functions using only a single matexp call, thus reducing the
+    /// number of calls to arnoldi.
+    ///
+    /// S. Gaudreault, G. Rainwater, and M. Tokman.
+    /// "KIOPS: A fast adaptive Krylov subspace solver for exponential integrators."
+    /// Journal of Computational Physics 372 (2018): 236-255.
+    ///
+    /// TODO: Implement krylov adaptivity.
+    ///
+    /// Args:
+    /// * `a_lo` - Linear operator, A, in [phi_0(A*dt) * v_0, phi_1(A*dt) * v_1, ...]
+    /// * `dt` - time step scale.
+    /// * `vb` - Vec of rhs, [v] in [phi_0(A*dt) * v_0, phi_1 * v_1(A*dt), ...]
+    pub fn kiops_fixedsteps<'a>(
+        &self,
+        a_lo: Box<dyn LinOp<f64> + 'a>,
+        dt: f64,
+        vb: &Vec<MatRef<f64>>)
+        -> Mat<f64>
+    {
+        let p = vb.len() - 1;
+        // let n = vb[0].nrows();
+
+        // setup the extended linear operator
+        let ext_a_lo = ExtendedLinOp::new(dt, a_lo, &vb);
+        let (v0, n) = ext_a_lo.get_v(vb);
+
+        // compute phi_0(dt*A_ext)*v_ext
+        let w = self.apply_linop(&ext_a_lo, 1.0, v0.as_ref());
+        w.get(0..n, 0..1).to_owned()
+    }
 }
 
 
 #[cfg(test)]
-mod test_matexp_rs {
+mod test_matexp_krylov {
     use assert_approx_eq::assert_approx_eq;
 
     // bring everything from above (parent) module into scope

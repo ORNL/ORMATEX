@@ -118,7 +118,7 @@ pub fn apply_linop(lop: &impl LinOp<f64>, q: MatRef<f64>) -> Mat<f64> {
 ///
 /// example use:
 /// let elop = ExtendedLinOp::new(lop, &vb);
-/// let v, n = elop.get_v(&vb);
+/// let (v, n) = elop.get_v(&vb);
 /// let mut res = faer::Mat::zeros(n, 1);
 /// elop.apply(res.as_mut(), v.as_ref(), ..);
 pub struct ExtendedLinOp<'a> {
@@ -134,7 +134,7 @@ impl <'a> ExtendedLinOp<'a> {
         let p = vb.len() - 1;
         let mut bmat = faer::Mat::zeros(n, p);
         let mut i = 0;
-        // reverse iter through vb
+        // build extended linear operator blocks
         for k in (1..p).rev() {
             bmat.as_mut().get_mut(.., i..i+1).copy_from(
                 vb[k].as_ref());
@@ -152,7 +152,7 @@ impl <'a> ExtendedLinOp<'a> {
     }
 
     /// helper method to create rhs vector for this extended linop
-    pub fn get_v(vb: &Vec<MatRef<f64>>) -> (Mat<f64>, usize) {
+    pub fn get_v(&self, vb: &Vec<MatRef<f64>>) -> (Mat<f64>, usize) {
         let n = vb[0].nrows();
         let p = vb.len() - 1;
         // let mut unit_vec = faer::Mat::zeros(p, 1);
@@ -210,7 +210,7 @@ impl <'a> LinOp<f64> for ExtendedLinOp<'a>   {
             parallelism,
             stack);
         let ab_v = faer::Scale(self.t) * av +
-            self.bmat.as_ref() * rhs.get(p..rhs.nrows(), ..);
+            self.bmat.as_ref() * rhs.get(p.., ..);
         let k_v = self.kmat.as_ref() * rhs.get(p..rhs.nrows(), ..);
         out.as_mut().get_mut(0..ab_v.nrows(), ..).copy_from(ab_v.as_ref());
         out.as_mut().get_mut(ab_v.nrows().., ..).copy_from(k_v);
@@ -227,6 +227,7 @@ impl <'a> LinOp<f64> for ExtendedLinOp<'a>   {
         panic!("Not Implemented");
     }
 }
+
 
 
 /// Wrapper to shift and scale a LinOp
