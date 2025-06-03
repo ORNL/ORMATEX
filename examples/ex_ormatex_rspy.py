@@ -63,7 +63,10 @@ if __name__ == "__main__":
     import matplotlib.pylab as plt
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("-method", help="Integration method", type=str, default="epi3")
+    parser.add_argument("-method", help="Integration method. Valid methods are: "
+                        "exprb2_rs, exprb3_rs, epi3_rs, exprb2, exprb3, epi3. "
+                        "Methods ending in _rs are rust impl. Others are python/JAX impl.",
+                        type=str, default="epi3_rs")
     parser.add_argument("-ft_scale", help="Forcing term scale", type=float, default=1.0)
     parser.add_argument("-dt", help="time step size", type=float, default=0.05)
     parser.add_argument("-nsteps", help="number of steps", type=int, default=1000)
