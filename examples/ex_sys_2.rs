@@ -32,8 +32,8 @@ pub fn main() {
     let mut sys_solver = ode_epirk::EpirkIntegrator::new(
         0.0, y0.as_ref(), "epi2".to_string(), &test_sys, matexp_m).with_opt(String::from("tol_fdt"), 1e-8);
 
-    let mut t_points: Vec<f64> = Vec::new();
     // output concentrations
+    let mut t_points: Vec<f64> = Vec::new();
     let mut c0: Vec<f64> = Vec::new();
     let mut c1: Vec<f64> = Vec::new();
     let mut c2: Vec<f64> = Vec::new();
