@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from ormatex_py.ode_sys import OdeSys
-from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator
+from ormatex_py.ode_exp import ExpRBIntegrator, ExpSplitIntegrator, ExpLejaIntegrator
 from ormatex_py.ode_explicit import RKIntegrator
 
 try:
@@ -48,13 +48,16 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     is_rs = method in ["exprb2_rs", "exprb3_rs", "epi2_rs", "epi3_rs",
                        "bdf2_rs", "bdf1_rs", "backeuler_rs", "cn_rs"]
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
+    is_leja = method in ExpLejaIntegrator._valid_methods.keys()
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
     is_rk = method in RKIntegrator._valid_methods.keys()
     c_res = {}
-    if is_rb or is_split or is_rk:
+    if is_rb or is_split or is_rk or is_leja:
         # init the time integrator
         if is_rb:
             sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, **kwargs)
+        elif is_leja:
+            sys_int = ExpLejaIntegrator(ode_sys, t0, y0, method=method, **kwargs)
         elif is_split:
             sys_int = ExpSplitIntegrator(ode_sys, t0, y0, method=method, **kwargs)
         elif is_rk:
@@ -150,9 +153,11 @@ def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2", **kwargs):
     callback_res = {"callback_before_step": [], "callback_after_step_accept": []}
     for i in range(nsteps):
         if callable(callback_before_step):
-            callback_res["callback_before_step"].append(
-                    callback_before_step(sys_int.sys, t_res[-1], y_res[-1]))
-        res = sys_int.step(dt)
+            cb_out = callback_before_step(sys_int.sys, t_res[-1], y_res[-1])
+            callback_res["callback_before_step"].append(cb_out)
+            res = sys_int.step(dt, frhs_kwargs=cb_out)
+        else:
+            res = sys_int.step(dt)
         # log the results for plotting
         t_res.append(res.t)
         y_res.append(res.y)

@@ -40,7 +40,7 @@ def phi_linop(a_lo: LinOp, dt: float, v0: jax.Array, k: int, max_krylov_dim: int
         # v0 is zero, thus phi_k_v as well
         phi_k_v0 = v0
 
-    #TODO: need a better logic for handling the tolerances/size of krylov_space 
+    #TODO: need a better logic for handling the tolerances/size of krylov_space
 
     return phi_k_v0
 
