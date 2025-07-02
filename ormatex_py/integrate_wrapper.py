@@ -115,16 +115,23 @@ def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler", **kw
 
     if not method in method_dict.keys():
         raise AttributeError(f"{method} not in diffrax")
-
     try:
-        root_finder=optimistix.Newton(
-                rtol=kwargs.get("rtol", 1e-8),
-                atol=kwargs.get("atol", 1e-8),
-                linear_solver=lineax.GMRES(
-                    rtol=kwargs.get("lin_rtol", 1e-8),
-                    atol=kwargs.get("lin_atol", 1e-8),
-                    restart=2000, stagnation_iters=2000),
-                )
+        lin_solver = kwargs.get("lin_solver", "gmres")
+        if lin_solver == "gmres":
+            linear_solver = lineax.GMRES(
+                rtol=kwargs.get("lin_rtol", 1e-8),
+                atol=kwargs.get("lin_atol", 1e-8),
+                restart=2000, stagnation_iters=2000)
+            root_finder=optimistix.Newton(
+                    rtol=kwargs.get("rtol", 1e-8),
+                    atol=kwargs.get("atol", 1e-8),
+                    linear_solver=linear_solver)
+        else:
+            linear_solver = lineax.QR()
+            root_finder=optimistix.Newton(
+                    rtol=kwargs.get("rtol", 1e-8),
+                    atol=kwargs.get("atol", 1e-8),
+                    linear_solver=linear_solver, norm=optimistix.max_norm)
         solver = method_dict[method](root_finder=root_finder)
     except:
         solver = method_dict[method]()
