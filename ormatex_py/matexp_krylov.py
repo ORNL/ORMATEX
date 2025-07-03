@@ -99,6 +99,6 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
         sum_phi_ks = norm_vb * w[0:n]
     else:
         # vb is zero, thus sum_phi_ks as well
-        sum_phi_ks = jnp.zeros_like(v0)
+        sum_phi_ks = jnp.zeros_like(vb[0])
 
     return sum_phi_ks
