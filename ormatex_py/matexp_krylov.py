@@ -27,7 +27,8 @@ def phi_linop(a_lo: LinOp, dt: float, v0: jax.Array, k: int, max_krylov_dim: int
 
     norm_v0 = jnp.linalg.norm(v0, 2)
     if norm_v0 > 0:
-        (q, h) = arnoldi_lop(a_lo, dt, v0, max_krylov_dim, iom)
+        v = v0 / norm_v0
+        (q, h) = arnoldi_lop(a_lo, dt, v, max_krylov_dim, iom)
         assert(h.shape[0] > 0)
 
         unit_vec = jnp.zeros((h.shape[0],))
@@ -38,7 +39,7 @@ def phi_linop(a_lo: LinOp, dt: float, v0: jax.Array, k: int, max_krylov_dim: int
         phi_k_v0 = norm_v0 * (q @ phi_k_e1)
     else:
         # v0 is zero, thus phi_k_v as well
-        phi_k_v0 = v0
+        phi_k_v0 = jnp.zeros_like(v0)
 
     #TODO: need a better logic for handling the tolerances/size of krylov_space
 
@@ -73,19 +74,31 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
     tau_i = 1.0
     n = vb[0].shape[0]
 
-    # build B
-    b = jnp.vstack(vb[:0:-1]).T  # [:0:-1] reverse view from -1 down to 1
+    norms_vb = [jnp.linalg.norm(v, 2) for v in vb]
+    norm_vb = max(norms_vb)
 
-    # build \tilde A
-    k = np.zeros((p,p))
-    k[0:p-1, 1:] = np.eye(p-1)
-    k = jnp.asarray(k)
-    a_tilde_lo = AugMatrixLinOp(a_lo, dt, b, k)
+    if norm_vb > 0:
+        # build B
+        # [:0:-1] reverse view from -1 down to 1
+        # normalize by the largest vector in vb
+        b = jnp.vstack(vb[:0:-1]).T / norm_vb
 
-    unit_vec = np.zeros(p)
-    unit_vec[-1] = 1.0
-    v = jnp.concat((vb[0], jnp.asarray(unit_vec)))
+        # build \tilde A
+        k = np.zeros((p,p))
+        k[0:p-1, 1:] = np.eye(p-1)
+        k = jnp.asarray(k)
+        a_tilde_lo = AugMatrixLinOp(a_lo, dt, b, k)
 
-    w = matexp_linop(a_tilde_lo, tau_i, v,
-              max_krylov_dim=max_krylov_dim, iom=iom)
-    return w[0:n]
+        unit_vec = np.zeros(p)
+        unit_vec[-1] = 1.0
+        v = jnp.concat((vb[0] / norm_vb, jnp.asarray(unit_vec)))
+
+        w = matexp_linop(a_tilde_lo, tau_i, v,
+                         max_krylov_dim=max_krylov_dim, iom=iom)
+
+        sum_phi_ks = norm_vb * w[0:n]
+    else:
+        # vb is zero, thus sum_phi_ks as well
+        sum_phi_ks = jnp.zeros_like(vb[0])
+
+    return sum_phi_ks
