@@ -9,7 +9,11 @@ name = "ormatex"
 crate-type = ["cdylib", "rlib"]
 path = 'src/lib.rs'
 
+[features]
+plotters = ["dep:plotters"]
+
 [dependencies]
+plotters = {version="0.3.5", optional=true}
 thiserror = "1.0"
 assert_approx_eq = "1.1.0"
 num-traits = "0.2.18"
@@ -20,7 +24,6 @@ libm = "0.2.8"
 rand = "0.8.5"
 rand_distr = "0.4.3"
 faer_gmres = "0.2.0"
-# plotters = "0.3.5"
 # python binding deps
 pyo3 = {version="0.23", features = ["extension-module"]}
 numpy = "0.23"

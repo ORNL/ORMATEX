@@ -15,7 +15,7 @@ def test_bateman_s3():
     """
     Test exponential integrators for a 3 species system
     """
-    methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense"]
+    methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense", "epi2_leja_re"]
     for method in methods:
         t_res, y_res, t_true, y_true = analytic_bateman_s3(method=method, do_plot=False)
         diff = y_res - y_true

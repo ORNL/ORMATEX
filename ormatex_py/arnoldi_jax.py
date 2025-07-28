@@ -63,13 +63,17 @@ def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k
         qs = qs.at[:, k+1].set(qv / norm_v)
         return qs
 
+    # could use the out-of-bound features of XLA to remove lax.cond
+    #hs = hs.at[k+1, k].set(norm_v, mode='drop')
+    #qs = qs.at[:, k+1].set(qv / norm_v, mode='drop')
+
     not_breakdown = (norm_v > breakdown_tol)
 
     update_last = not_final_it & not_breakdown
     qs = lax.cond(update_last,
-        lambda k, qv, qs, norm_v: body_subdiag(k, qv, qs, norm_v),
-        lambda k, qv, qs, norm_v: qs,
-        k, qv, qs, norm_v)
+                  lambda k, qv, qs, norm_v: body_subdiag(k, qv, qs, norm_v),
+                  lambda k, qv, qs, norm_v: qs,
+                  k, qv, qs, norm_v)
 
     return hs, qs, not_breakdown
 
@@ -102,7 +106,9 @@ def arnoldi_lop_jit(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int)
                   lambda b, norm_b: b / norm_b, \
                   lambda k, norm_b: b, \
                   b, norm_b)
-    qs = qs.at[:, 0].set(q0.flatten())
+    # could require that norm_b != 0 in the outer methods:
+    #q0 = b / norm_b
+    qs = qs.at[:, 0].set(q0)
     k = 0
 
     def body_arnoldi(args):
@@ -119,10 +125,22 @@ def arnoldi_lop_jit(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int)
     return hs, qs, breakdown_k
 
 def arnoldi_lop(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int) -> (jax.Array, jax.Array):
+    """
+    Args:
+        a_lo: linear operator
+        a_scale: scaling factor
+        b: right hand side (it is assumed that b is not the zero vector)
+        m: number of Krylov vectors to produce
+        iom: number of (incomplete) orthogonalizations
 
-    hs, qs, breakdown_k = arnoldi_lop_jit(a_lo, a_scale, b, m, iom)
+    Return:
+        hs: (reduced) hessenberg
+        qs: (reduced) orthonormal basis of krylov subspace
+    """
 
-    #print(jnp.diag(hs, -2), jnp.diag(hs, -1), jnp.diag(hs, 0), jnp.diag(hs, 1))
+    hs, qs, breakdown_k = arnoldi_lop_jit(a_lo, a_scale, b.reshape(-1), m, iom)
+
+    #print(f"{jnp.diag(hs, -1)},\n {jnp.diag(hs, 0)},\n {jnp.diag(hs, 1)},\n {jnp.diag(hs, 2)}")
     #print(f"Arnoldi had breakdown at {breakdown_k}, m={m}, iom={iom}.")
 
     return qs[:,:breakdown_k], hs[:breakdown_k,:breakdown_k]

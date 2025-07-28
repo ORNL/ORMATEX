@@ -6,13 +6,22 @@ The purpose of this example is to benchmark the various
 exponential integration methods to ensure the expected accuracy
 and order of accuracy is obtained when compared with
 the analytic result.
+
+NOTE: When running on a CPU target, it is recommended to
+use the following env variables for best performance:
+
+    OMP_NUM_THREADS=4 XLA_FLAGS=--xla_cpu_use_thunk_runtime=false python rad_1d_3s.py <args>
+
+Ref: https://github.com/jax-ml/jax/discussions/25711
 """
 import numpy as np
 import scipy as sp
+import os
 
 import jax
 import jax.numpy as jnp
 from jax.experimental import sparse as jsp
+from jax.experimental.sparse import BCSR
 import equinox as eqx
 
 import skfem as fem
@@ -32,6 +41,9 @@ decay_lib = {
     'c_2':  ('none', 1.0e-3*10),
 }
 
+outdir = "./rad_1d_3s_out/"
+if not os.path.exists(outdir): os.mkdir(outdir)
+
 class RAD_SEM(OdeSplitSys):
     """
     Define ODE System associated to RAD problem
@@ -45,7 +57,8 @@ class RAD_SEM(OdeSplitSys):
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         # get stiffness matrix and mass vector
-        self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
+        A, self.Ml, _ = sys_assembler.assemble(**kwargs)
+        self.A = BCSR.from_bcoo(A)
         # get collocation points
         self.xs = sys_assembler.collocation_points()
 
@@ -111,7 +124,7 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     print("CFL: %0.4f/%0.4f" % (dtJeig_max, dtJnorm))
     return dtJeig_max, dtJeig_min
 
-def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu=1e-10, **kwargs):
+def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu=0.002, **kwargs):
     # create the mesh
     dwidth = 1.0
     mesh0 = fem.MeshLine1(np.array([[0., dwidth]])).with_boundaries({
@@ -144,15 +157,27 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
 
     # initial profiles for each species
     wc, ww = 0.4, 0.05
+    var = ww ** 2.0
     g_prof0 = lambda x: 0.0*x + 1e-16
+    fix_scale = True
+    gauss_scale = 1.0
+    if fix_scale:
+        gauss_scale = (1./ np.sqrt(1.*(var/2))) ** -1.0
     if periodic:
-        g_prof1 = lambda x: np.exp(-((1.0-((x - wc) % 1)) / (2*ww))**2.0) + \
-            np.exp(-((((x - wc) % 1)) / (2*ww))**2.0)
-        g_prof_exact = lambda t, x: np.exp(-((1.0-((x - (wc+t*vel)) % 1)) / (2*ww))**2.0) + \
-            np.exp(-((((x - (wc+t*vel)) % 1)) / (2*ww))**2.0)
+        g_prof1 = lambda x: \
+            (
+            np.exp(-((1.0-((x - wc) % 1))**2.0 / (2*var))) + \
+            np.exp(-((((x - wc) % 1)**2.0) / (2*var)))
+            ) * (1./ np.sqrt(1.*(var/2))) * gauss_scale
+        g_prof_exact = lambda t, x: \
+            (
+            np.exp(-((1.0-((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) ) + \
+            np.exp(-((((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) )
+            ) * (1./np.sqrt(1.*(var/2+nu*t))) * gauss_scale
     else:
-        g_prof1 = lambda x: np.exp(-((x-wc)/(2*ww))**2.0) * 1.0
-        g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel)) / (2*ww))**2.0)
+        g_prof1 = lambda x: np.exp(-((x-wc)**2/(2*var))) * (1./ np.sqrt(1.*(var/2))) * gauss_scale
+        g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))**2.0 / (2*var+4*nu*t))) \
+                * (1./np.sqrt(1.*(var/2+nu*t))) * gauss_scale
     y0_profile = [
             g_prof1(xs),
             g_prof0(xs),
@@ -169,6 +194,8 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # the analytic solution is the product of pure bateman decay
     # solution with the advected gaussian wave.
     bat_mat = gen_bateman_matrix(keymap, decay_lib)
+    print("bateman mat:")
+    print(bat_mat)
     ts = np.linspace(0.0, nsteps*dt, nsteps+1)
     scale_true = analytic_bateman_single_parent(ts, bat_mat, 1.0)
     profile_true = []
@@ -184,44 +211,54 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
 
     si = xs.argsort()
     sx = xs[si]
-    fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5,10))
-    mae_list, mae_rl_list = [], []
 
     pfd_method = kwargs.get("pfd_method", '')
     method_str = method if not pfd_method else "%s %s" % (method, pfd_method)
 
-    t = t_res[-1]
-    yf = y_res[-1]
-    uf = stack_u(yf, n_species)
-    ut = y_true[-1]
-    for n in range(0, n_species):
-        us = uf[:, n]
-        u_true = ut[n, :]
-        u_calc = us[si]
-        u_analytic = u_true[si]
-        ax[n].plot(sx, u_calc, label='t=%0.4f, species=%s' % (t, str(n)))
-        ax[n].plot(sx, u_analytic, ls='--', label='t=%0.4f, true' % (t))
-        ax[n].legend()
-        ax[n].grid(ls='--')
-        # compute diff
-        diff = u_calc - u_analytic
-        diff_rl = (u_calc - u_analytic) / (np.max(u_analytic))
-        mae = np.mean(np.abs(diff))
-        mae_rl = np.mean(np.abs(diff_rl))
-        mae_list.append(mae)
-        mae_rl_list.append(mae_rl)
-        ax[n].set_title(r"%s, MAE: %0.3e, $\Delta$t=%0.2e" % (method_str, mae, dt))
+    def plot_sol(plot_idx=-1):
+        # Plot the solution at step plot_idx
+        fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5,10))
+        mae_list, mae_rl_list = [], []
 
-    # TODO: mark reactor boundaries on the plot
-    # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
-    # ax[0].set_yscale('log')
-    ax[0].set_ylabel("Species 0 [mol/cc]")
-    ax[1].set_ylabel("Species 1 [mol/cc]")
-    ax[2].set_ylabel("Species 2 [mol/cc]")
-    ax[0].set_xlabel("location [m]")
-    plt.tight_layout()
-    plt.savefig('reac_adv_diff_s3_%s_%1.3f.png' % (method_str, dt))
-    plt.close()
+        t = t_res[plot_idx]
+        yf = y_res[plot_idx]
+        uf = stack_u(yf, n_species)
+        ut = y_true[plot_idx]
+        plot_data = []
+        plot_data.append(sx)
+        for n in range(0, n_species):
+            us = uf[:, n]
+            u_true = ut[n, :]
+            u_calc = us[si]
+            u_analytic = u_true[si]
+            plot_data.append(u_analytic)
+            plot_data.append(u_calc)
+            ax[n].plot(sx, u_calc, label='t=%0.4f, species=%s' % (t, str(n)))
+            ax[n].plot(sx, u_analytic, ls='--', label='t=%0.4f, true' % (t))
+            # ax[n].set_yscale('log')
+            ax[n].legend()
+            ax[n].grid(ls='--')
+            # compute diff
+            diff = u_calc - u_analytic
+            diff_rl = (u_calc - u_analytic) / (np.max(u_analytic))
+            mae = np.mean(np.abs(diff))
+            mae_rl = np.mean(np.abs(diff_rl))
+            mae_list.append(mae)
+            mae_rl_list.append(mae_rl)
+            ax[n].set_title(r"%s, MAE: %0.3e, $\Delta$t=%0.2e" % (method_str, mae, dt))
+        ax[0].set_ylabel("Species 0 [mol/cc]")
+        ax[1].set_ylabel("Species 1 [mol/cc]")
+        ax[2].set_ylabel("Species 2 [mol/cc]")
+        ax[0].set_xlabel("location [m]")
+        plt.tight_layout()
+        plt.savefig(outdir + 'reac_adv_diff_s3_%s_%0.2f_%1.3f.png' % (method_str, t, dt))
+        plt.close()
+        header = "x,u0_analytic,u0_calc,u1_analytic,u2_calc,u2_analytic,u2_calc"
+        np.savetxt(outdir + 'reac_adv_diff_s3_%s_%0.2f_%1.3f.txt' % (method_str, t, dt), np.asarray(plot_data).T, delimiter=', ', header=header)
+        return mae_list, mae_rl_list
+
+    _, _ = plot_sol(0)
+    mae_list, mae_rl_list = plot_sol(-1)
 
     if jac_plot:
         plot_dt_jac_spec(ode_sys, y_res[-1], 0.0, dt)
@@ -249,6 +286,11 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-dt", help="time step size", type=float, default=0.1)
+    parser.add_argument("-leja_tol", help="optional leja integrator tolerance", type=float, default=1.0e-8)
+    parser.add_argument("-leja_a", help="optional min real part of the J*dt spectrum. If None, power iter is used to determine this value.", type=float, default=None)
+    parser.add_argument("-leja_c", help="optional max complex part of the J*dt spectrum", type=float, default=1.0)
+    parser.add_argument("-leja_substep", help="optional to enable substepping the leja integrator", action='store_true', default=False)
+    parser.add_argument("-nu", help="diffusion coeff", type=float, default=1e-10)
     parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
@@ -258,8 +300,9 @@ if __name__ == "__main__":
 
     if args.sweep:
         #methods = ['exprb2', 'exprb3', 'epi3', 'implicit_euler', 'implicit_esdirk3']
-        methods = ['exprb2', 'exprb2_pfd', 'exprb2_pfd', 'exprb2_pfd', 'implicit_esdirk3']
-        pfd_methods = ['', 'pade_1_2', 'pade_2_4', 'cram_6', '']
+        methods = ['exprb2', 'epi2_leja', 'exprb2_pfd', 'exprb2_pfd',
+                   'exprb2_pfd', 'exprb2_pfd', 'implicit_esdirk3']
+        pfd_methods = ['', '', 'pade_1_2', 'pade_2_4', 'cram_6', 'cram_16', '']
         dts = [0.025, 0.05, 0.1, 0.125, 0.2, 0.5]
         mae_sweep = {}
         mae_rl_sweep = {}
@@ -268,7 +311,10 @@ if __name__ == "__main__":
             mae_sweep[method_str] = []
             mae_rl_sweep[method_str] = []
             for dt in dts:
-                mae, mae_rl = main(dt, method, True, args.mr, args.p, tf=args.tf, pfd_method=pfd_method)
+                mae, mae_rl = main(dt, method, True, args.mr, args.p,
+                                   tf=args.tf, pfd_method=pfd_method, nu=args.nu,
+                                   leja_a=args.leja_a, leja_c=args.leja_c,
+                                   leja_substep=args.leja_substep, leja_tol=args.leja_tol)
                 mae_sweep[method_str].append(([dt] + mae))
                 mae_rl_sweep[method_str].append(([dt] + mae_rl))
             print("=== Method: %s" % method_str)
@@ -300,7 +346,10 @@ if __name__ == "__main__":
         plt.xlabel(r"$\Delta$t")
         plt.grid(ls='--')
         plt.tight_layout()
-        plt.savefig("reac_adv_diff_s3_dt_err.png")
+        plt.savefig(outdir + "reac_adv_diff_s3_dt_err.png")
         plt.close()
     else:
-        main(args.dt, args.method, args.per, args.mr, args.p, tf=args.tf, jac_plot=True, nu=1e-10)
+        main(args.dt, args.method, args.per, args.mr, args.p,
+             tf=args.tf, jac_plot=True, nu=args.nu,
+             leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep,
+             leja_tol=args.leja_tol)
