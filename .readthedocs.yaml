@@ -6,8 +6,8 @@ build:
     python: "3.12"
   jobs:
     pre_build:
+      - cd docs
       - sphinx-apidoc -f -o source ../ormatex_py ../ormatex_py/progression
-    path: ./docs
 
 python:
   install:
