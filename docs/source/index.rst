@@ -18,4 +18,6 @@ ORMATEX is a mixed Rust and Python package that provides an extensible foundatio
    :caption: Contents:
 
    intro
+   quick_start
+   examples
    ormatex_py
