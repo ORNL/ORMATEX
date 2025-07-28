@@ -228,7 +228,7 @@ def newton_poly_div_diff(x: jax.Array, y: jax.Array):
 @jax.jit
 def complex_conj_imag_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, imag_leja_x: jax.Array, coeffs: jax.Array, tol: float):
     r"""
-    Interpolation approx :math:`\matrm{exp}(\delta t A)u` at the conjugate complex
+    Interpolation approx :math:`\mathrm{exp}(\delta t A)u` at the conjugate complex
     imaginary leja points.  The complex conj. leja points are symmetric about the real line,
     and admit a 2 term recurrenace relationship to compute the polynomial
     terms as described in
@@ -299,7 +299,7 @@ def decay_fun(e_new: float, e_old: float, gamma: float):
 @partial(jax.jit, static_argnames='n_leja_real')
 def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, n_leja_real: int, coeffs: jax.Array, tol: float):
     r"""
-    Interpolation approx :math:`\matrm{exp}(\delta t A)u` at real and conjugate complex
+    Interpolation approx :math:`\mathrm{exp}(\delta t A)u` at real and conjugate complex
     leja points.
 
     leja_x[i] is real                for 0 <= i < n_leja_real
@@ -657,7 +657,7 @@ def complex_conj_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Arr
 
 
 def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
-    """
+    r"""
     Builds extended linear system.
 
     Args:
@@ -674,7 +674,7 @@ def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
     where A = a_lo is NxN,
     B = vb[:0:-1] is Nxp,
     K = [[0, I_{p-1}],[0, 0]] is pxp,
-    :math:` \tilde A ` is N+p x N+p
+    :math:`\tilde A` is N+p x N+p
     """
     p = len(vb) - 1
     n = vb[0].shape[0]

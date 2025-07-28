@@ -28,6 +28,14 @@ ormatex\_py.matexp\_krylov module
    :show-inheritance:
    :undoc-members:
 
+ormatex\_py.matexp\_leja module
+-------------------------------
+
+.. automodule:: ormatex_py.matexp_leja
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 ormatex\_py.matexp\_phi module
 ------------------------------
 

@@ -58,8 +58,8 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
 
         w(\tau) = \exp(\tau \tilde A)v
 
-    with :math:` v = [b_0, e_1]^T `
-    and
+    with :math:`v = [b_0, e_1]^T` and
+
     .. math::
 
         \tilde A = [[A, B],[0, K]]
@@ -67,7 +67,8 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
     where A = a_lo is NxN,
     B = vb[:0:-1] is Nxp,
     K = [[0, I_{p-1}],[0, 0]] is pxp,
-    :math:` \tilde A ` is N+p x N+p
+    :math:`\tilde A` is N+p x N+p
+
     """
     p = len(vb) - 1
     # fixed stepsize
