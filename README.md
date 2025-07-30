@@ -13,9 +13,10 @@ The current set of implemented and planned time integration methods in each lang
 
 Exponential integrators:
 
-- [x] EPI2 = EXPRB2 = EPIRK2
+- [x] EPI2
 - [x] EPI3
 - [ ] EPIRK4
+- [X] EXPRB2
 - [X] EXPRB3
 - [ ] EXPRB4  (exponential rosenbrock order 4)
 
@@ -35,10 +36,10 @@ Exponential integrators:
 
 Jacobian based:
 
-- [x] EPI2 = EXPRB2 = EPIRK2
+- [x] EPI2
 - [x] EPI3
-- [ ] EPI4
 - [ ] EPIRK4
+- [X] EXPRB2
 - [x] EXPRB3
 - [ ] EXPRB4
 
@@ -122,7 +123,7 @@ Initialize the system and integrate
     t0 = 0.0
     dt = 0.2
     nsteps = 100
-    res = integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, method, max_krylov_dim=2, iom=2)
+    res = integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, method, max_krylov_dim=4, iom=2)
     t_res, y_res = res.t, res.y
 
 Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, automatic differentiation will be used.
