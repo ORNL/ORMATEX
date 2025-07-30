@@ -45,18 +45,15 @@ class LotkaVolterra(OdeSys):
         return jax.device_get(res).flatten()
 
 def run_model(dt, nsteps, method="exprb2_rs", tol_fdt=1.0e-6, ft_scale=1.0):
-    # Wrap the system for rust compatibility
-    lv_sys = PySysWrapped(OdeSysNp(LotkaVolterra(ft_scale=ft_scale)))
-    # Step the system forward using rust-based integrator
+    # Step the system forward
     t0 = 0.0
-    y0 = np.array([[0.1, 0.2],]).T
-    if "_rs" in method:
-        res = integrate(lv_sys, y0, t0, dt, nsteps, method=method, tol_fdt=tol_fdt)
-    else:
-        y0 = jnp.array(y0.flatten())
-        res = integrate(LotkaVolterra(ft_scale=ft_scale), y0, t0, dt, nsteps, method=method, tol_fdt=tol_fdt)
+    y0 = np.array([0.1, 0.2])
+    res = integrate(LotkaVolterra(ft_scale=ft_scale), y0, t0, dt, nsteps,
+                    method=method, tol_fdt=tol_fdt)
     y0 = jnp.array(y0.flatten())
-    res_expected = integrate(LotkaVolterra(ft_scale=ft_scale), y0, t0, dt, nsteps, method="dopri5")
+    # Check against dopri5 in diffrax
+    res_expected = integrate(LotkaVolterra(ft_scale=ft_scale), y0, t0, dt, nsteps,
+                             method="dopri5")
     return np.asarray(res.t), np.asarray(res.y), res_expected.t, res_expected.y
 
 if __name__ == "__main__":
