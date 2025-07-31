@@ -1,9 +1,23 @@
+##############################################################################
+# Copyright© 2025 UT-Battelle, LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+##############################################################################
 """
 Defines an interface for coupled systems of ODEs.
 This interface is compatible with all time integration
 methods in this ormatex_py package.
-
-jax allows user defined types as PyTrees:
+JAX allows user defined types as PyTrees:
 See: https://jax.readthedocs.io/en/latest/pytrees.html
 NOTE: we use equinox to make jax compatibility
 simpler by removing boilerplate to register objects as pytrees.
@@ -110,13 +124,17 @@ class AugMatrixLinOp(LinOp):
     """
     Helper class to create a larger linear operator
     out of a block matrix comprised of components:
-    a_lo_aug =
-        [[dt*A,  B],
-         [0,     K]]
+
+    .. code-block::
+
+        a_lo_aug =
+            [[dt*A,  B],
+             [0,     K]]
+
     where A is the original NxN linop
-    dt is a scalar factor applied to A
-    b is a Nxp dense matrix
-    K is a pxp sparse matrix
+    dt is a scalar factor applied to A.
+    b is a Nxp dense matrix.
+    K is a pxp sparse matrix.
     """
     a_lo: LinOp
     dt: float
@@ -407,8 +425,13 @@ class OdeSys(eqx.Module):
 class OdeSplitSys(OdeSys):
     """
     Define a split ODE system.
+
+    .. code-block::
+
       dU/dt = F(t, U) = L(t, U) @ U + R(t, U),
-    where L(t, U) is a (potentially time and state dependent) LinOp, different from the Jacobian.
+
+    where L(t, U) is a (potentially time and state dependent) LinOp,
+    different from the Jacobian.
     """
     def __init__(self, *args, **kwargs):
         pass
@@ -426,7 +449,10 @@ class OdeSplitSys(OdeSys):
     def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         """
         Define the RHS of the split system
-          dU/dt = F(t, U) = L(t, U) @ U + R(t, U).
+
+        .. code-block::
+
+              dU/dt = F(t, U) = L(t, U) @ U + R(t, U).
 
         Since we need residual quantities
           R_0 = F(t, U) - F(t_0, U_0) - L(t_0,U_0) @ (U - U0)
@@ -517,11 +543,20 @@ class IntegrateSys(metaclass=ABCMeta):
 
     @abstractmethod
     def step(self, dt: float) -> StepResult:
+        """
+        Take a time step
+
+        Args:
+            dt: time step size
+        """
         raise NotImplementedError
 
     def accept_step(self, s: StepResult):
         """
         default implementation, maybe overridden
+
+        Args:
+            s: Step result
         """
         self.t = s.t
         self.t_hist.appendleft(s.t)

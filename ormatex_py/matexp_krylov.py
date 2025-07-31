@@ -1,6 +1,21 @@
+##############################################################################
+# Copyright© 2025 UT-Battelle, LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+##############################################################################
 """
-Krylov methods to calculate exp(A*dt)*v and
-phi_k(A*dt)*v with sparse A
+Krylov methods to calculate :math:`\mathrm{exp}(A \delta t)v` and
+:math:`\phi_k(A \delta t)v` with sparse A
 """
 import jax
 import numpy as np
@@ -58,8 +73,8 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
 
         w(\tau) = \exp(\tau \tilde A)v
 
-    with :math:` v = [b_0, e_1]^T `
-    and
+    with :math:`v = [b_0, e_1]^T` and
+
     .. math::
 
         \tilde A = [[A, B],[0, K]]
@@ -67,7 +82,8 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
     where A = a_lo is NxN,
     B = vb[:0:-1] is Nxp,
     K = [[0, I_{p-1}],[0, 0]] is pxp,
-    :math:` \tilde A ` is N+p x N+p
+    :math:`\tilde A` is N+p x N+p
+
     """
     p = len(vb) - 1
     # fixed stepsize
