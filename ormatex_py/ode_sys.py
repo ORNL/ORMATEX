@@ -543,11 +543,20 @@ class IntegrateSys(metaclass=ABCMeta):
 
     @abstractmethod
     def step(self, dt: float) -> StepResult:
+        """
+        Take a time step
+
+        Args:
+            dt: time step size
+        """
         raise NotImplementedError
 
     def accept_step(self, s: StepResult):
         """
         default implementation, maybe overridden
+
+        Args:
+            s: Step result
         """
         self.t = s.t
         self.t_hist.appendleft(s.t)
