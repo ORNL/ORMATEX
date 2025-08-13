@@ -258,7 +258,8 @@ class AdJacLinOp(SysJacLinOp):
 
     def __init__(self, t, u, frhs: eqx.Module, frhs_kwargs: dict={}, **kwargs):
         super().__init__(t, u, frhs, frhs_kwargs, **kwargs)
-        self._frhs_u, self._fjac_u = jax.linearize(partial(self._frhs, **self._frhs_kwargs), self._t, self._u)
+        self._frhs_u, self._fjac_u = jax.linearize(
+                partial(self._frhs, **self._frhs_kwargs), self._t, self._u)
 
     @jax.jit
     def _matvec(self, v: jax.Array) -> jax.Array:

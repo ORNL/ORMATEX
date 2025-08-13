@@ -158,7 +158,7 @@ def main(method='epi3', do_plot=True, autonomous=True):
         nsteps = int(t_end/dt)
 
         res = integrate_wrapper.integrate(
-                lv_sys, y0, t0, dt, nsteps, method=method, max_krylov_dim=10, iom=5, tol_fdt=0)
+                lv_sys, y0, t0, dt, nsteps, method=method, max_krylov_dim=20, iom=20, tol_fdt=0)
         t_res, y_res = res.t_res, res.y_res
         t_res = jnp.asarray(t_res)
         y_res = jnp.asarray(y_res)
@@ -222,7 +222,7 @@ def main(method='epi3', do_plot=True, autonomous=True):
 
 
 def sweep_methods(autonomous=False):
-    methods = ["epi3", "exprb2", "exprb3", "exp3_dense", "exp2_dense", "implicit_euler", "implicit_esdirk3"]
+    methods = ["epi3", "exprb2", "exprb3", "pexprb4", "implicit_euler", "implicit_esdirk3"]
     plt.figure()
     for method in methods:
         err_dt, err, lb = main(method, do_plot=False, autonomous=autonomous)

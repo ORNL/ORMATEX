@@ -54,7 +54,7 @@ use crate::ode_bdf;
 use crate::ode_rk;
 use crate::ode_epirk;
 use crate::matexp_krylov;
-use crate::matexp_pade::{PadeExpm, DensePhikvEvaluator};
+use crate::matexp_pade::{PadeExpm, DensePhikvEvaluator, phi_ext};
 use crate::matexp_cauchy;
 
 /// Wrapper around python PySys object
@@ -294,6 +294,29 @@ fn integrate_wrapper_rs<'py>(
     (y_out_pylist, t_out_pylist)
 }
 
+
+/// Rust phi_k(A)
+/// Note: phi_0(A) == exp(A)
+#[pyfunction]
+fn phi_k_rs<'py>(
+    py: Python<'py>,
+    a: PyReadonlyArray2<f64>,
+    k: usize,
+)
+    -> Bound<'py, PyArray2<f64>>
+{
+    // convert a mat into fear mat
+    let a_ndarray = a.as_array();
+    let a_mat = a_ndarray.view().into_faer();
+
+    // run phi_k(dt*A)
+    let phik = phi_ext(a_mat, k);
+
+    // convert faer mats into numpy arrays
+    let phik_ndarray = phik.as_ref().into_ndarray().to_owned();
+    phik_ndarray.into_pyarray(py)
+}
+
 /// Rust Arnoldi method binding for interop with python
 ///
 /// * `py_linop` - python LinOp
@@ -392,6 +415,9 @@ fn ormatex<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()>
 
     // Adds rust based arnoldi method
     m.add_function(wrap_pyfunction!(arnoldi_rs, m)?)?;
+
+    // Adds rust based phi_k method
+    m.add_function(wrap_pyfunction!(phi_k_rs, m)?)?;
 
     Ok(())
 }
