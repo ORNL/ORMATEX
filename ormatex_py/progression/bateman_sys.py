@@ -4,7 +4,6 @@ Methods to define a Bateman system of equations
 import jax
 import numpy as np
 from jax import numpy as jnp
-from itertools import cycle
 
 from ormatex_py import integrate_wrapper
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp, CustomJacLinOp
@@ -174,7 +173,7 @@ def analytic_bateman_single_parent(t, batmat, n0):
     return np.asarray(N, dtype=np.float64)
 
 
-def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_method="cram_16", true_analytic=False):
+def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_method="cram_16"):
     jax.config.update("jax_enable_x64", True)
     keymap = ["c_0", "c_1", "c_2"]
     decay_lib_sp = {
@@ -186,31 +185,15 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
     n0 = 1.0
     t0 = 0.0
     t = np.arange(t0, tf+dt, dt)
-    # test_ode_sys = TestBatemanSysJac(keymap, decay_lib_sp)
-    test_ode_sys = TestBatemanSysNonlinFeed(keymap, decay_lib_sp)
-    y0 = jnp.array([n0, 0.0, 0.0])
-
     # analytic result
-    if true_analytic:
-        y_true = analytic_bateman_single_parent(t, bmat, n0)
-    else:
-        # use a fine timestep size with exprb3 integrator
-        dt_fine = 0.001
-        nsteps_fine = int((tf - t0) / dt_fine)
-        fine_res = integrate_wrapper.integrate(test_ode_sys, y0, t0, dt_fine, nsteps_fine, 'dopri5', tol_fdt=1e-25)
-        t_fine = np.asarray(fine_res.t_res)
-        y_fine = np.asarray(fine_res.y_res)
-        y_true = np.array([
-                np.interp(t, t_fine, y_fine[:, 0]),
-                np.interp(t, t_fine, y_fine[:, 1]),
-                np.interp(t, t_fine, y_fine[:, 2])
-                ]).T
+    y_true = analytic_bateman_single_parent(t, bmat, n0)
 
     # compute numerical result
+    test_ode_sys = TestBatemanSysJac(keymap, decay_lib_sp)
+    y0 = jnp.array([n0, 0.0, 0.0])
     nsteps = int((tf - t0) / dt)
     res = integrate_wrapper.integrate(
-            test_ode_sys, y0, t0, dt, nsteps, method, pfd_method=pfd_method, tol_fdt=1e-25,
-            max_krylov_dim=100, iom=100)
+            test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=12, pfd_method=pfd_method)
     t_res, y_res = res.t_res, res.y_res
     t_res = np.asarray(t_res)
     y_res = np.asarray(y_res)
@@ -220,7 +203,7 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
         plt.figure()
         plt.xscale('log')
         plt.yscale('log')
-        plt.ylim((1e-8, 80.0))
+        plt.ylim((1e-8, 10.0))
         plt.xlim((1.0, tf))
         # numerical
         plt.plot(t_res+1.0, y_res[:, 0]+1e-16, label="c_0")
@@ -242,14 +225,9 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
 
 
 def run_sweep():
-    methods = ["epi2_leja_re", "epi3", "exprb3", "exprb2_rs", "exprb3_rs", "epi3_rs",
-               "exprb2_pfd", "exp_pfd",
-               "implicit_euler", "implicit_esdirk3",
-               ]
-    methods = ["exprb2", "exprb3", "exprb3_rs", "epi3", "epi3_rs",
-               "implicit_euler", "implicit_esdirk3",
-              ]
-    methods = ["pexprb4", "exprb3", "exprb2"]
+    methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense",
+               "exprb2_dense", "exprb2_pfd_rs", "exp_pfd_rs",
+               "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
     dts = [1., 2., 5., 10., 25., 50.]
     tf = 100.
     nspecies = 3
@@ -272,13 +250,10 @@ def run_sweep():
 
     # error vs time step size for each method
     plt.figure()
-    markers = ['x', 'p']
-    marker_cycler = cycle(markers)
     for method in methods:
         dt = mae_dict[method][:, 0]
-        s3_err = mae_dict[method][:, 3]
-        mk = next(marker_cycler)
-        plt.plot(dt, s3_err, marker=mk, ls='--', label=method, alpha=0.75)
+        s3_err = mae_dict[method][:, 2]
+        plt.plot(dt, s3_err, '-o', label=method)
     plt.yscale("log")
     plt.xscale("log")
     plt.grid(ls='--')
@@ -290,49 +265,8 @@ def run_sweep():
     plt.savefig("bateman_ex_1_converg.png")
     for method in methods:
         for dt in [10., 25.]:
-            analytic_bateman_s3(method, dt=dt, tf=200., do_plot=True)
+            analytic_bateman_s3(method, dt=dt, tf=500., do_plot=True)
 
-class TestBatemanSysNonlinFeed(OdeSys):
-    bat_mat: jax.Array
-    feed_period: float
-    feed_scale: float
-
-    def __init__(self, keymap, decay_lib, *args, **kwargs):
-        bmat = gen_bateman_matrix(keymap, decay_lib)
-        print("Bateman test system to solve:")
-        print(bmat)
-        self.bat_mat = bmat
-        self.feed_period = 0.2e-1
-        self.feed_scale = 1.0e-2
-        super().__init__()
-
-    def _nonlin_feed(self, t, u, **kwargs):
-        # linear-in-time feed example
-        # feed_rate = jnp.clip(1e-6*t, 0.0, 100.0)
-        # quadratic-in-time feed example
-        # feed_rate = -1e-7*(t-500.)**2+1e-7*500**2
-        # feed_rate = jnp.clip(-1e-7*(t-200.)**2+1e-7*500**2, 0.0, 100.0)
-        # cubic-in-time feed example
-        feed_rate = jnp.clip(2e-10*(t-200)**3-1e-7*(t-200.)**2+1e-7*500**2, 0.0, 100.0)
-        fdr = jnp.zeros_like(u)
-        fdr = fdr.at[0].set(feed_rate)
-        return fdr
-
-    def _nonlin_sink(self, t, u, **kwargs):
-        # quadratic-in-time sink example
-        sink_rate = jnp.clip(-1e-6*((t-100)**2)+0.01, 0.0, 1.0)
-        # linear-in-time sink example
-        # sink_rate = jnp.clip(1e-5*t, 0.0, 1.0)
-        s = jnp.zeros_like(u)
-        s = s.at[2].set(-sink_rate)
-        return s
-
-    @jax.jit
-    def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
-        # res = self.bat_mat @ u + self._nonlin_sink(t, u, **kwargs)
-        # res = self.bat_mat @ u + self._nonlin_feed(t, u, **kwargs)
-        res = self.bat_mat @ u + self._nonlin_sink(t, u, **kwargs) + self._nonlin_feed(t, u, **kwargs)
-        return res
 
 class TestBatemanSysJac(OdeSplitSys):
     """
@@ -397,7 +331,7 @@ if __name__ == "__main__":
     plt.figure()
     plt.xscale('log')
     plt.yscale('log')
-    plt.ylim((1e-14, 80.0))
+    plt.ylim((1e-14, 10.0))
     plt.plot(t_res, y_res[:, 0], label="c_0")
     plt.plot(t_res, y_res[:, 1], label="c_1")
     plt.plot(t_res, y_res[:, 2], label="c_2")
