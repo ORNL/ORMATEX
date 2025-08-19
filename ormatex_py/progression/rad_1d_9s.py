@@ -314,7 +314,7 @@ if __name__ == "__main__":
         # use a python ormatex integrator
         res = integrate_wrapper.integrate(
                 ode_sys, y0, t0, dt, nsteps, method,
-                max_krylov_dim=200, iom=2)
+                max_krylov_dim=200, iom=2, leja_c=10.0, leja_tol=1e-12)
         t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
