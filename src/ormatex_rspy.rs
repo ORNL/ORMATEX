@@ -34,6 +34,7 @@ use numpy::ndarray::Array2;
 use pyo3::prelude::*;
 use pyo3::{pymethods, pymodule, types::PyModule, PyResult, Python};
 use pyo3::types::{PyList, PyDict};
+use std::collections::HashMap;
 use std::fmt;
 
 use faer::prelude::*;
@@ -238,6 +239,17 @@ fn select_solver<'a>(
 }
 
 
+fn get_val_or_default<'py, T>(py: Python<'py>, kd_hash: &HashMap<String, PyObject>, key: String, default: T) -> T
+where T: FromPyObject<'py>
+{
+    for (k, v) in kd_hash.iter() {
+        if *k == key {
+            return v.extract::<T>(py).unwrap();
+        }
+    }
+    default
+}
+
 #[pyfunction]
 #[pyo3(signature = (sys, y0, t0, dt, nsteps, **kwds))]
 fn integrate_wrapper_rs<'py>(
@@ -252,14 +264,16 @@ fn integrate_wrapper_rs<'py>(
     -> (Bound<'py, PyList>, Bound<'py, PyList>)
 {
     // process kwargs
-    let kd = kwds.unwrap_or(PyDict::new(py));
-    let method: String = kd.as_ref().get_item("method").and_then(|item| item.extract::<String>()).unwrap_or(String::from("epi2"));
-    let expmv_method: String = kd.as_ref().get_item("expmv_method").and_then(|item| item.extract::<String>()).unwrap_or(String::from("pade"));
-    let krylov_dim: usize = kd.as_ref().get_item("max_krylov_dim").and_then(|item| item.extract::<usize>()).unwrap_or(100);
-    let iom: usize = kd.as_ref().get_item("iom").and_then(|item| item.extract::<usize>()).unwrap_or(2);
-    let tol: f64 = kd.as_ref().get_item("tol").and_then(|item| item.extract::<f64>()).unwrap_or(1e-8);
-    let tol_fdt: f64 = kd.as_ref().get_item("tol_fdt").and_then(|item| item.extract::<f64>()).unwrap_or(-1.0);
-    let osteps: usize = kd.as_ref().get_item("osteps").and_then(|item| item.extract::<usize>()).unwrap_or(1);
+    let kd: pyo3::Bound<'_, PyDict> = kwds.unwrap_or(PyDict::new(py));
+    let kd_hash: HashMap<String, PyObject> = kd.extract().unwrap_or(HashMap::new());
+
+    let method: String = get_val_or_default(py, &kd_hash, String::from("method"), String::from("epi2"));
+    let expmv_method: String = get_val_or_default(py, &kd_hash, String::from("expmv_method"), String::from("pade"));
+    let krylov_dim: usize = get_val_or_default(py, &kd_hash, String::from("max_krylov_dim"), 100);
+    let iom: usize = get_val_or_default(py, &kd_hash, String::from("iom"), 2);
+    let tol: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
+    let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
+    let osteps: usize = get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
 
     let y = y0.as_array();
     let y0_mat = y.view().into_faer();

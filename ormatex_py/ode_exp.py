@@ -21,6 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from functools import partial
+from concurrent.futures import ThreadPoolExecutor
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
@@ -61,6 +62,8 @@ class ExpRBIntegrator(IntegrateSys):
         self.iom = kwargs.get("iom", 100)
         # tolerence to detect nonautonomous systems, a negative value disables this check
         self.tol_fdt = kwargs.get("tol_fdt", 1.0e-8)
+        # threads
+        self.executor = ThreadPoolExecutor(max_workers=2)
 
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
@@ -250,20 +253,30 @@ class ExpRBIntegrator(IntegrateSys):
         c_3 = 1.0
 
         # compute U_{n2}
-        t_2 = t + c_2*dt
-        phi2_v_2, v_2 = self._phi2v_nonauto(sys_jac_lop, dt, c=c_2)
-        y_2 = yt \
-            + c_2*dt*phi_linop(sys_jac_lop, c_2*dt, fyt, 1, self.max_krylov_dim, self.iom) \
-            + phi2_v_2
-        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=v_2)
+        def f_u_n2():
+            t_2 = t + c_2*dt
+            phi2_v_2, v_2 = self._phi2v_nonauto(sys_jac_lop, dt, c=c_2)
+            y_2 = yt \
+                + c_2*dt*phi_linop(sys_jac_lop, c_2*dt, fyt, 1, self.max_krylov_dim, self.iom) \
+                + phi2_v_2
+            r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=v_2)
+            return r_2
 
         # compute U_{n3}
-        t_3 = t + c_3*dt
-        phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt, c=c_3)
-        y_3 = yt \
-            + c_3*dt*phi_linop(sys_jac_lop, c_3*dt, fyt, 1, self.max_krylov_dim, self.iom) \
-            + phi2_v
-        r_3 = self._remf(t_3, y_3, fyt, sys_jac_lop, v=v)
+        def f_u_n3():
+            t_3 = t + c_3*dt
+            phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt, c=c_3)
+            y_3 = yt \
+                + c_3*dt*phi_linop(sys_jac_lop, c_3*dt, fyt, 1, self.max_krylov_dim, self.iom) \
+                + phi2_v
+            r_3 = self._remf(t_3, y_3, fyt, sys_jac_lop, v=v)
+            return y_3, r_3
+
+        # with ThreadPoolExecutor(max_workers=2) as executor:
+        fut_f_u_n2 = self.executor.submit(f_u_n2)
+        fut_f_u_n3 = self.executor.submit(f_u_n3)
+        r_2 = fut_f_u_n2.result()
+        y_3, r_3 = fut_f_u_n3.result()
 
         # compute final update
         vb0 = jnp.zeros(yt.shape)
@@ -457,7 +470,7 @@ class ExpLejaIntegrator(IntegrateSys):
         self.istep = 0
         self.leja_max_power_iter = 100
         self.leja_max_re_eig_scale = kwargs.get("leja_max_re_eig_scale", 1.2)
-        self.n_leja = kwargs.get("n_leja", 300)
+        self.n_leja = kwargs.get("n_leja", 180)
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=self.n_leja))
         super().__init__(sys, t0, y0, order, method, **kwargs)
