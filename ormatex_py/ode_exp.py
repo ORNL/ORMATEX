@@ -21,6 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from functools import partial
+from concurrent.futures import ThreadPoolExecutor
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
@@ -35,8 +36,8 @@ except ImportError:
 
 class ExpRBIntegrator(IntegrateSys):
 
-    _valid_methods = {"exprb2": 2, "exprb3": 3, "epi2": 2, "epi3": 3,
-                      "exprb2_dense": 2, "exprb2_pfd": 2,
+    _valid_methods = {"exprb2": 2, "exprb3": 3, "pexprb4": 4, "epi2": 2, "epi3": 3,
+                      "exprb2_dense": 2, "exprb2_pfd": 2, "exp_pfd": 1,
                       "exprb2_pfd_rs": 2, "exp_pfd_rs": 1}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
@@ -61,6 +62,8 @@ class ExpRBIntegrator(IntegrateSys):
         self.iom = kwargs.get("iom", 100)
         # tolerence to detect nonautonomous systems, a negative value disables this check
         self.tol_fdt = kwargs.get("tol_fdt", 1.0e-8)
+        # threads
+        self.executor = ThreadPoolExecutor(max_workers=2)
 
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
@@ -78,7 +81,7 @@ class ExpRBIntegrator(IntegrateSys):
         jac_yd = sys_jac_lop_yt(yr - yt)
         return frhs_yr - frhs_yt - jac_yd - v*dt
 
-    def _phi2v_nonauto(self, sys_jac_lop, dt):
+    def _phi2v_nonauto(self, sys_jac_lop, dt, c=1.0):
         r"""
         For rosenbrock exp integrators, this method computes
         the correction term for nonautonomous systems.
@@ -96,10 +99,10 @@ class ExpRBIntegrator(IntegrateSys):
             fytt = sys_jac_lop._fdt()
             # check for nonautonomous system
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-                return (dt**2.)*phi_linop(sys_jac_lop, dt, fytt, 2, self.max_krylov_dim, self.iom), fytt
+                return (c**2.)*(dt**2.)*phi_linop(sys_jac_lop, c*dt, fytt, 2, self.max_krylov_dim, self.iom), fytt
         return 0., 0.
 
-    def _step_exprb2(self, dt: float) -> StepResult:
+    def _step_exprb2(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Computes the solution update by:
         y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)+
@@ -109,7 +112,7 @@ class ExpRBIntegrator(IntegrateSys):
         """
         t = self.t
         yt = self.y_hist[0]
-        sys_jac_lop = self.sys.fjac(t, yt)
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
         fyt = sys_jac_lop._frhs_cached()
         phi2_v, _0 = self._phi2v_nonauto(sys_jac_lop, dt)
         y_new = yt \
@@ -181,19 +184,22 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_exprb3(self, dt: float) -> StepResult:
-        """
+    def _step_exprb3(self, dt: float, frhs_kwargs: dict) -> StepResult:
+        r"""
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
-            2*dt*\varphi_3(dt*J_t)R_2 +
-            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
-        doi: https://doi.org/10.1137/080717717
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+                2*dt*\varphi_3(dt*J_t)R_2 +
+                dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        Ref: doi: https://doi.org/10.1137/080717717
         """
         t = self.t
         yt = self.y_hist[0] # y_t
 
-        sys_jac_lop = self.sys.fjac(t, yt)
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
         fyt = sys_jac_lop._frhs_cached()
 
         # phi2_v is nonzero for nonautonomous systems
@@ -215,6 +221,72 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    def _step_pexprb4(self, dt: float, frhs_kwargs: dict) -> StepResult:
+        r"""
+        Computes the solution update by:
+
+        .. math::
+
+            U_{n2} = u_n + (0.5)dt\varphi_1((0.5)dt J_t)F(t, y_t) +
+                0.5^2 dt^2 \varphi_2(0.5 dt*J_t)F'(t, y_t)
+            U_{n3} = u_n + (1.0)dt\varphi_1((1.0)dt J_t)F(t, y_t) +
+                dt^2 \varphi_2(dt*J_t)F'(t, y_t)
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+                dt^2 \varphi_2(dt*J_t)F'(t, y_t) +
+                dt [16 \varphi_3(dt J_t) - 48 \varphi_4(dt J_t)] R_2(U_{n2}) +
+                dt [-2 \varphi_3(dt J_t) + 12 \varphi_4(dt J_t)] R_3(U_{n3})
+
+        Where $`U_{n2}`$ and $`U_{n3}`$ can be computed in parallel.
+
+        Ref: V. T. Luan. and A. Ostermann. Parallel Exponential rosenbrock methods.
+        Computers and Mathmatics with Applications, v71. 2016.
+        """
+        t = self.t
+        yt = self.y_hist[0] # y_t
+
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        fyt = sys_jac_lop._frhs_cached()
+
+        # butcher tableau coeffs
+        c_2 = 0.5
+        c_3 = 1.0
+
+        # compute U_{n2}
+        def f_u_n2():
+            t_2 = t + c_2*dt
+            phi2_v_2, v_2 = self._phi2v_nonauto(sys_jac_lop, dt, c=c_2)
+            y_2 = yt \
+                + c_2*dt*phi_linop(sys_jac_lop, c_2*dt, fyt, 1, self.max_krylov_dim, self.iom) \
+                + phi2_v_2
+            r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=v_2)
+            return r_2
+
+        # compute U_{n3}
+        def f_u_n3():
+            t_3 = t + c_3*dt
+            phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt, c=c_3)
+            y_3 = yt \
+                + c_3*dt*phi_linop(sys_jac_lop, c_3*dt, fyt, 1, self.max_krylov_dim, self.iom) \
+                + phi2_v
+            r_3 = self._remf(t_3, y_3, fyt, sys_jac_lop, v=v)
+            return y_3, r_3
+
+        # with ThreadPoolExecutor(max_workers=2) as executor:
+        fut_f_u_n2 = self.executor.submit(f_u_n2)
+        fut_f_u_n3 = self.executor.submit(f_u_n3)
+        r_2 = fut_f_u_n2.result()
+        y_3, r_3 = fut_f_u_n3.result()
+
+        # compute final update
+        vb0 = jnp.zeros(yt.shape)
+        b2_b3 = kiops_fixedsteps(
+            sys_jac_lop, dt, [vb0, vb0, vb0, dt*(16.0*r_2-2.0*r_3), dt*(-48.0*r_2+12.0*r_3)],
+            max_krylov_dim=self.max_krylov_dim, iom=self.iom)
+        y_new = y_3 + b2_b3
+
+        y_err = -1.0
+        return StepResult(t+dt, dt, y_new, y_err)
 
     @jax.jit
     def _step_exprb2_jit(t, yt, dt, sys):
@@ -323,22 +395,43 @@ class ExpRBIntegrator(IntegrateSys):
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
+    def _step_exp_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
+        r"""
+        Computes the solution update by:
+        y_{t+1} = \varphi_0(dt*L)*y0
+        where L is a dense matrix and computing varphi
+        using cauchy contour integral approach with quadrature rule
+        NOTE: Only useful for pure linear systems
+        """
+        t = self.t
+        yt = self.y_hist[0]
+        J = np.asarray(self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs).dense())
+
+        phi0J_yt = f_phi_k_pfd(J*dt, yt, 0, self.pfd_method)
+        y_new = jnp.asarray(phi0J_yt.flatten())
+        y_err = -1.
+        return StepResult(t+dt, dt, y_new, y_err)
+
     def step(self, dt: float, frhs_kwargs: dict={}) -> StepResult:
         if self.method == "exprb2":
-            return self._step_exprb2(dt)
+            return self._step_exprb2(dt, frhs_kwargs)
         elif self.method == "exprb3":
-            return self._step_exprb3(dt)
+            return self._step_exprb3(dt, frhs_kwargs)
+        elif self.method == "pexprb4":
+            return self._step_pexprb4(dt, frhs_kwargs)
         elif self.method == "epi2":
             return self._step_epi2(dt, frhs_kwargs)
         elif self.method == "epi3":
             if len(self.y_hist) >= 2:
                 return self._step_epi3(dt, frhs_kwargs)
             else:
-                return self._step_epi2(dt, frhs_kwargs)
+                return self._step_exprb3(dt, frhs_kwargs)
         elif self.method == "exprb2_dense":
             return self._step_exprb2_dense(dt)
         elif self.method == "exprb2_pfd":
             return self._step_exprb2_pfd(dt, frhs_kwargs)
+        elif self.method == "exp_pfd":
+            return self._step_exp_pfd(dt, frhs_kwargs)
         elif self.method == "exprb2_pfd_rs" and HAS_ORMATEX_RUST:
             return self._step_exprb2_pfd_rs(dt)
         elif self.method == "exp_pfd_rs" and HAS_ORMATEX_RUST:
@@ -377,7 +470,7 @@ class ExpLejaIntegrator(IntegrateSys):
         self.istep = 0
         self.leja_max_power_iter = 100
         self.leja_max_re_eig_scale = kwargs.get("leja_max_re_eig_scale", 1.2)
-        self.n_leja = kwargs.get("n_leja", 300)
+        self.n_leja = kwargs.get("n_leja", 180)
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=self.n_leja))
         super().__init__(sys, t0, y0, order, method, **kwargs)
