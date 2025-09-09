@@ -211,7 +211,7 @@ class AffineLinearSEM(OdeSplitSys):
         super().__init__()
 
     @jax.jit
-    def _frhs(self, t: float, u: jax.Array) -> jax.Array:
+    def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         f = (self.b - self.A @ u) / self.Ml
         # set the time derivative of the Dirichlet boundary data to zero
         f = f.at[self.dirichlet_bd].set(0.)
@@ -243,7 +243,7 @@ class NonautonomousSEM(AffineLinearSEM):
         return jax.grad(dirichlet_fun)(t)
 
     @jax.jit
-    def _frhs(self, t: float, u: jax.Array) -> jax.Array:
+    def _frhs(self, t: float, u: jax.Array, **kwargs) -> jax.Array:
         f = (self.b - self.A @ u) / self.Ml
         # set the time derivative of the Dirichlet boundary data
         f = f.at[self.dirichlet_bd].set(self.dirichlet_dt(t))
