@@ -11,7 +11,7 @@ from jax.experimental import sparse as jsp
 from collections.abc import Callable
 
 import skfem as fem
-from skfem.helpers import dot, grad
+from skfem.helpers import dot, grad, div, dd
 
 from ormatex_py.progression import element_line_pp_nodal as el_nodal
 from ormatex_py.ode_sys import LinOp, MatrixLinOp, DiagLinOp
@@ -44,10 +44,19 @@ def vel_f(x, vel, **kwargs):
     """
     return 0.0 * x + vel
 
+def tau_upwind_f(w):
+    """
+    Computes the SUPG stabilization parameter using the standard
+    upwind formulation.
+    """
+    return w['tau'] * w.h[:] / (2 * vel_f(**w))
+
 @fem.BilinearForm
 def adv_diff(u, v, w):
     """
-    Combo Adv Diff kernel
+    Combo Adv Diff kernel in non-conservative form:
+
+        u_t = k nabla(u) + vel*grad(u)
 
     Args:
         w: is a dict of skfem.element.DiscreteField
@@ -58,13 +67,33 @@ def adv_diff(u, v, w):
 @fem.BilinearForm
 def adv_diff_cons(u, v, w):
     """
-    Combo Adv Diff kernel conservative form
+    Combo Adv Diff kernel conservative form:
+
+        u_t = k nabla(u) + grad(vel * u)
 
     Args:
         w: is a dict of skfem.element.DiscreteField
             w.x (quadrature points)
     """
     return w['nu'] * dot(grad(u), grad(v)) - dot(vel_f(**w) * u, grad(v))
+
+@fem.BilinearForm
+def adv_diff_cons_supg(u, v, w):
+    """
+    Combo Adv Diff kernel conservative form with SUPG stab.
+
+    Args:
+        w: is a dict of skfem.element.DiscreteField
+            w.x (quadrature points)
+    """
+    r = w['nu'] * dot(grad(u), grad(v)) - dot(vel_f(**w) * u, grad(v))
+    # advection supg term (adds artificial diffusion)
+    tau = tau_upwind_f(w)
+    stab_adv = dot(tau * vel_f(**w), grad(v)) * dot(vel_f(**w), grad(u))
+    # diffusion supg term
+    # NOTE: second deriv of u is not defined everywhere for linear basis fns. so this fails.
+    # stab_diff = dot(w['tau'] * vel_f(**w), grad(v)) * w['nu'] * div(grad(u))
+    return r + stab_adv
 
 @fem.BilinearForm
 def robin(u, v, w):
@@ -82,9 +111,26 @@ def rhs(v, w):
     """
     return src_f(**w) * v
 
+@fem.LinearForm
+def rhs_supg(v, w):
+    """
+    Source term
+    """
+    r = src_f(**w) * v
+    tau = tau_upwind_f(w)
+    stab_f =  dot(tau * vel_f(**w), grad(v)) * src_f(**w)
+    return r - stab_f
+
 @fem.BilinearForm
 def mass(u, v, _):
     return u * v
+
+@fem.BilinearForm
+def mass_supg(u, v, w):
+    r =  u * v
+    tau = tau_upwind_f(w)
+    stab_m = dot(tau * vel_f(**w), grad(v)) * u
+    return r + stab_m
 
 
 class AdDiffSEM:
@@ -92,12 +138,16 @@ class AdDiffSEM:
     Assemble matrices for spectral finite element discretization
     of an advection diffusion eqaution
 
-    p: polynomial order
-    nu: diffusion coeff
+    p: polynomial basis order
+    nu: physical diffusion coeff
+    tau: supg stabilization scale. 0 for no stabilization
     """
     def __init__(self, mesh, p=1, field_fns={}, params={}, **kwargs):
-        # diffusion coeff
-        self.params = {"nu": params.get("nu", 5e-3), "vel": params.get("vel", 1.)}
+        self.params = {
+                "nu": params.get("nu", 5e-3),
+                "vel": params.get("vel", 1.),
+                "tau": params.get("tau", 0.0),
+                }
         self.p = p
         self.mesh = mesh
 
@@ -150,15 +200,15 @@ class AdDiffSEM:
         conservative = True
         if conservative:
             # remark: w_dict must contain only scalars and skfem.element.DiscreteField
-            A = adv_diff_cons.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+            A = adv_diff_cons_supg.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
             if self.mesh.boundaries:
                 # if not periodic, add boundary term
                 A += robin.assemble(self.basis_f, **self.w_ext(self.basis_f, **kwargs))
         else:
             A = adv_diff.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
-        b = rhs.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
-        M = mass.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+        b = rhs_supg.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
+        M = mass_supg.assemble(self.basis, **self.w_ext(self.basis, **kwargs))
 
         if self.mesh.boundaries:
             # Dirichlet boundary conditions
@@ -250,7 +300,7 @@ class NonautonomousSEM(AffineLinearSEM):
         return f
 
 def torus_distance(x, xp):
-    #distance of two points on torus (up to equivalence)
+    """ distance of two points on torus (up to equivalence) """
     dx = jnp.abs(x%1 - xp%1)
     return jnp.where(dx > 0.5, 1. - dx, dx)
 
@@ -264,10 +314,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-ic", help="one of [square, zero, gauss]", type=str, default="gauss")
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
+    parser.add_argument("-tau", help="supg stabilization constant. 0 for no supg stab.", type=float, default=0.0)
+    parser.add_argument("-nu", help="physical species bulk diffusion coefficient. 0 for no diffusion.", type=float, default=1.0e-12)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-pfd_method", help="partial frac decomp method", type=str, default="CN")
+    parser.add_argument("-nsteps", help="number of steps", type=int, default=10)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
+    parser.add_argument("-tf", help="final time", type=float, default=1.6)
+    parser.add_argument("-leja_c", help="leja scale", type=float, default=10.0)
+    parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
     parser.add_argument("-nonautonomous", help="run nonautonomous system with external forcing", action="store_true", default=False)
     args = parser.parse_args()
 
@@ -280,6 +336,7 @@ if __name__ == "__main__":
     nrefs = args.mr
     mesh = mesh0.refined(nrefs)
 
+    print(mesh)
     periodic = args.per
     if periodic:
         mesh = fem.MeshLine1DG.periodic(
@@ -294,9 +351,9 @@ if __name__ == "__main__":
         nu =  1.0
     else:
         vel = 0.5
-        nu =  0.0
-        ##nu = 0.05 * vel / (args.p * 2**nrefs) #stabilization by diffusion
-    param_dict = {"nu": nu, "vel": vel}
+        nu =  args.nu
+        # nu = 0.05 * vel / (args.p * 2**nrefs) #stabilization by diffusion
+    param_dict = {"nu": nu, "vel": vel, "tau": args.tau}
     field_dict = {} #{"vel_f": vel_f, "src_f": src_f}
 
     # init the system
@@ -346,33 +403,30 @@ if __name__ == "__main__":
 
     # integrate the system
     t0 = 0.
-    if args.ic == "zero":
-        T = .1
-    else:
-        T = 1.6
-    nsteps = 10
-    dt = T / nsteps
+    nsteps = args.nsteps
+    dt = args.tf / nsteps
     method = args.method
     pfd_method = args.pfd_method
-    res = integrate_wrapper.integrate(ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=160, iom=10, pfd_method=pfd_method)
+    res = integrate_wrapper.integrate(
+            ode_sys, y0, t0, dt, nsteps, method,
+            max_krylov_dim=800, iom=2, pfd_method=pfd_method,
+            leja_c=args.leja_c, dd_method=args.dd_method)
     t_res, y_res = res.t_res, res.y_res
 
     # compute expected solution
-    # y_exact_res = [g_prof_exact(0.0, sx),]
     y_exact_res = []
     for t in t_res:
         y_exact_res.append(g_prof_exact(t, xs))
 
     # plot the result at a few time steps
-    #outdir = './advection_diffusion_1d_out/'
     # sorted x
     si = xs.argsort()
     sx = xs[si]
     mesh_spacing = (sx[1] - sx[0])
     cfl = dt * vel / mesh_spacing
     plt.figure()
-    for i in range(nsteps):
-        if i % 1 == 0 or i == 0:
+    for i in range(nsteps+1):
+        if i == nsteps or i == 0:
             t = t_res[i]
             y = y_res[i][si]
             y_exact = y_exact_res[i][si]
@@ -382,8 +436,8 @@ if __name__ == "__main__":
     plt.grid(ls='--')
     plt.ylabel('u')
     plt.xlabel('x')
-    plt.title(r"Method=%s, $C$=%0.2e, $\Delta$ t=%0.2e, $\Delta$ x=%0.2e" % (method, cfl, dt, mesh_spacing))
-    plt.savefig('adv_diff_1d_%s.png' % method)
+    plt.title("Method=%s, $C$=%0.2e, $v_{adv.}$=%0.2e \n $tau$=%0.2e, $\Delta$ t=%0.2e, $\Delta$ x=%0.2e" % (method, cfl, vel, args.tau, dt, mesh_spacing))
+    plt.savefig('adv_diff_1d_%s_%s_%s.png' % (method, str(args.mr), str(args.ic)))
     plt.close()
 
     # Print results summary to table

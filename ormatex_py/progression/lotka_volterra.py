@@ -222,7 +222,7 @@ def main(method='epi3', do_plot=True, autonomous=True):
 
 
 def sweep_methods(autonomous=False):
-    methods = ["epi3", "exprb2", "exprb3", "pexprb4", "implicit_euler", "implicit_esdirk3"]
+    methods = ["epi2_leja_im", "epi3_leja_im", "epi3", "exprb2", "exprb3", "pexprb4", "implicit_euler", "implicit_esdirk3"]
     plt.figure()
     for method in methods:
         err_dt, err, lb = main(method, do_plot=False, autonomous=autonomous)

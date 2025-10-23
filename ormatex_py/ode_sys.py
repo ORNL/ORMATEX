@@ -563,6 +563,19 @@ class IntegrateSys(metaclass=ABCMeta):
         self.t_hist.appendleft(s.t)
         self.y_hist.appendleft(s.y)
 
+    def _remf(self, tr: float, yr: jax.Array,
+              frhs_yt: jax.Array, sys_jac_lop_yt: LinOp, v=0.0):
+        """
+        Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt) - v*(tr-t0)
+        where v = d(frhs)/dt
+        """
+        t = self.t_hist[0]
+        yt = self.y_hist[0]
+        dt = tr - t
+        frhs_yr = self.sys.frhs(tr, yr)
+        jac_yd = sys_jac_lop_yt(yr - yt)
+        return frhs_yr - frhs_yt - jac_yd - v*dt
+
     @property
     def time(self) -> float:
         """

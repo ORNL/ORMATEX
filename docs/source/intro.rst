@@ -14,7 +14,7 @@ Exponential integrators:
 -  ☐ EPIRK4
 -  ☒ EXPRB2
 -  ☒ EXPRB3
--  ☐ EXPRB4 (exponential rosenbrock order 4)
+-  ☐ PEXPRB4 (parallel exponential rosenbrock order 4)
 
 Classic integrators:
 
@@ -37,7 +37,7 @@ Jacobian based:
 -  ☐ EPIRK4
 -  ☒ EXPRB2
 -  ☒ EXPRB3
--  ☐ EXPRB4
+-  ☒ PEXPRB4
 
 Splitting linear operator based:
 
@@ -63,6 +63,7 @@ specified through the ``method`` keyword argument.
 
     ``exprb2``, 2 , JAX/python , max_krylov_dim; iom , Exponential Rosenbrock order 2, https://doi.org/10.1137/080717717
     ``exprb3``, 3 , JAX/python , max\_krylov\_dim; iom , Exponential Rosenbrock order 3, https://doi.org/10.1137/080717717 
+    ``pexprb4``, 4 , JAX/python , max\_krylov\_dim; iom , Parallel Exponential Rosenbrock order 4, https://doi.org/10.1016/j.camwa.2016.01.020 
     ``epi3``, 3 , JAX/python , max\_krylov\_dim; iom , Exponential Propagation Iterative order 3, https://doi.org/10.1137/110849961 
     ``rk4`` , 4 , JAX/python , , Explicit RK4  , 
     ``implicit_euler`` , 1 , JAX/diffrax ,  , Backward Euler , 

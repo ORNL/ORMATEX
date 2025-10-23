@@ -11,6 +11,7 @@ traditional implicit time integration methods.
 """
 import numpy as np
 import scipy as sp
+import os
 
 import jax
 import jax.numpy as jnp
@@ -26,11 +27,14 @@ except ImportError:
     HAS_ORMATEX_RUST = False
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, OdeSysNp, MatrixLinOp
 from ormatex_py.ode_utils import stack_u, flatten_u
-from ormatex_py.progression.rad_1d_3s import plot_dt_jac_spec
+from ormatex_py.progression.rad_1d_3s import plot_dt_jac_spec, plot_leja_conv_detail
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix
 from ormatex_py import integrate_wrapper
+
+outdir = "./rad_1d_9s_out/"
+if not os.path.exists(outdir): os.mkdir(outdir)
 
 # Setup species for tracking
 keymap = [
@@ -233,6 +237,9 @@ if __name__ == "__main__":
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-fine", help="compare to fine step solution", default=False, action='store_true')
+    parser.add_argument("-leja_c", help="optional max complex part of the J*dt spectrum", type=float, default=20.0)
+    parser.add_argument("-leja_plot", help="additional leja polynomial convergence plots", default=False, action='store_true')
+    parser.add_argument("-dt", help="time step size", type=float, default=1.0)
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
     args = parser.parse_args()
     jax.config.update("jax_disable_jit", args.nojit)
@@ -286,7 +293,7 @@ if __name__ == "__main__":
 
     # integrate the system
     t0 = 0.
-    dt = 1.0
+    dt = args.dt
     nsteps = args.nsteps
     tf = dt * nsteps
     method = args.method
@@ -314,7 +321,7 @@ if __name__ == "__main__":
         # use a python ormatex integrator
         res = integrate_wrapper.integrate(
                 ode_sys, y0, t0, dt, nsteps, method,
-                max_krylov_dim=200, iom=2, leja_c=10.0, leja_tol=1e-12)
+                max_krylov_dim=200, iom=2, leja_c=args.leja_c, leja_tol=1e-12)
         t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
@@ -356,7 +363,7 @@ if __name__ == "__main__":
     # ax[0].set_yscale('log')
     # ax[0].set_xlabel("location [m]")
     plt.tight_layout()
-    plt.savefig('reac_adv_diff_s9.png', dpi=160)
+    plt.savefig(outdir + 'reac_adv_diff_s9.png', dpi=160)
     plt.close()
 
     if args.multi_plot:
@@ -391,13 +398,13 @@ if __name__ == "__main__":
                 ax[fr, fc].legend()
                 ax[fr, fc].grid(ls='--')
 
-            # TODO: mark reactor boundaries on the plot
-            # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
-            # ax[0].set_yscale('log')
-            # ax[0].set_xlabel("location [m]")
             plt.tight_layout()
-            plt.savefig('rad_1d_9s_out/reac_adv_diff_s12_%d.png' % i, dpi=160)
+            plt.savefig(outdir + 'reac_adv_diff_s12_%d.png' % i, dpi=160)
             plt.close()
 
     # plot eigvals of Jac
-    plot_dt_jac_spec(ode_sys, y_res[-1], t=0., dt=dt, figname="reac_adv_diff_s9_eigplot")
+    plot_dt_jac_spec(ode_sys, y_res[-1], t=0., dt=dt, figname=outdir + "reac_adv_diff_s9_eigplot")
+
+    if "leja" in method and args.leja_plot:
+        kwargs = {"leja_c": args.leja_c}
+        plot_leja_conv_detail(ode_sys, y_res[-1], t=0., dt=dt, outdir=outdir, **kwargs)

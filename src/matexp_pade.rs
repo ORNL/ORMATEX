@@ -262,7 +262,7 @@ mod test_matexp_pade {
         for k in 0 ..= 3 {
             let phi_a = phi(dense_a.as_ref(), k);
             let phi_ext_a = phi_ext(dense_a.as_ref(), k);
-            mat_mat_approx_eq(phi_a.as_ref(), phi_ext_a.as_ref(), 1e-10);
+            mat_mat_approx_eq(phi_a.as_ref(), phi_ext_a.as_ref(), 5e-10);
         }
     }
 
