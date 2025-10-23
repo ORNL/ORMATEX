@@ -26,12 +26,20 @@ Ref: https://github.com/jax-ml/jax/discussions/25711
 """
 from functools import partial
 import numpy as np
+import scipy as sp
+import math
 import jax
 from jax import lax
 from jax import numpy as jnp
 
 # internal imports
 from ormatex_py.ode_sys import LinOp, AugMatrixLinOp, MatrixLinOp, DiagLinOp
+from ormatex_py.matexp_poly import dd_exp_taylor, newton_poly_div_diff, leja_coeffs_exp, leja_seq_pad_zeros, leja_coeffs_exp_dd, leja_coeffs_dd_phi, leja_coeffs_ts_phi, leja_coeffs_ts_phi_jax, leja_seq_reordering, leja_coeffs_ts_ss
+dd_method_dict = {
+        "taylor": dd_exp_taylor,
+        "pade": leja_coeffs_exp,
+        "recursive": leja_coeffs_exp_dd,
+        }
 
 
 def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
@@ -58,6 +66,7 @@ def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
     tol = 1e-4
 
     if h1 < 0 or h2 < 0:
+        raise ValueError(f"Interval boundaries result in empty box for the Leja ellipse: [{a},{b}]x[{-c},{c}].")
         assert(False)
     elif h2 <= tol:
         # real points
@@ -224,23 +233,6 @@ def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-2):
 
 
 @jax.jit
-def newton_poly_div_diff(x: jax.Array, y: jax.Array):
-    """
-    Divided difference formula to compute coeffs of the newton polynomial
-    given pairs of (x_i, y_i)
-
-    Args:
-        x: data support points, where the data is sampled.
-        y: value of the function at x points.
-    """
-    m = len(x)
-    a = y.at[:].get() # TODO why not a = y?
-    for k in range(1, m):
-        a = a.at[k:m].set( (a[k:m] - a[k-1]) / (x[k:m] - x[k-1]) )
-    return a
-
-
-@jax.jit
 def complex_conj_imag_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, imag_leja_x: jax.Array, coeffs: jax.Array, tol: float):
     r"""
     Interpolation approx :math:`\mathrm{exp}(\delta t A)u` at the conjugate complex
@@ -312,7 +304,7 @@ def decay_fun(e_new: float, e_old: float, gamma: float):
 
 
 @partial(jax.jit, static_argnames='n_leja_real')
-def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, n_leja_real: int, coeffs: jax.Array, tol: float):
+def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, n_leja_real: int, coeffs: jax.Array, tol: float, abort_tol: float=1.0e10):
     r"""
     Interpolation approx :math:`\mathrm{exp}(\delta t A)u` at real and conjugate complex
     leja points.
@@ -331,6 +323,8 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         leja_x:  unscaled complex leja sequence.
         n_leja_real: number of real leja points at the beginning of leja_x (one or two, usually).
         coeffs:  divied differences of the function applied to the matrix.
+        tol: convergence tolerance.
+        abort_tol: aborts polynomial construction if estimated error measure is above this value.
     """
     print(f"jit-compiling complex_conj_leja_expmv")
     n_leja = len(leja_x)
@@ -389,7 +383,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         return i, vm, pm, err_est, converged
     def cond_leja_poly(args):
         i, _, _, err_est, converged = args
-        cond = (i+1 < n_leja) & (err_est <= 1.e3*norm_u) & ~converged
+        cond = (i+1 < n_leja) & (err_est <= abort_tol*norm_u) & ~converged
         return cond
     i, _, pm, err_est, converged = lax.while_loop(
             cond_leja_poly, body_leja_poly, (i, vm, pm, err_est, converged))
@@ -398,7 +392,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
 
 
 @jax.jit
-def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, coeffs: jax.Array, tol: float):
+def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: float, leja_x: jax.Array, coeffs: jax.Array, tol: float, abort_tol: float=1.0e10):
     r"""
     Computes leja polynomial interpolation to approx :math:`\mathrm{exp}(\delta t A)u`.
 
@@ -416,6 +410,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
         tol:  Tolerance of the polynomial interpolation such that
             :math:`|| p - exp(\delta t A)u || < tol` where p is
             the leja polynomial approximation to :math:`\mathrm{exp}(\delta t A)u`.
+        abort_tol: aborts polynomial construction if estimated error measure is above this value.
     """
     print(f"jit-compiling leja_expmv")
     n_leja = len(leja_x)
@@ -453,7 +448,7 @@ def real_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, scale: f
         return i, vm, pm, err_est, converged
     def cond_leja_poly(args):
         i, _, _, err_est, converged = args
-        cond = (i+1 < n_leja) & (err_est <= 1.e3*norm_u) & ~converged
+        cond = (i+1 < n_leja) & (err_est <= abort_tol*norm_u) & ~converged
         return cond
     i, _, pm, err_est, converged = lax.while_loop(
             cond_leja_poly, body_leja_poly, (1, vm, pm, err_est, converged))
@@ -490,44 +485,7 @@ def leja_shift_scale(a_tilde_lo: LinOp, dim: int, max_power_iter: int=20, b0=Non
     return shift, scale, max_eig, b, iters
 
 
-@jax.jit
-def leja_coeffs_exp_dd(leja_x: jax.Array, shift: float, scale: float, h: float=1.0):
-    """
-    Dividied difference computation of the leja polynomial coefficients.
-
-    Args:
-        leja_x:  The leja points
-        shift:  The shift applied to the leja points
-        scale:  The scale applied to the leja points
-    """
-    coeffs = newton_poly_div_diff(leja_x,  jnp.exp(h*(shift + scale*leja_x)))
-    return coeffs
-
-
-@jax.jit
-def leja_coeffs_exp(leja_x: jax.Array, shift: float, scale: float, h: float=1.0):
-    """
-    Alternate method to compute the leja polynomial coefficients.
-    Reduced roundoff error compared to divided difference formula.
-    Ref:
-
-        M. Calari.  Accurate evaluation of divided differences for polynomial
-        interpolation of exponential propagators. Computing. 80. 2007.
-
-    Args:
-        leja_x:  The leja points
-        shift:  The shift applied to the leja points
-        scale:  The scale applied to the leja points
-    """
-    n_leja = len(leja_x)
-    Xi = jnp.diag(leja_x, 0) + jnp.diag(jnp.ones(n_leja-1), -1)
-    Xi_shift = jnp.identity(n_leja)*shift + scale*Xi
-    # extract the first column
-    coeffs = jax.scipy.linalg.expm(h*Xi_shift)[:, 0]
-    return coeffs
-
-
-def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja_x: jax.Array, n: int, shift: float, scale: float, tol: float=1.0e-10, substep: bool=True):
+def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja_x: jax.Array, n: int, shift: float, scale: float, tol: float=1.0e-10, substep: bool=True, dd_method: str="taylor"):
     r"""
     Computes :math:`exp(\Delta t A)v` using the real leja point
     interpolation method and substeps by:
@@ -541,12 +499,19 @@ def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja
     Substepping is automatically applied by detecting divergence, or failure
     to converge the leja polynomial approximation.
 
+    Ref:
+        M. Caliari, M. Vianello, L. Bergamaschi.
+        Interpolating discrete advection–diffusion propagators at Leja sequences.
+        Journal of Computational and Applied Mathematics.
+        Volume 172, Issue 1.
+
     Args:
         a_tilde_lo:  LinOp linear operator.
         tau_dt: inital substep size in (0, 1].
         v: vector to which the matrix exponential is applied
         leja_x: leja points generated by the :func:`gen_leja_fast` function.
         substep: Flag to enable automatic substepping. True by default.
+        dd_method: method used to compute divided differences.  One of ['taylor', 'pade']
     """
     # assert tau_dt > 0
     # substep size
@@ -561,8 +526,8 @@ def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja
     last_converged = False
 
     # Compute leja polynomial coefficients
-    coeffs = leja_coeffs_exp(leja_x, shift, scale)
-    # coeffs = leja_coeffs_exp_dd(leja_x, shift, scale)
+    dd_f = dd_method_dict.get(dd_method, dd_exp_taylor)
+    coeffs = dd_f(leja_x, shift, scale, h=1.0)
 
     # no substeps
     if not substep:
@@ -597,7 +562,7 @@ def real_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja
     return w_t[0:n], tot_iter, converged, max_tau_dt
 
 
-def complex_conj_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja_x: jax.Array, n_leja_real: int, n: int, shift: float, scale: float, tol: float=1.0e-10, substep: bool=True):
+def complex_conj_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Array, leja_x: jax.Array, n_leja_real: int, n: int, shift: float, scale: float, tol: float=1.0e-10, substep: bool=True, leja_n_zeros: int=2, dd_method: str="taylor"):
     r"""
     Computes :math:`exp(\Delta t A)v` using complex conjugate leja points and
     with substeps by:
@@ -622,6 +587,8 @@ def complex_conj_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Arr
           in the case of purely real leja points.  If n_leja_real is equal to
           len(leja_x) then this method is equal to the :func:`real_leja_expmv_substep` method.
         substep: Flag to enable automatic substepping. True by default.
+        dd_method: method used to compute divided differences.  One of ['taylor', 'pade']
+        leja_n_zeros: number of repeated zeros prepended to the leja sequence
     """
     # assert tau_dt > 0
     # substep size
@@ -635,19 +602,23 @@ def complex_conj_leja_expmv_substep(a_tilde_lo: LinOp, tau_dt: float, v: jax.Arr
     max_tau_dt = 0.0
     last_converged = False
 
-    # Compute leja polynomial coefficients
-    coeffs = leja_coeffs_exp(leja_x, shift, scale)
-    # coeffs = leja_coeffs_exp_dd(leja_x, shift, scale)
+    # extended leja sequence with leading zeros
+    if leja_n_zeros > 0:
+        leja_x = leja_seq_pad_zeros(leja_x, leja_n_zeros)
+
+    # method to compute the leja polynomial coefficients
+    dd_f = dd_method_dict.get(dd_method, dd_exp_taylor)
+    coeffs = dd_f(leja_x, shift, scale, h=1.0)
 
     # no substeps
     if not substep:
         w, iter, converged = complex_conj_leja_expmv(
-                a_tilde_lo, 1.0, w_t, shift, scale, leja_x, n_leja_real, coeffs, tol)
+                a_tilde_lo, 1.0, w_t, shift, scale, leja_x, leja_n_zeros+n_leja_real, coeffs, tol)
         return w[0:n], iter, converged, 1.0
 
     while True:
         w, iter, converged = complex_conj_leja_expmv(
-                a_tilde_lo, dts, w_t, shift, scale, leja_x, n_leja_real, coeffs, tol)
+                a_tilde_lo, dts, w_t, shift, scale, leja_x, leja_n_zeros+n_leja_real, coeffs, tol)
         tot_iter += iter
         print("sub_i: %d, converged: %d, sub_dt: %0.3f, iter: %d, shift: %0.3f, scale: %0.3f" % (i, converged, dts, iter, shift, scale))
         if not converged:
@@ -709,10 +680,11 @@ def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
     return a_tilde_lo, v, n
 
 
-def example_fast_leja_points():
+def _example_fast_leja_points():
+    import time
     import matplotlib.pyplot as plt
     # generate leja points
-    lp = gen_leja_fast(a=-2, b=2, n=50)
+    lp = gen_leja_fast(a=-2, b=2, n=10)
     # first 10 leja points
     for v in lp[0:50]:
         print(v)
@@ -752,8 +724,15 @@ def example_fast_leja_points():
     # calc exp(a_lop*dt)*u
     dt = 0.25
     lp = jnp.asarray(lp)
-    coeffs = newton_poly_div_diff(lp,  jnp.exp(shift + scale*lp))
-    leja_expmv, iter, converged = real_leja_expmv(a_lop, dt, u, shift, scale, lp, coeffs, 1e-6)
+    # coeffs = newton_poly_div_diff(lp, jnp.exp(shift + scale*lp))
+    coeffs = newton_poly_div_diff(lp, jnp.exp(0.0 + 10.4*lp))
+    coeffs_exp = leja_coeffs_exp(lp, 0.0, 10.4, 1.0)
+    coeffs_ts = dd_exp_taylor(lp, 0.0, 10.4)
+    print(coeffs)
+    print(coeffs_exp)
+    print(coeffs_ts)
+    # import pdb; pdb.set_trace()
+    leja_expmv, iter, converged = real_leja_expmv(a_lop, dt, u, shift, scale, lp, coeffs_ts, 1e-6)
     expected_expmv = jax.scipy.linalg.expm(dt*a) @ u
     print(iter)
     print(converged)
@@ -802,18 +781,29 @@ def example_fast_leja_points():
     scale = beta / 4.
     coeffs_dd = leja_coeffs_exp_dd(ip, shift, scale)
     coeffs_exp = leja_coeffs_exp(ip, shift, scale)
+    ti = time.perf_counter()
+    coeffs_exp = leja_coeffs_exp(ip, shift, scale)
+    tf = time.perf_counter()
+    print(f"time dd exp: {tf-ti}")
+    ti = time.perf_counter()
+    coeffs_ts = dd_exp_taylor(ip, shift, scale)
+    tf = time.perf_counter()
+    print(f"time dd ts: {tf-ti}")
+    print(coeffs_dd)
+    print(coeffs_exp)
+    print(coeffs_ts)
     print("===complex conj leja===")
     print(ip)
     print("===div diffs===")
     # print(coeffs_dd)
     print(coeffs_exp)
     leja_expmv, iter, converged = complex_conj_imag_leja_expmv(
-            a_lop, dt, u, shift, scale, ip, coeffs_exp, 1e-6)
+            a_lop, dt, u, shift, scale, ip, coeffs_ts, 1e-6)
     print("conj complex leja expmv:", leja_expmv)
     print("true expmv:", expected_expmv)
 
 
-def example_leja_conjugate_points():
+def _example_leja_conjugate_points():
     import matplotlib.pyplot as plt
     a = -2. # use 0 for imaginary interval
     c = 10.
@@ -847,10 +837,9 @@ def example_leja_conjugate_points():
     plt.close()
 
 
-def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
-    # a=0 for imaginary interval
+def _example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
+    import time
     import matplotlib.pyplot as plt
-
     np.set_printoptions(precision=3)
 
     #lpc = gen_leja_circle(n=20, conjugate=True)
@@ -891,12 +880,22 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     # compute polynomial coeffs by div diff for complex conj leja sequence
     print([scale, shift])
     coeffs_dd = leja_coeffs_exp_dd(lp, shift, scale)
+    ti = time.perf_counter()
     coeffs_exp = leja_coeffs_exp(lp, shift, scale)
+    tf = time.perf_counter()
+    print(f"time dd exp: {tf-ti}")
+    ti = time.perf_counter()
+    coeffs_ts = dd_exp_taylor(lp, shift, scale)
+    tf = time.perf_counter()
+    print(f"time dd ts: {tf-ti}")
+    print(coeffs_dd)
+    print(coeffs_exp)
+    print(coeffs_ts)
     print("===div diffs===")
     print(np.hstack((lp[:,None], coeffs_exp[:,None], coeffs_dd[:,None])))
     # shift, scale = 0., 1.0
     leja_expmv, i, converged = complex_conj_leja_expmv(
-            a_lop, 1., u, shift, scale, lp, n_leja_real, coeffs_exp, 1e-3)
+            a_lop, 1., u, shift, scale, lp, n_leja_real, coeffs_ts, 1e-3)
     print([int(i), bool(converged)])
     print("conj complex leja expmv:", leja_expmv)
     print("true expmv:", expected_expmv)
@@ -918,14 +917,157 @@ def example_leja_conjugate_ellipse_error(a=0., b=0., c=4.):
     plt.close()
 
 
+def plot_leja_conjugate_ellipse_error(a=0., b=0., c=4., eigJ=[], dt=1., leja_n_zeros=0, n_leja=50, dd_method="taylor", leja_tol=1e-6, v=None, dirname="./", xscale='linear'):
+    """
+    Helper method to plot and report the error of the conjugate leja polynomial
+    approximation.
+
+    Args:
+        a: left bound of the ellipse enclosing the spectrum
+        b: right bound of the ellipse enclosing the spectrum
+        c: upper imaginary bound of the ellipse enclosing the spectrum
+        eigJ: eigenvalues of the system jacobian
+        leja_n_zeros: number of zeros to include in the interpolation sequence
+        n_leja: number of points in the leja sequence
+        dd_method: divided diff method used to compute the coefficients of the leja polynomial.
+                one of ['taylor', 'pade']
+        v: rhs vector (optional, if None v=unit vec)
+
+    Returns:
+        error of the leja polynomial `matexp(eigJ)*v` approximation
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib import colors
+    np.set_printoptions(precision=4)
+    # generate the leja sequence
+    lp, n_leja_real, scale, shift = gen_leja_conjugate(n=n_leja, a=a, b=b, c=c)
+
+    # prepend leja sequence with zeros
+    if leja_n_zeros > 0:
+        lp = leja_seq_pad_zeros(lp, leja_n_zeros)
+
+    # plot leja points on the complex plane
+    plt.figure()
+    #cmap = plt.get_cmap('rainbow')
+    plt.scatter(-np.real(shift + scale*lp) + 1, np.imag(shift + scale*lp), color='tab:red', marker='x',
+                label="Leja points")
+    plt.scatter(-eigJ.real + 1., eigJ.imag, color='tab:blue', marker='.',
+                label="Jacobian spectrum")
+    plt.xscale('log')
+    plt.grid(ls='--')
+    plt.xlabel("negative real + 1")
+    plt.ylabel("imaginary")
+    if (c == 0):
+        plt.title("Real Leja points \n a: %0.2f, c: %0.2f, shift: %0.2f, scale: %0.2f" % (a, c, shift, scale))
+    else:
+        plt.title("Leja conjugate ellipse \n a: %0.2f, c: %0.2f, shift: %0.2f, scale: %0.2f" % (a, c, shift, scale))
+    plt.legend()
+    plt.gcf().set_size_inches(6, 6)
+    plt.tight_layout()
+    plt.savefig(dirname + '/leja_points_conjugate_ellipse_a%0.2f_c%0.2f.png' % (a,c), dpi=220)
+    plt.close()
+
+    # generate a diagonal matrix and wrap as a linear operator
+    a_plot, b_plot = a-1, b+1
+    xr_grid = jnp.linspace(a_plot, b_plot, 200)
+    c_plot = np.maximum(c, np.max(np.abs(eigJ.imag))) + 1
+    xi_grid = jnp.linspace(-c_plot, c_plot, 200)
+    zr_grid, zi_grid = jnp.meshgrid(xr_grid, xi_grid)
+    zs_grid = zr_grid.flatten() + 1.j * zi_grid.flatten()
+
+    # points to evaluate the matexp error at
+    zs = jnp.concat((eigJ, ))
+    a_lop = DiagLinOp(zs)
+
+    # extended evaluation points for error plot on the complex plane
+    zs_ext = jnp.concat((zs_grid, eigJ))
+    a_ext_lop = DiagLinOp(zs_ext)
+
+    if v is None:
+        u = jnp.ones(len(zs), dtype=jnp.complex128)
+    else:
+        u = jnp.ones(len(zs), dtype=jnp.complex128) * v
+    # u = jnp.ones(len(zs), dtype=jnp.complex128)
+    u_ext = jnp.concat((jnp.ones(len(zs_grid)) * jnp.linalg.norm(u), u))
+
+    # calc exp(a_lop) * u
+    expected_expmv = jnp.exp(zs) * u
+    expected_expmv_ext = jnp.exp(zs_ext) * u_ext
+
+    # compute the divided differences
+    lp = jnp.asarray(lp)
+    coeffs_dd = leja_coeffs_exp_dd(lp, shift, scale)
+    coeffs_exp = leja_coeffs_exp(lp, shift, scale)
+    coeffs_ts = dd_exp_taylor(lp, shift, scale)
+    if dd_method == "pade":
+        coeffs = coeffs_exp
+    elif dd_method == "recursive":
+        coeffs = coeffs_dd
+    else:
+        coeffs = coeffs_ts
+
+    print("===div diffs===")
+    print(np.hstack((lp[:,None], coeffs_dd[:,None], coeffs_exp[:,None], coeffs_ts[:,None])))
+
+    # approx matexp(h*A)*u with h=1.0
+    abort_tol = 1.e50
+    leja_expmv, i, converged = complex_conj_leja_expmv(
+            a_lop, 1., u, shift, scale, lp, leja_n_zeros+n_leja_real,
+            coeffs, leja_tol, abort_tol)
+
+    # approx matexp(h*A_ext)*u_ext
+    leja_expmv_ext, _, _ = complex_conj_leja_expmv(
+            a_ext_lop, 1., u_ext, shift, scale, lp, leja_n_zeros+n_leja_real,
+            coeffs, leja_tol, abort_tol)
+
+    print([int(i), bool(converged)])
+    print("conj complex leja expmv:", leja_expmv)
+    print("true expmv:", expected_expmv)
+
+    errv = np.abs(expected_expmv_ext-leja_expmv_ext)
+    errv_eigs = np.abs(expected_expmv-leja_expmv)
+    errgrid = errv[:zs_grid.flatten().shape[0]]
+    err_spec = errv_eigs
+    max_spec_err = np.max(errv_eigs)
+    l2_spec_err = np.linalg.norm(errv_eigs)
+    max_grid_err = np.max(errgrid)
+    print(f"leja iters: {i}")
+    print("grid error:", max_grid_err)
+    print("max eig error:", max_spec_err)
+    print("l2 eig error:", l2_spec_err)
+
+    plt.figure()
+    Z = errgrid.reshape(zr_grid.shape)
+    pcm = plt.pcolor(
+              -jnp.real(zs_grid.reshape(zr_grid.shape))+1,
+               jnp.imag(zs_grid.reshape(zr_grid.shape)), Z,
+               norm=colors.LogNorm(vmin=1e-14, vmax=100.0),
+               shading='auto')
+    plt.colorbar(pcm)
+    plt.scatter(-eigJ.real + 1., eigJ.imag, color='lightblue', marker='.',
+                label="Jacobian spectrum")
+    plt.scatter(-np.real(shift + scale*lp[:i])+1, np.imag(shift+ scale*lp[:i]),
+                color='tab:red', marker='x', label="Leja points")
+    plt.xscale(xscale)
+    plt.title("Leja interpolation $|e^{Z}u - p(Z)_{leja}|$ error\n" + r"DD: %s, K=%d, $||e^{\Lambda}u-p(\Lambda)_{leja}||_{\infty}$=%0.3e" % (dd_method, i, max_spec_err) )
+    plt.xlabel("negative real + 1")
+    plt.ylabel("imaginary")
+    plt.legend(fancybox=True, framealpha=0.5, loc='lower right')
+    plt.grid(ls='--')
+    plt.gcf().set_size_inches(6, 6)
+    plt.tight_layout()
+    plt.savefig(dirname + '/leja_points_conjugate_ellipse_error_a%0.2f_c%0.2f_nz_%d_%d.png' % (a,c,leja_n_zeros,i), dpi=220)
+    plt.close()
+    return i, max_spec_err, l2_spec_err
+
+
 if __name__ == "__main__":
     jax.config.update("jax_enable_x64", True)
-
-    example_fast_leja_points()
-    example_leja_conjugate_points()
-    example_leja_conjugate_ellipse_error(a=-2.0, c=3.5)
-    example_leja_conjugate_ellipse_error(a=-2.5, b=.5, c=5.5)
-    example_leja_conjugate_ellipse_error(a=0, b=0, c=6)
-    example_leja_conjugate_ellipse_error(a=-3, b=1, c=0)
-    example_leja_conjugate_ellipse_error(a=-1e-5, b=0, c=1e-5)
-    example_leja_conjugate_ellipse_error(a=-2.99, b=.99, c=.01)
+    #_example_fast_leja_points()
+    #_example_leja_conjugate_points()
+    _example_leja_conjugate_ellipse_error(a=-2.0, c=3.5)
+    #_example_leja_conjugate_ellipse_error(a=-2.5, b=.5, c=5.5)
+    #_example_leja_conjugate_ellipse_error(a=0, b=0, c=6)
+    _example_leja_conjugate_ellipse_error(a=-3, b=1, c=0)
+    #_example_leja_conjugate_ellipse_error(a=-1e-5, b=0, c=1e-5)
+    #_example_leja_conjugate_ellipse_error(a=-2.99, b=.99, c=.01)

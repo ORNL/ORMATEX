@@ -4,6 +4,8 @@ Regression test for non linear Lotka-Volterra system.
 Check that all exponential integrators solve a simple
 nonlinear system to the expected precission.
 """
+import os
+import pytest
 from ormatex_py import integrate_wrapper
 from ormatex_py.progression.lotka_volterra import LotkaVolterra, LotkaVolterraNonauto
 import numpy as np
@@ -11,6 +13,11 @@ import scipy as sp
 import jax
 from jax import numpy as jnp
 jax.config.update("jax_enable_x64", True)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def set_env():
+    os.environ["OMP_NUM_THREADS"] = "4"
 
 
 def test_lotka_volterra_auto():

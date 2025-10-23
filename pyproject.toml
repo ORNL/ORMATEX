@@ -14,13 +14,14 @@ description = "Matrix exponential routines and exponential time integrators"
 readme = "README.md"
 requires-python = ">=3.8"
 keywords = [ "matrix exponential", "time integration", "exponential time integration"]
-license = {text = "TBD"}
+license = "Apache-2.0"
+license-files = [ "LICENSE.txt", ]
 classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = ["numpy>=1.8.0", "scipy>=0.12.0",
 	    "jax", "equinox",
-	    "pytest"
+	    "pytest", "mpmath",
 	    ]
 
 [project.optional-dependencies]

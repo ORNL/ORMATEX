@@ -68,19 +68,6 @@ class ExpRBIntegrator(IntegrateSys):
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
 
-    def _remf(self, tr: float, yr: jax.Array,
-              frhs_yt: jax.Array, sys_jac_lop_yt: LinOp, v=0.0):
-        """
-        Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt) - v*(tr-t0)
-        where v = d(frhs)/dt
-        """
-        t = self.t_hist[0]
-        yt = self.y_hist[0]
-        dt = tr - t
-        frhs_yr = self.sys.frhs(tr, yr)
-        jac_yd = sys_jac_lop_yt(yr - yt)
-        return frhs_yr - frhs_yt - jac_yd - v*dt
-
     def _phi2v_nonauto(self, sys_jac_lop, dt, c=1.0):
         r"""
         For rosenbrock exp integrators, this method computes
@@ -447,7 +434,7 @@ class ExpRBIntegrator(IntegrateSys):
 
 class ExpLejaIntegrator(IntegrateSys):
 
-    _valid_methods = {"epi2_leja_re": 2, "epi2_leja_im": 2,}
+    _valid_methods = {"epi2_leja_re": 2, "epi2_leja_im": 2, "epi3_leja_im": 3}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2_leja", **kwargs):
         # Exponential integration method
@@ -465,23 +452,36 @@ class ExpLejaIntegrator(IntegrateSys):
         self.leja_substep = kwargs.get("leja_substep", True)
         # Initial substep size
         self.leja_substep_size = 1.0
+        # Method used to compute divided diffs
+        self.dd_method = kwargs.get("dd_method", "taylor")
+        # number of repeated zeros prepended to the leja sequence
+        self.leja_n_zeros = int(kwargs.get("leja_n_zeros", 2))
         # eigenvector corrosponding to larget magnitude eigenvalue of sys jac.
         self._leja_bk = None
         self.istep = 0
         self.leja_max_power_iter = 100
         self.leja_max_re_eig_scale = kwargs.get("leja_max_re_eig_scale", 1.2)
-        self.n_leja = kwargs.get("n_leja", 180)
+        self.n_leja = kwargs.get("n_leja", 280)
         self.leja_x = jnp.asarray(
                 gen_leja_fast(a=-2, b=2, n=self.n_leja))
         super().__init__(sys, t0, y0, order, method, **kwargs)
 
-    def _step_epi2_re(self, dt: float, frhs_kwargs: dict) -> StepResult:
+    def _step_epi_re(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
-            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+                dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
         using the real leja point method (ReLPM).
+
+        Ref:
+            M. Caliari, M. Vianello, L. Bergamaschi.
+            Interpolating discrete advection–diffusion propagators at Leja sequences.
+            Journal of Computational and Applied Mathematics.
+            Volume 172, Issue 1.
         """
         t = self.t
         yt = self.y_hist[0] # y_t
@@ -509,11 +509,11 @@ class ExpLejaIntegrator(IntegrateSys):
             shift = dt*self.leja_a / 2.
             scale = np.abs(dt*self.leja_a / 4.)
 
-        # import pdb; pdb.set_trace()
         # compute phi-vector products by leja interpolation
         y_update, leja_iters, converged, max_tau_dt = real_leja_expmv_substep(
                 a_tilde_lo, 1.1*self.leja_substep_size, v, self.leja_x,
-                n, shift, scale, self.leja_tol, self.leja_substep)
+                n, shift, scale, self.leja_tol, self.leja_substep,
+                dd_method=self.dd_method)
 
         print("=== Total leja iters: %d, shift: %0.3f, scale: %0.3f" % (leja_iters, shift, scale))
 
@@ -530,11 +530,14 @@ class ExpLejaIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_epi2_im(self, dt: float, frhs_kwargs: dict) -> StepResult:
+    def _step_epi_im(self, dt: float, frhs_kwargs: dict, order:int =2) -> StepResult:
         """
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
-            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+                dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
         using a complex conjugate Leja point method (CLaPM).
         """
@@ -550,7 +553,15 @@ class ExpLejaIntegrator(IntegrateSys):
         vb0 = jnp.zeros(yt.shape)
 
         # build augmented linear system
-        a_tilde_lo, v, n = build_a_tilde(sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt])
+        if order == 2:
+            a_tilde_lo, v, n = build_a_tilde(sys_jac_lop, dt, [vb0, dt*fyt, dt**2*fytt])
+        elif order == 3:
+            yp = self.y_hist[1] # y_{t-1}
+            tp = self.t_hist[1]
+            rn = self._remf(tp, yp, fyt, sys_jac_lop, fytt)
+            a_tilde_lo, v, n = build_a_tilde(sys_jac_lop, dt, [vb0, dt*fyt, dt*(2./3.)*rn + dt**2*fytt])
+        else:
+            raise NotImplementedError
 
         _power_iters = 0
         if self.leja_a is None:
@@ -576,7 +587,8 @@ class ExpLejaIntegrator(IntegrateSys):
         # compute phi-vector products by leja interpolation
         y_update, leja_iters, converged, max_tau_dt = complex_conj_leja_expmv_substep(
                 a_tilde_lo, 1.1*self.leja_substep_size, v, leja_x, n_leja_real,
-                n, shift, scale, self.leja_tol, self.leja_substep)
+                n, shift, scale, self.leja_tol, self.leja_substep,
+                leja_n_zeros=self.leja_n_zeros, dd_method=self.dd_method)
 
         print("=t: %0.2f, Pwr itrs: %d, Leja itrs: %d, leja_a: %0.2f, leja_c: %0.2f, shift: %0.2f, scale: %0.2f" % (t, _power_iters, leja_iters, leja_a, leja_c, shift, scale))
 
@@ -595,9 +607,14 @@ class ExpLejaIntegrator(IntegrateSys):
 
     def step(self, dt: float, frhs_kwargs: dict={}) -> StepResult:
         if self.method == "epi2_leja_re":
-            return self._step_epi2_re(dt, frhs_kwargs)
+            return self._step_epi_re(dt, frhs_kwargs)
         elif self.method == "epi2_leja_im":
-            return self._step_epi2_im(dt, frhs_kwargs)
+            return self._step_epi_im(dt, frhs_kwargs)
+        elif self.method == "epi3_leja_im":
+            if len(self.y_hist) >= 2:
+                return self._step_epi_im(dt, frhs_kwargs, order=3)
+            else:
+                return self._step_epi_im(dt, frhs_kwargs, order=2)
         else:
             raise NotImplementedError
 

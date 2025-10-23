@@ -16,6 +16,7 @@ Ref: https://github.com/jax-ml/jax/discussions/25711
 """
 import numpy as np
 import scipy as sp
+from itertools import cycle
 import os
 
 import jax
@@ -28,6 +29,7 @@ import skfem as fem
 
 from ormatex_py.ode_sys import OdeSys, OdeSplitSys, MatrixLinOp
 from ormatex_py.ode_utils import stack_u, flatten_u
+from ormatex_py.matexp_leja import plot_leja_conjugate_ellipse_error
 
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
@@ -108,6 +110,7 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
     print("dt*J", dtJ)
     eigdtJ = np.linalg.eig(dtJ)[0]
+
     plt.figure()
     plt.scatter(-eigdtJ.real+1., eigdtJ.imag)
     plt.ylabel('Imaginary')
@@ -123,6 +126,62 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     dtJeig_min = np.min(np.abs(eigdtJ))
     print("CFL: %0.4f/%0.4f" % (dtJeig_max, dtJnorm))
     return dtJeig_max, dtJeig_min
+
+def plot_leja_conv_detail(
+        ode_sys, y, t, dt, outdir="./",
+        n_leja_list=[4, 8, 12, 24, 36, 50, 76, 100, 126, 150, 176, 200, 240],
+        **kwargs):
+    """
+    Plots leja polynomial convergence details
+    """
+    import matplotlib.pyplot as plt
+    dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
+    eigdtJ = np.linalg.eig(dtJ)[0]
+    a = kwargs.get("leja_a", None)
+    a = np.min(eigdtJ.real) if a is None else a
+    b = 0.0
+    c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
+    # differnet leja polynomial parameters
+    leja_plist = {r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{pade}$": {"c": c, "leja_n_zeros": 1, "dd_method": "pade"},
+                  r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{ts}$": {"c": c, "leja_n_zeros": 1, "dd_method": "taylor"},
+                  r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{pade}$": {"c": c, "leja_n_zeros": 0, "dd_method": "pade"},
+                  r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{ts}$": {"c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
+                  r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{pade}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "pade"},
+                  r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{ts}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "taylor"},
+                  r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{rc}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "recursive"},
+                  }
+    err_dict = {}
+    for key, leja_p in leja_plist.items():
+        l1_err_list, l2_err_list = [], []
+        for n_leja in n_leja_list:
+            i, l1_expmv_err, l2_expmv_err = plot_leja_conjugate_ellipse_error(
+                    a=a, b=b, c=leja_p["c"], eigJ=eigdtJ, leja_n_zeros=leja_p["leja_n_zeros"],
+                    v=y, dd_method=leja_p['dd_method'],
+                    n_leja=n_leja, leja_tol=1e-30, dirname=outdir)
+            l1_err_list.append((i, l1_expmv_err))
+            l2_err_list.append((i, l2_expmv_err))
+            if l1_expmv_err < 1e-12:
+                break
+        err_dict[key] = (np.asarray(l1_err_list), np.asarray(l2_err_list))
+    # plot expm err as fn of number of leja points
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+    ax1.set_yscale("log")
+    ax2.set_yscale("log")
+    ls_cycler = cycle(['-', '--'])
+    for key, (l1_err_list, l2_err_list) in err_dict.items():
+        ls = next(ls_cycler)
+        ax1.plot(l1_err_list[:, 0], l1_err_list[:, 1], alpha=1.0, ls=ls, label=key)
+        ax2.plot(l2_err_list[:, 0], l2_err_list[:, 1], alpha=1.0, ls=ls, label=key)
+    ax1.grid(ls='--')
+    ax2.grid(ls='--')
+    ax1.set_ylabel(r"$|e^{A} v - p_{leja}|_\infty$ err")
+    ax2.set_ylabel(r"$||e^{A} v - p_{leja}||_2$ err")
+    ax1.set_xlabel("N leja points")
+    ax2.set_xlabel("N leja points")
+    plt.tight_layout()
+    plt.legend()
+    plt.savefig(outdir + "/leja_converge.png", dpi=200)
+    plt.close()
 
 def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu=0.002, **kwargs):
     # create the mesh
@@ -261,7 +320,12 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     mae_list, mae_rl_list = plot_sol(-1)
 
     if jac_plot:
-        plot_dt_jac_spec(ode_sys, y_res[-1], 0.0, dt)
+        # plot the jacobian spectrum
+        plot_dt_jac_spec(ode_sys, y_res[-1], 0.0, dt, figname="reac_adv_diff_s3_eigplot")
+
+        # plot the leja polynomial matexp-vec approx
+        if "leja" in method and kwargs.get("leja_plot", False):
+            plot_leja_conv_detail(ode_sys, y_res[-1], t, dt, outdir=outdir, **kwargs)
 
     print("=== Species MAEs at t=%0.4e ===" % t_res[-1])
     [print("%0.4e" % a, end=', ') for a in mae_list]
@@ -286,21 +350,23 @@ if __name__ == "__main__":
     parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-dt", help="time step size", type=float, default=0.1)
-    parser.add_argument("-leja_tol", help="optional leja integrator tolerance", type=float, default=1.0e-8)
+    parser.add_argument("-leja_tol", help="optional leja integrator tolerance", type=float, default=1.0e-15)
     parser.add_argument("-leja_a", help="optional min real part of the J*dt spectrum. If None, power iter is used to determine this value.", type=float, default=None)
     parser.add_argument("-leja_c", help="optional max complex part of the J*dt spectrum", type=float, default=1.0)
     parser.add_argument("-leja_substep", help="optional to enable substepping the leja integrator", action='store_true', default=False)
+    parser.add_argument("-leja_plot", help="additional leja polynomial convergence plots", default=False, action='store_true')
     parser.add_argument("-nu", help="diffusion coeff", type=float, default=1e-10)
     parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
+    parser.add_argument("-leja_n_zeros", help="number of zeros prepended to leja sequence", type=int, default=1)
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
     args = parser.parse_args()
     jax.config.update("jax_disable_jit", args.nojit)
 
     if args.sweep:
-        #methods = ['exprb2', 'exprb3', 'epi3', 'implicit_euler', 'implicit_esdirk3']
-        methods = ['exprb2', 'epi2_leja', 'exprb2_pfd', 'exprb2_pfd',
+        methods = ['exprb2', 'epi2_leja_im', 'exprb2_pfd', 'exprb2_pfd',
                    'exprb2_pfd', 'exprb2_pfd', 'implicit_esdirk3']
         pfd_methods = ['', '', 'pade_1_2', 'pade_2_4', 'cram_6', 'cram_16', '']
         dts = [0.025, 0.05, 0.1, 0.125, 0.2, 0.5]
@@ -314,7 +380,8 @@ if __name__ == "__main__":
                 mae, mae_rl = main(dt, method, True, args.mr, args.p,
                                    tf=args.tf, pfd_method=pfd_method, nu=args.nu,
                                    leja_a=args.leja_a, leja_c=args.leja_c,
-                                   leja_substep=args.leja_substep, leja_tol=args.leja_tol)
+                                   leja_substep=args.leja_substep, leja_tol=args.leja_tol,
+                                   leja_n_zeros=args.leja_n_zeros, leja_plot=args.leja_plot)
                 mae_sweep[method_str].append(([dt] + mae))
                 mae_rl_sweep[method_str].append(([dt] + mae_rl))
             print("=== Method: %s" % method_str)
@@ -352,4 +419,5 @@ if __name__ == "__main__":
         main(args.dt, args.method, args.per, args.mr, args.p,
              tf=args.tf, jac_plot=True, nu=args.nu,
              leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep,
-             leja_tol=args.leja_tol)
+             leja_tol=args.leja_tol, dd_method=args.dd_method, leja_n_zeros=args.leja_n_zeros,
+             leja_plot=args.leja_plot)

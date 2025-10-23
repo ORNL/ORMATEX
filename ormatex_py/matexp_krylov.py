@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ##############################################################################
-"""
+r"""
 Krylov methods to calculate :math:`\mathrm{exp}(A \delta t)v` and
 :math:`\phi_k(A \delta t)v` with sparse A
 """
