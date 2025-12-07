@@ -218,13 +218,13 @@ fn select_solver<'a>(
     -> Rc < RefCell<dyn IntegrateSys<'a, TimeType=f64, SysStateType=Mat<f64>> + 'a> >
 {
     if method.as_str() == "bdf1" || method.as_str() == "backeuler" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 1, sys)))
+        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 1)))
     }
     else if method.as_str() == "bdf2" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 2, sys)))
+        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 2)))
     }
     else if method.as_str() == "cn" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 3, sys)))
+        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 3)))
     }
     // exp integrator family is default
     let expmv: Box<dyn DensePhikvEvaluator> = match expmv_method.as_str() {
@@ -235,7 +235,7 @@ fn select_solver<'a>(
     };
     let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     Rc::new( RefCell::new(ode_epirk::EpirkIntegrator::new(
-        t0, y0_mat, method, sys, matexp_m).with_opt(String::from("tol_fdt"), tol_fdt)))
+        t0, y0_mat, method, matexp_m).with_opt(String::from("tol_fdt"), tol_fdt)))
 }
 
 
@@ -295,7 +295,7 @@ fn integrate_wrapper_rs<'py>(
             y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
             t_out.push(_t);
         }
-        let y_new = borrowed_solver.step(dt);
+        let y_new = borrowed_solver.step(&sys, dt);
         borrowed_solver.accept_step(y_new.unwrap());
     }
     let _y = borrowed_solver.state();

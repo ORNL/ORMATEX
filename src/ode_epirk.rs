@@ -27,9 +27,7 @@ use std::marker::PhantomData;
 use std::collections::VecDeque;
 
 
-pub struct EpirkIntegrator<'a, F>
-where
-    F: OdeSys<'a>,
+pub struct EpirkIntegrator<'a>
 {
     /// Matrix exponential evaluator
     expm: KrylovExpm,
@@ -57,12 +55,11 @@ where
     phantom: PhantomData<&'a ()>
 }
 
-impl <'a, F> EpirkIntegrator <'a, F>
-where
-    F: OdeSys<'a>,
+impl <'a> EpirkIntegrator <'a>
 {
     /// Set the initial conditions and seteup bdf integrator
-    pub fn new(t0: f64, y0: MatRef<f64>, method: String, sys: &'a F, expm: KrylovExpm) -> Self {
+    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: KrylovExpm) -> Self
+    {
         let order = match method.as_str() {
             "epi2" | "exprb2" => 2,
             "epi3" | "exprb3" => 3,
@@ -96,7 +93,7 @@ where
 
     /// Computes remainder R(yr) = frhs(yr) - frhs(y0) - J_y0*(yr-y0) - v*t
     /// where if v=d(Frhs)/dt is nonzero for nonautonomous systems
-    fn remf(&self, sys: &F, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>, v: Option<MatRef<f64>>)
+    fn remf(&self, sys: &'a dyn OdeSys<'a>, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>, v: Option<MatRef<f64>>)
         -> Mat<f64>
     {
         let t = self.t_hist[0];
@@ -117,7 +114,7 @@ where
     }
 
     /// Estimates the time drivative of frhs by finite difference
-    fn frhs_fdt(&self, sys: &F, fy0: MatRef<f64>, del_t: f64) -> Mat<f64> {
+    fn frhs_fdt(&self, sys: &'a dyn OdeSys<'a>, fy0: MatRef<f64>, del_t: f64) -> Mat<f64> {
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
         let fy1 = sys.frhs(t+del_t, y0);
@@ -125,7 +122,7 @@ where
     }
 
     /// Correction for nonautonomous case
-    fn fphi2_v(&self, sys: &F, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> (Mat<f64>, Mat<f64>) {
+    fn fphi2_v(&self, sys: &'a dyn OdeSys<'a>, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> (Mat<f64>, Mat<f64>) {
         let mut phi2_v = Mat::zeros(fy0.nrows(), fy0.ncols());
         if self.tol_fdt < 0. {
             return (phi2_v,  Mat::zeros(fy0.nrows(), fy0.ncols()))
@@ -138,7 +135,7 @@ where
     }
 
     /// EPI2
-    fn step_order_2(&self, sys: &'a F, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_2(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -163,7 +160,7 @@ where
 
     /// EXPRB32
     /// Exponential Rosenroack order 3 with 2nd order embedded error estimate.
-    fn step_exprb32(&self, sys: &'a F, dt: f64)
+    fn step_exprb32(&self, sys: &'a dyn OdeSys<'a>, dt: f64)
         -> Result<StepResult<f64, Mat<f64>>, StepError>
     {
         // current state
@@ -202,7 +199,7 @@ where
     /// From Gaudreault et. al.
     /// An efficient exponential time integration method for the numerical
     /// solution of the shallow water equations.
-    fn step_order_3(&self, sys: &'a F, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_3(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -235,9 +232,7 @@ where
     }
 }
 
-impl <'a, F> IntegrateSys<'a> for EpirkIntegrator<'a, F>
-where
-    F: OdeSys<'a>,
+impl <'a> IntegrateSys<'a> for EpirkIntegrator<'a>
 {
     type TimeType = f64;
     type SysStateType = Mat<f64>;

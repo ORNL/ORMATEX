@@ -67,7 +67,7 @@ impl <T, S> StepResult<T, S> {
     }
 }
 
-pub trait IntegrateSys <'a>
+pub trait IntegrateSys<'a>
 {
     type TimeType;
     type SysStateType;
@@ -89,25 +89,6 @@ pub trait IntegrateSys <'a>
     /// Reset integrator.  Removes solution history
     fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType);
 
-//     fn int(&'a mut self, y0: MatRef<f64>, mut y: MatMut<f64>, ti: f64, tf: f64,  dt_max: f64)
-//     {
-//         y.copy_from(y0);
-//         let mut t = ti.clone();
-//         let mut dt = f64::min(dt_max, tf - ti);
-//         let mut i = 0;
-//         loop {
-//             let leftover = tf - t;
-//             dt = f64::min(leftover, dt);
-//             if t < tf {
-//                 y.copy_from(self.step(dt));
-//                 t += dt;
-//             }
-//             else {
-//                 break;
-//             }
-//             i += 1;
-//         }
-//     }
 }
 
 

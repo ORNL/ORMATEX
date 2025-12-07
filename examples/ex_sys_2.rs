@@ -23,14 +23,14 @@ pub fn main() {
         ];
 
     // setup the integrator
-    // let mut sys_solver = ode_bdf::BdfIntegrator::new(0.0, y0.as_ref(), 2, &test_sys);
-    // let mut sys_solver = ode_rk::RkIntegrator::new(0.0, y0.as_ref(), 2, &test_sys);
+    // let mut sys_solver = ode_bdf::BdfIntegrator::new(0.0, y0.as_ref(), 2);
+    // let mut sys_solver = ode_rk::RkIntegrator::new(0.0, y0.as_ref(), 2);
     let iom = 2;
     let krylov_dim = 3;
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
     let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     let mut sys_solver = ode_epirk::EpirkIntegrator::new(
-        0.0, y0.as_ref(), "epi2".to_string(), &test_sys, matexp_m).with_opt(String::from("tol_fdt"), 1e-8);
+        0.0, y0.as_ref(), "epi2".to_string(), matexp_m).with_opt(String::from("tol_fdt"), 1e-8);
 
     // output concentrations
     let mut t_points: Vec<f64> = Vec::new();
@@ -43,7 +43,7 @@ pub fn main() {
     let dt = 5.0;
     let nsteps = 100;
     for _i in 0..nsteps {
-        let y_new = sys_solver.step(dt).unwrap();
+        let y_new = sys_solver.step(&test_sys, dt).unwrap();
 
         t_points.push(t);
         c0.push((&y_new).y[(0, 0)]);
