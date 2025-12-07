@@ -14,4 +14,5 @@ pub mod ode_utils;
 pub mod ode_test_common;
 
 // python bindings
+#[cfg(feature = "python")]
 pub mod ormatex_rspy;

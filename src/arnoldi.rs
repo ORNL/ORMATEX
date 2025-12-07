@@ -21,8 +21,8 @@ use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer_traits::RealField;
 use reborrow::ReborrowMut;
 use std::cmp;
-use faer::dyn_stack::PodStack;
 use num_traits::Float;
+// use faer::dyn_stack::PodStack;
 
 
 /// Arnoldi inner iteration with linear operator A

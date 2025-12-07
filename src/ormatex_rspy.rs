@@ -239,12 +239,12 @@ fn select_solver<'a>(
 }
 
 
-fn get_val_or_default<'py, T>(py: Python<'py>, kd_hash: &HashMap<String, PyObject>, key: String, default: T) -> T
+fn get_val_or_default<'py, T>(py: Python<'py>, kd_hash: &HashMap<String, Py<PyAny>>, key: String, default: T) -> T
 where T: FromPyObject<'py>
 {
     for (k, v) in kd_hash.iter() {
         if *k == key {
-            return v.extract::<T>(py).unwrap();
+            return v.extract(py).unwrap();
         }
     }
     default
@@ -359,14 +359,14 @@ fn arnoldi_rs<'py>(
 
     // convert b vec into fear mat
     let b_ndarray = b.as_array();
-    let b_mat = b_ndarray.view().into_faer();
+    let b_mat = b_ndarray.into_faer();
 
     // run arnoldi
     let (q, h, bkdwn) = arnoldi_lop(
-        &lop_wrapped, a_lo_scale, b_mat.as_ref(), m, iom);
+        &lop_wrapped, a_lo_scale, b_mat, m, iom);
 
     // convert faer mats into numpy arrays
-    let h_ndarray = h.as_ref().into_ndarray().to_owned();
+    let h_ndarray = h.as_dyn().into_ndarray().to_owned();
     let q_ndarray = q.as_ref().into_ndarray().to_owned();
     (
         q_ndarray.into_pyarray(py),
