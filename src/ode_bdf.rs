@@ -26,9 +26,6 @@ pub struct BdfIntegrator<'a>
     /// Order
     order: usize,
 
-    /// System
-    // sys: &'a F,
-
     /// Current time
     t: f64,
 

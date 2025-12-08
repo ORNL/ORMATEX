@@ -68,9 +68,6 @@ pub fn bt_factory(order: usize) -> BT {
 /// Runga-Kutta ode intergrator
 pub struct RkIntegrator
 {
-    /// RHS of the ODE system
-    // sys: &'a F,
-
     /// Order
     order: usize,
 

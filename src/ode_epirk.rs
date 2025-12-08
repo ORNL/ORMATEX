@@ -39,9 +39,6 @@ pub struct EpirkIntegrator<'a>
     /// Method
     method: String,
 
-    /// System
-    //pub sys: &'a F,
-
     /// Current time
     t: f64,
 
