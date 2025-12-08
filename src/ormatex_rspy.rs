@@ -368,7 +368,7 @@ fn arnoldi_rs<'py>(
         &lop_wrapped, a_lo_scale, b_mat, m, iom);
 
     // convert faer mats into numpy arrays
-    let h_ndarray = h.as_dyn().into_ndarray().to_owned();
+    let h_ndarray = h.as_ref().into_ndarray().to_owned();
     let q_ndarray = q.as_ref().into_ndarray().to_owned();
     (
         q_ndarray.into_pyarray(py),
