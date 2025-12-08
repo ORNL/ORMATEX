@@ -20,7 +20,7 @@ use faer::matrix_free::LinOp;
 use crate::arnoldi::arnoldi_lop;
 use crate::ode_sys::ExtendedLinOp;
 use crate::matexp_pade;
-use crate::matexp_pade::DensePhikvEvaluator;
+use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 
 
 /// Krylov methods to compute Sparse Matrix Exponential
@@ -117,9 +117,8 @@ impl KrylovExpm {
     /// * `a_lo` - Linear operator, A, in [phi_0(A*dt) * v_0 + phi_1(A*dt) * v_1 + ...]
     /// * `dt` - time step scale.
     /// * `vb` - Vec of rhs, [v] in [phi_0(A*dt) * v_0 + ...]
-    pub fn kiops_fixedsteps<'a>(
+    pub fn kiops_fixedsteps(
         &self,
-        // a_lo: Box<dyn LinOp<f64> + 'a>,
         ext_a_lo: &ExtendedLinOp,
         dt: f64,
         vb: &Vec<MatRef<f64>>)
@@ -133,6 +132,16 @@ impl KrylovExpm {
 
         // extract first n rows
         w.get(0..n, 0..1).to_owned()
+    }
+}
+
+impl LinOpPhikvEvaluator for KrylovExpm {
+    fn apply_phi_k_v(&self, a_lo: &ExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
+        self.kiops_fixedsteps(a_lo, dt, vb)
+    }
+
+    fn apply_phi_k(&self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, k: usize) -> Mat<f64> {
+        self.apply_phi_linop(a_lo, dt, v, k)
     }
 }
 

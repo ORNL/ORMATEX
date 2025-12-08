@@ -55,7 +55,8 @@ use crate::ode_bdf;
 use crate::ode_rk;
 use crate::ode_epirk;
 use crate::matexp_krylov;
-use crate::matexp_pade::{PadeExpm, DensePhikvEvaluator, phi_ext};
+use crate::matexp_pade::{PadeExpm, phi_ext};
+use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use crate::matexp_cauchy;
 
 /// Wrapper around python PySys object
@@ -214,37 +215,31 @@ fn select_solver<'a>(
     krylov_dim: usize,
     iom: usize,
     tol_fdt: f64,
+    matexp_m: &'a dyn LinOpPhikvEvaluator,
     )
     -> Rc < RefCell<dyn IntegrateSys<'a, TimeType=f64, SysStateType=Mat<f64>> + 'a> >
 {
     if method.as_str() == "bdf1" || method.as_str() == "backeuler" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 1, sys)))
+        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 1)))
     }
     else if method.as_str() == "bdf2" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 2, sys)))
+        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 2)))
     }
     else if method.as_str() == "cn" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 3, sys)))
+        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 3)))
     }
     // exp integrator family is default
-    let expmv: Box<dyn DensePhikvEvaluator> = match expmv_method.as_str() {
-        "cram" | "cram_16" => { Box::new(matexp_cauchy::gen_cram_expm(16)) },
-        "parabolic" => { Box::new(matexp_cauchy::gen_parabolic_expm(24)) },
-        // pade is default
-        _ => { Box::new(PadeExpm::new(12)) },
-    };
-    let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     Rc::new( RefCell::new(ode_epirk::EpirkIntegrator::new(
-        t0, y0_mat, method, sys, matexp_m).with_opt(String::from("tol_fdt"), tol_fdt)))
+        t0, y0_mat, method, matexp_m).with_opt(String::from("tol_fdt"), tol_fdt)))
 }
 
 
-fn get_val_or_default<'py, T>(py: Python<'py>, kd_hash: &HashMap<String, PyObject>, key: String, default: T) -> T
+fn get_val_or_default<'py, T>(py: Python<'py>, kd_hash: &HashMap<String, Py<PyAny>>, key: String, default: T) -> T
 where T: FromPyObject<'py>
 {
     for (k, v) in kd_hash.iter() {
         if *k == key {
-            return v.extract::<T>(py).unwrap();
+            return v.extract(py).unwrap();
         }
     }
     default
@@ -279,8 +274,15 @@ fn integrate_wrapper_rs<'py>(
     let y0_mat = y.view().into_faer();
 
     // setup the integrator
+    let expmv: Box<dyn DensePhikvEvaluator> = match expmv_method.as_str() {
+        "cram" | "cram_16" => { Box::new(matexp_cauchy::gen_cram_expm(16)) },
+        "parabolic" => { Box::new(matexp_cauchy::gen_parabolic_expm(24)) },
+        // pade is default
+        _ => { Box::new(PadeExpm::new(12)) },
+    };
+    let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     let solver = select_solver(
-        sys, t0, y0_mat, method, expmv_method, krylov_dim, iom, tol_fdt);
+        sys, t0, y0_mat, method, expmv_method, krylov_dim, iom, tol_fdt, &matexp_m);
 
     // storage for results
     let mut y_out: Vec<Bound<PyArray2<f64>>> = Vec::with_capacity(nsteps);
@@ -295,7 +297,7 @@ fn integrate_wrapper_rs<'py>(
             y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
             t_out.push(_t);
         }
-        let y_new = borrowed_solver.step(dt);
+        let y_new = borrowed_solver.step(sys, dt);
         borrowed_solver.accept_step(y_new.unwrap());
     }
     let _y = borrowed_solver.state();
@@ -359,11 +361,11 @@ fn arnoldi_rs<'py>(
 
     // convert b vec into fear mat
     let b_ndarray = b.as_array();
-    let b_mat = b_ndarray.view().into_faer();
+    let b_mat = b_ndarray.into_faer();
 
     // run arnoldi
     let (q, h, bkdwn) = arnoldi_lop(
-        &lop_wrapped, a_lo_scale, b_mat.as_ref(), m, iom);
+        &lop_wrapped, a_lo_scale, b_mat, m, iom);
 
     // convert faer mats into numpy arrays
     let h_ndarray = h.as_ref().into_ndarray().to_owned();

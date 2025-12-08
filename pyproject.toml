@@ -15,7 +15,6 @@ readme = "README.md"
 requires-python = ">=3.8"
 keywords = [ "matrix exponential", "time integration", "exponential time integration"]
 license = "Apache-2.0"
-license-files = [ "LICENSE.txt", ]
 classifiers = [
     "Programming Language :: Python :: 3",
 ]

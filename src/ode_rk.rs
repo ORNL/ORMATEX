@@ -15,9 +15,7 @@
  */
 /// Runge-Kutta explicit integrators
 use faer::prelude::*;
-use faer::sparse::*;
 use std::collections::VecDeque;
-use std::marker::PhantomData;
 use crate::ode_sys::*;
 
 pub struct BT {
@@ -68,13 +66,8 @@ pub fn bt_factory(order: usize) -> BT {
 }
 
 /// Runga-Kutta ode intergrator
-pub struct RkIntegrator<'a, F>
-where
-    F: OdeSys<'a>,
+pub struct RkIntegrator
 {
-    /// RHS of the ODE system
-    sys: &'a F,
-
     /// Order
     order: usize,
 
@@ -88,11 +81,9 @@ where
     y_hist: VecDeque<Mat<f64>>,
 }
 
-impl <'a, F> RkIntegrator <'a, F>
-where
-    F: OdeSys<'a>,
+impl RkIntegrator
 {
-    pub fn new(t0: f64, y0: MatRef<f64>, order: usize, sys: &'a F) -> Self
+    pub fn new(t0: f64, y0: MatRef<f64>, order: usize) -> Self
     {
     let mut y_hist = VecDeque::with_capacity(order);
     y_hist.push_front(y0.to_owned());
@@ -104,7 +95,6 @@ where
             _ => panic!("Invalid RK order")
         };
         Self {
-            sys,
             order,
             bt,
             t: t0,
@@ -112,19 +102,19 @@ where
         }
     }
 
-    pub fn step_rk(&self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    pub fn step_rk<'a>(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
 
         let mut k: Vec<Mat<f64>> = vec![];
-        k.push(self.sys.frhs(t, y0.as_ref()));
+        k.push(sys.frhs(t, y0.as_ref()));
         for i in 0..self.order-1 {
             let mut y_delta = y0.to_owned();
             for j in 0..i+1 {
                 y_delta = y_delta.as_ref() + faer::Scale(dt * self.bt.a[i][j]) * k[j].as_ref();
             }
-            let k_i = self.sys.frhs(t + (dt * self.bt.c[i]), y_delta.as_ref());
+            let k_i = sys.frhs(t + (dt * self.bt.c[i]), y_delta.as_ref());
             k.push(k_i);
         }
         let mut acc = y0.to_owned();
@@ -135,15 +125,13 @@ where
     }
 }
 
-impl <'a, F> IntegrateSys<'a> for RkIntegrator<'a, F>
-where
-    F: OdeSys<'a>,
+impl <'a> IntegrateSys<'a> for RkIntegrator
 {
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
-       self.step_rk(dt)
+    fn step(&self, sys: &'a dyn OdeSys<'a>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+       self.step_rk(sys, dt)
     }
 
     fn time(&self) -> Self::TimeType {
@@ -169,7 +157,6 @@ where
 
 #[cfg(test)]
 mod test_rk {
-    use assert_approx_eq::assert_approx_eq;
     use crate::ode_test_common::*;
 
     // bring everything from above (parent) module into scope
@@ -187,13 +174,13 @@ mod test_rk {
             ];
 
         // setup rk ode solver order 1
-        let mut sys_solver = RkIntegrator::new(0.0, y0.as_ref(), 1, &test_sys);
+        let mut sys_solver = RkIntegrator::new(0.0, y0.as_ref(), 1);
 
         // step the solution forward
         let mut t = 0.0;
         let dt = 0.01;
         for _i in 0..10 {
-            let y_new = sys_solver.step(dt).unwrap();
+            let y_new = sys_solver.step(&test_sys, dt).unwrap();
             print!("t:{:?}, y:{:?}", t, &y_new.y);
             sys_solver.accept_step(y_new);
             t += dt;
@@ -212,13 +199,13 @@ mod test_rk {
             ];
 
         // setup rk ode solver order 2
-        let mut sys_solver = RkIntegrator::new(0.0, y0.as_ref(), 2, &test_sys);
+        let mut sys_solver = RkIntegrator::new(0.0, y0.as_ref(), 2);
 
         // step the solution forward
         let mut t = 0.0;
         let dt = 0.01;
         for _i in 0..10 {
-            let y_new = sys_solver.step(dt).unwrap();
+            let y_new = sys_solver.step(&test_sys, dt).unwrap();
             print!("t:{:?}, y:{:?}", t, &y_new.y);
             sys_solver.accept_step(y_new);
             t += dt;
@@ -237,13 +224,13 @@ mod test_rk {
             ];
 
         // setup rk ode solver order 4
-        let mut sys_solver = RkIntegrator::new(0.0, y0.as_ref(), 4, &test_sys);
+        let mut sys_solver = RkIntegrator::new(0.0, y0.as_ref(), 4);
 
         // step the solution forward
         let mut t = 0.0;
         let dt = 0.01;
         for _i in 0..10 {
-            let y_new = sys_solver.step(dt).unwrap();
+            let y_new = sys_solver.step(&test_sys, dt).unwrap();
             print!("t:{:?}, y:{:?}", t, &y_new.y);
             sys_solver.accept_step(y_new);
             t += dt;

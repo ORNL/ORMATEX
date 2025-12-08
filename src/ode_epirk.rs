@@ -19,6 +19,7 @@ use faer::prelude::*;
 use num_traits::real::Real;
 use num_traits::Float;
 use crate::matexp_krylov::KrylovExpm;
+use crate::matexp_traits::LinOpPhikvEvaluator;
 use crate::ode_sys::*;
 use faer::matrix_free::LinOp;
 use faer::dyn_stack::PodStack;
@@ -27,21 +28,16 @@ use std::marker::PhantomData;
 use std::collections::VecDeque;
 
 
-pub struct EpirkIntegrator<'a, F>
-where
-    F: OdeSys<'a>,
+pub struct EpirkIntegrator<'a>
 {
     /// Matrix exponential evaluator
-    expm: KrylovExpm,
+    expm: &'a dyn LinOpPhikvEvaluator,
 
     /// Order
     order: usize,
 
     /// Method
     method: String,
-
-    /// System
-    sys: &'a F,
 
     /// Current time
     t: f64,
@@ -57,12 +53,11 @@ where
     phantom: PhantomData<&'a ()>
 }
 
-impl <'a, F> EpirkIntegrator <'a, F>
-where
-    F: OdeSys<'a>,
+impl <'a> EpirkIntegrator <'a>
 {
     /// Set the initial conditions and seteup bdf integrator
-    pub fn new(t0: f64, y0: MatRef<f64>, method: String, sys: &'a F, expm: KrylovExpm) -> Self {
+    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: &'a dyn LinOpPhikvEvaluator) -> Self
+    {
         let order = match method.as_str() {
             "epi2" | "exprb2" => 2,
             "epi3" | "exprb3" => 3,
@@ -76,7 +71,6 @@ where
             expm,
             order,
             method,
-            sys,
             t: t0,
             tol_fdt: -1.0,
             y_hist,
@@ -97,12 +91,12 @@ where
 
     /// Computes remainder R(yr) = frhs(yr) - frhs(y0) - J_y0*(yr-y0) - v*t
     /// where if v=d(Frhs)/dt is nonzero for nonautonomous systems
-    fn remf(&self, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>, v: Option<MatRef<f64>>)
+    fn remf(&self, sys: &'a dyn OdeSys<'a>, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>, v: Option<MatRef<f64>>)
         -> Mat<f64>
     {
         let t = self.t_hist[0];
         let y0 = self.y_hist[0].as_ref();
-        let frhs_yr = self.sys.frhs(tr, yr);
+        let frhs_yr = sys.frhs(tr, yr);
 
         let mut jac_yd = faer::Mat::zeros(y0.nrows(), 1);
         sys_jac_lop_y0.apply(
@@ -118,43 +112,43 @@ where
     }
 
     /// Estimates the time drivative of frhs by finite difference
-    fn frhs_fdt(&self, fy0: MatRef<f64>, del_t: f64) -> Mat<f64> {
+    fn frhs_fdt(&self, sys: &'a dyn OdeSys<'a>, fy0: MatRef<f64>, del_t: f64) -> Mat<f64> {
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
-        let fy1 = self.sys.frhs(t+del_t, y0);
+        let fy1 = sys.frhs(t+del_t, y0);
         (fy1 - fy0) / Scale(del_t)
     }
 
     /// Correction for nonautonomous case
-    fn fphi2_v(&self, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> (Mat<f64>, Mat<f64>) {
+    fn fphi2_v(&self, sys: &'a dyn OdeSys<'a>, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> (Mat<f64>, Mat<f64>) {
         let mut phi2_v = Mat::zeros(fy0.nrows(), fy0.ncols());
         if self.tol_fdt < 0. {
             return (phi2_v,  Mat::zeros(fy0.nrows(), fy0.ncols()))
         }
-        let v = self.frhs_fdt(fy0.as_ref(), 1e-8);
+        let v = self.frhs_fdt(sys, fy0.as_ref(), 1e-8);
         if v.norm_max() > self.tol_fdt {
-            phi2_v = Scale(dt.powi(2)) * self.expm.apply_phi_linop(sys_jac_lop, dt, v.as_ref(), 2);
+            phi2_v = Scale(dt.powi(2)) * self.expm.apply_phi_k(sys_jac_lop, dt, v.as_ref(), 2);
         }
         (phi2_v, v)
     }
 
     /// EPI2
-    fn step_order_2(&self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_2(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
 
 
         // setup jacobian linear operator evaluated at y0
-        let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
-        let fy0 = self.sys.frhs(t, y0);
+        let sys_jac_lop = sys.fjac(t, y0.as_ref());
+        let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
 
         // correction for nonautonomous case
-        let (phi2_v, _) = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+        let (phi2_v, _) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
 
         let y_new = y0.as_ref() + phi2_v +
-            self.expm.apply_phi_linop(
+            self.expm.apply_phi_k(
                 sys_jac_lop.as_ref(),
                 dt, fy0_dt.as_ref(), 1);
 
@@ -164,7 +158,7 @@ where
 
     /// EXPRB32
     /// Exponential Rosenroack order 3 with 2nd order embedded error estimate.
-    fn step_exprb32(&self, dt: f64)
+    fn step_exprb32(&self, sys: &'a dyn OdeSys<'a>, dt: f64)
         -> Result<StepResult<f64, Mat<f64>>, StepError>
     {
         // current state
@@ -172,24 +166,24 @@ where
         let y0 = self.y_hist[0].as_ref();
 
         // setup jacobian linear operator evaluated at y0
-        let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
-        let fy0 = self.sys.frhs(t, y0);
+        let sys_jac_lop = sys.fjac(t, y0.as_ref());
+        let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
 
         // correction for nonautonomous case
-        let (phi2_v, v) = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+        let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
 
         let t_2 = t + dt;
         let y_2 = y0.as_ref() + phi2_v.as_ref() +
-            self.expm.apply_phi_linop(
+            self.expm.apply_phi_k(
                 sys_jac_lop.as_ref(),
                 dt, fy0_dt.as_ref(), 1);
         // remainder fn
         let r_2 = self.remf(
-            t_2, y_2.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
+            sys, t_2, y_2.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
 
         // compute final update
-        let y_new = y_2.as_ref() + 2.*dt*self.expm.apply_phi_linop(
+        let y_new = y_2.as_ref() + 2.*dt*self.expm.apply_phi_k(
             sys_jac_lop.as_ref(), dt, r_2.as_ref(), 3);
 
         // err est
@@ -203,22 +197,22 @@ where
     /// From Gaudreault et. al.
     /// An efficient exponential time integration method for the numerical
     /// solution of the shallow water equations.
-    fn step_order_3(&self, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_3(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
         let yp = self.y_hist[1].as_ref();
         let tp = self.t_hist[1];
 
-        let sys_jac_lop = self.sys.fjac(t, y0.as_ref());
-        let fy0 = self.sys.frhs(t, y0);
+        let sys_jac_lop = sys.fjac(t, y0.as_ref());
+        let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
 
         // correction for nonautonomous case
-        let (phi2_v, v) = self.fphi2_v(fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+        let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
 
         let rn_dt = faer::Scale(dt * 2.0 / 3.0) * self.remf(
-            tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
+            sys, tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
 
         // only need single apply linop using kiops
         // build vector of rhs
@@ -229,34 +223,32 @@ where
             rn_dt.as_ref(),
         ];
         let ext_a_lo = ExtendedLinOp::new(dt, sys_jac_lop, &vb);
-        let y_new = y0.as_ref() + self.expm.kiops_fixedsteps(&ext_a_lo, 1.0, &vb) + phi2_v;
+        let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb) + phi2_v;
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, None))
     }
 }
 
-impl <'a, F> IntegrateSys<'a> for EpirkIntegrator<'a, F>
-where
-    F: OdeSys<'a>,
+impl <'a> IntegrateSys<'a> for EpirkIntegrator<'a>
 {
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&self, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step(&self, sys: &'a dyn OdeSys<'a>,  dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
         match self.method.as_str() {
             "epi2" | "exprb2" => {
-                self.step_order_2(dt)
+                self.step_order_2(sys, dt)
             },
             "epi3" => {
                 if self.y_hist.len() >= 2 {
-                    self.step_order_3(dt)
+                    self.step_order_3(sys, dt)
                 } else {
-                    self.step_order_2(dt)
+                    self.step_order_2(sys, dt)
                 }
             },
             "exprb3" => {
-                self.step_exprb32(dt)
+                self.step_exprb32(sys, dt)
             },
             _ => panic!("bad method"),
        }

@@ -17,7 +17,7 @@
 use faer::prelude::*;
 use rayon::prelude::*;
 use crate::mat_utils::{real_mat, complex_mat_scale, mat_pow};
-use crate::matexp_pade::DensePhikvEvaluator;
+use crate::matexp_traits::DensePhikvEvaluator;
 use faer::linalg::solvers::{Solve, DenseSolveCore};
 
 
