@@ -1,4 +1,5 @@
 pub mod ode_sys;
+pub mod matexp_traits;
 pub mod ode_bdf;
 pub mod ode_rk;
 pub mod ode_epirk;
@@ -13,6 +14,5 @@ pub mod mat_utils;
 pub mod ode_utils;
 pub mod ode_test_common;
 
-// python bindings
 #[cfg(feature = "python")]
 pub mod ormatex_rspy;

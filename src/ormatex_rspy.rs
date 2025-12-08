@@ -295,7 +295,7 @@ fn integrate_wrapper_rs<'py>(
             y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
             t_out.push(_t);
         }
-        let y_new = borrowed_solver.step(&sys, dt);
+        let y_new = borrowed_solver.step(sys, dt);
         borrowed_solver.accept_step(y_new.unwrap());
     }
     let _y = borrowed_solver.state();

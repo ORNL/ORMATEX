@@ -16,13 +16,9 @@
 /// matrix exponential eval methods for dense faer Mats
 use faer::prelude::*;
 use faer::linalg::solvers::{Solve, DenseSolveCore};
+use crate::matexp_traits::{DensePhikvEvaluator};
 use libm::frexp;
 
-/// Trait for implementors of a phi_k(A*dt)*v method for dense A
-/// Provides capability to evaluate a phi_k function-vector product.
-pub trait DensePhikvEvaluator {
-    fn phik_apply(&self, a: MatRef<f64>, dt: f64, v0: MatRef<f64>, k: usize) -> Mat<f64>;
-}
 
 #[derive(Debug)]
 pub struct PadeExpm {

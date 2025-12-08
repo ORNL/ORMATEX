@@ -19,6 +19,7 @@ use faer::prelude::*;
 use num_traits::real::Real;
 use num_traits::Float;
 use crate::matexp_krylov::KrylovExpm;
+use crate::matexp_traits::LinOpPhikvEvaluator;
 use crate::ode_sys::*;
 use faer::matrix_free::LinOp;
 use faer::dyn_stack::PodStack;
@@ -129,7 +130,7 @@ impl <'a> EpirkIntegrator <'a>
         }
         let v = self.frhs_fdt(sys, fy0.as_ref(), 1e-8);
         if v.norm_max() > self.tol_fdt {
-            phi2_v = Scale(dt.powi(2)) * self.expm.apply_phi_linop(sys_jac_lop, dt, v.as_ref(), 2);
+            phi2_v = Scale(dt.powi(2)) * self.expm.apply_phi_k(sys_jac_lop, dt, v.as_ref(), 2);
         }
         (phi2_v, v)
     }
@@ -150,7 +151,7 @@ impl <'a> EpirkIntegrator <'a>
         let (phi2_v, _) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
 
         let y_new = y0.as_ref() + phi2_v +
-            self.expm.apply_phi_linop(
+            self.expm.apply_phi_k(
                 sys_jac_lop.as_ref(),
                 dt, fy0_dt.as_ref(), 1);
 
@@ -177,7 +178,7 @@ impl <'a> EpirkIntegrator <'a>
 
         let t_2 = t + dt;
         let y_2 = y0.as_ref() + phi2_v.as_ref() +
-            self.expm.apply_phi_linop(
+            self.expm.apply_phi_k(
                 sys_jac_lop.as_ref(),
                 dt, fy0_dt.as_ref(), 1);
         // remainder fn
@@ -185,7 +186,7 @@ impl <'a> EpirkIntegrator <'a>
             sys, t_2, y_2.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
 
         // compute final update
-        let y_new = y_2.as_ref() + 2.*dt*self.expm.apply_phi_linop(
+        let y_new = y_2.as_ref() + 2.*dt*self.expm.apply_phi_k(
             sys_jac_lop.as_ref(), dt, r_2.as_ref(), 3);
 
         // err est
@@ -225,7 +226,7 @@ impl <'a> EpirkIntegrator <'a>
             rn_dt.as_ref(),
         ];
         let ext_a_lo = ExtendedLinOp::new(dt, sys_jac_lop, &vb);
-        let y_new = y0.as_ref() + self.expm.kiops_fixedsteps(&ext_a_lo, 1.0, &vb) + phi2_v;
+        let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb) + phi2_v;
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, None))

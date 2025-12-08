@@ -37,4 +37,6 @@ faer-ext = {version=">=0.7.1", features=["ndarray"], optional=true}
 
 [tool.maturin]
 profile = "release"
+editable-profile = "release"
 features = ["python"]
+all-features = true
