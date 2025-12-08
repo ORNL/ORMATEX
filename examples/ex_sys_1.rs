@@ -29,7 +29,7 @@ pub fn main() {
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
     let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     let mut sys_solver = ode_epirk::EpirkIntegrator::new(
-        0.0, y0.as_ref(), "epi3".to_string(), matexp_m);
+        0.0, y0.as_ref(), "epi3".to_string(), &matexp_m);
 
     let mut t_points: Vec<f64> = Vec::new();
     let mut y_prey: Vec<f64> = Vec::new();

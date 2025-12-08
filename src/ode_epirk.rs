@@ -31,7 +31,7 @@ use std::collections::VecDeque;
 pub struct EpirkIntegrator<'a>
 {
     /// Matrix exponential evaluator
-    expm: KrylovExpm,
+    expm: &'a dyn LinOpPhikvEvaluator,
 
     /// Order
     order: usize,
@@ -56,7 +56,7 @@ pub struct EpirkIntegrator<'a>
 impl <'a> EpirkIntegrator <'a>
 {
     /// Set the initial conditions and seteup bdf integrator
-    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: KrylovExpm) -> Self
+    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: &'a dyn LinOpPhikvEvaluator) -> Self
     {
         let order = match method.as_str() {
             "epi2" | "exprb2" => 2,
