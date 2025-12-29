@@ -18,7 +18,7 @@
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use crate::arnoldi::arnoldi_lop;
-use crate::ode_sys::ExtendedLinOp;
+use crate::ode_sys::{ExtendedLinOp, DynRefExtendedLinOp};
 use crate::matexp_pade;
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 
@@ -119,7 +119,7 @@ impl KrylovExpm {
     /// * `vb` - Vec of rhs, [v] in [phi_0(A*dt) * v_0 + ...]
     pub fn kiops_fixedsteps(
         &self,
-        ext_a_lo: &ExtendedLinOp,
+        ext_a_lo: &DynRefExtendedLinOp,
         dt: f64,
         vb: &Vec<MatRef<f64>>)
         -> Mat<f64>
@@ -135,8 +135,8 @@ impl KrylovExpm {
     }
 }
 
-impl LinOpPhikvEvaluator for KrylovExpm {
-    fn apply_phi_k_v(&self, a_lo: &ExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
+impl <'a> LinOpPhikvEvaluator <'a> for KrylovExpm {
+    fn apply_phi_k_v(&self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
         self.kiops_fixedsteps(a_lo, dt, vb)
     }
 
@@ -147,7 +147,7 @@ impl LinOpPhikvEvaluator for KrylovExpm {
 
 
 #[cfg(test)]
-mod test_matexp_krylov {
+mod test_matexp_leja {
     use assert_approx_eq::assert_approx_eq;
 
     // bring everything from above (parent) module into scope

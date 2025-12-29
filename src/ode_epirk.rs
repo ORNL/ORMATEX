@@ -31,7 +31,7 @@ use std::collections::VecDeque;
 pub struct EpirkIntegrator<'a>
 {
     /// Matrix exponential evaluator
-    expm: &'a dyn LinOpPhikvEvaluator,
+    expm: &'a dyn LinOpPhikvEvaluator<'a>,
 
     /// Order
     order: usize,
@@ -56,7 +56,7 @@ pub struct EpirkIntegrator<'a>
 impl <'a> EpirkIntegrator <'a>
 {
     /// Set the initial conditions and seteup bdf integrator
-    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: &'a dyn LinOpPhikvEvaluator) -> Self
+    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: &'a dyn LinOpPhikvEvaluator<'a>) -> Self
     {
         let order = match method.as_str() {
             "epi2" | "exprb2" => 2,
@@ -222,7 +222,7 @@ impl <'a> EpirkIntegrator <'a>
             fy0_dt.as_ref(),
             rn_dt.as_ref(),
         ];
-        let ext_a_lo = ExtendedLinOp::new(dt, sys_jac_lop, &vb);
+        let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
         let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb) + phi2_v;
 
         // return result

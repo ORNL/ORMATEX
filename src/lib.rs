@@ -8,6 +8,7 @@ pub mod arnoldi;
 pub mod matexp_pade;
 pub mod matexp_cauchy;
 pub mod matexp_krylov;
+pub mod matexp_leja;
 pub mod mat_utils;
 
 // for testing only

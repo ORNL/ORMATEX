@@ -224,6 +224,112 @@ impl <'a> LinOp<f64> for ExtendedLinOp<'a>   {
     }
 }
 
+pub struct DynRefExtendedLinOp<'a> {
+    t: f64,
+    inner_lop: &'a dyn LinOp<f64>,
+    bmat: faer::Mat<f64>,
+    kmat: faer::Mat<f64>,
+}
+
+impl <'a> DynRefExtendedLinOp<'a> {
+    pub fn new(t: f64, inner_lop: &'a dyn LinOp<f64>, vb: &Vec<MatRef<f64>>) -> Self {
+        let n = vb[0].nrows();
+        let p = vb.len() - 1;
+        let mut bmat = faer::Mat::zeros(n, p);
+        let mut i = 1;
+        // build extended linear operator blocks
+        for k in (0..p).rev() {
+            bmat.as_mut().get_mut(.., k..k+1).copy_from(
+                vb[i].as_ref());
+            i += 1;
+        }
+        let mut kmat = faer::Mat::zeros(p, p);
+        kmat.as_mut().get_mut(0..p-1, 1..).copy_from(
+            faer::Mat::<f64>::identity(p-1, p-1));
+        Self {
+            t,
+            inner_lop,
+            bmat,
+            kmat
+        }
+    }
+
+    /// helper method to create rhs vector for this extended linop
+    pub fn get_v(&self, vb: &Vec<MatRef<f64>>) -> (Mat<f64>, usize) {
+        let n = vb[0].nrows();
+        let p = vb.len() - 1;
+        // let mut unit_vec = faer::Mat::zeros(p, 1);
+        // unit_vec[(n, 0)] = 1.0;
+        let mut out: Mat<f64> = faer::Mat::zeros(n+p, 1);
+        out[(n+p-1, 0)] = 1.0;
+        out.as_mut().get_mut(0..n, 0..1).copy_from(vb[0].as_ref());
+        (out, n)
+    }
+}
+
+impl <'a>  fmt::Debug for DynRefExtendedLinOp <'a>  {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "t={:?}, \n", self.t)
+    }
+}
+
+impl <'a> LinOp<f64> for DynRefExtendedLinOp<'a>   {
+    fn apply_scratch(
+            &self,
+            rhs_ncols: usize,
+            parallelism: Par,
+        ) -> StackReq {
+        let _ = parallelism;
+        let _ = rhs_ncols;
+        StackReq::empty()
+    }
+
+    /// Number of rows in the linop
+    fn nrows(&self) -> usize {
+        self.inner_lop.nrows()
+    }
+
+    /// Number of cols in the linop
+    fn ncols(&self) -> usize {
+        self.inner_lop.ncols()
+    }
+
+    /// Apply the extended lop
+    fn apply(
+        &self,
+        mut out: MatMut<f64>,
+        rhs: MatRef<f64>,
+        parallelism: Par,
+        stack: &mut MemStack,
+        )
+    {
+        let n = self.bmat.nrows();
+        let p = self.bmat.ncols();
+
+        let mut av = faer::Mat::zeros(n, rhs.ncols());
+        self.inner_lop.apply(
+            av.as_mut(),
+            rhs.get(0..n, ..),
+            parallelism,
+            stack);
+        let ab_v = faer::Scale(self.t) * av +
+            self.bmat.as_ref() * rhs.get(rhs.nrows()-p.., ..);
+        let k_v = self.kmat.as_ref() * rhs.get(rhs.nrows()-p.., ..);
+        out.as_mut().get_mut(0..ab_v.nrows(), ..).copy_from(ab_v.as_ref());
+        out.as_mut().get_mut(ab_v.nrows().., ..).copy_from(k_v);
+    }
+
+    fn conj_apply(
+            &self,
+            out: MatMut<'_, f64>,
+            rhs: MatRef<'_, f64>,
+            parallelism: Par,
+            stack: &mut MemStack,
+        ) {
+        // Not implented error!
+        panic!("Not Implemented");
+    }
+}
 
 
 /// Wrapper to shift and scale a LinOp
