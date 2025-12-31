@@ -111,15 +111,18 @@ impl LejaPoints {
 
     /// Number of leading leja points on the real axis
     pub fn n_leja_real(&self) -> usize {
-        // count number of leading nonzeros in vector
-        let mut nz: usize = 0;
+        // count number of leading real leaja points
+        let tol = 1.0e-25;
+        let mut nr: usize = 0;
         for i in 0..self.leja_re.nrows() {
-            if self.leja_re[i] != 0.0 && self.leja_im[i] == 0.0 {
-                nz += 1;
+            if self.leja_im[i].abs() < tol {
+                nr += 1;
+            }
+            else {
                 break;
             }
         }
-        nz
+        nr
     }
 
     /// Build the matrix Xi =
