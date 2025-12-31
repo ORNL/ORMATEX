@@ -180,7 +180,7 @@ def leja_seq_pad_zeros(x, p=2):
 
 
 def leja_seq_reordering(x):
-    """
+    r"""
     Reorders the points in sequence x into a leja sequence.
 
     .. math:

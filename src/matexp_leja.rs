@@ -23,35 +23,48 @@ use faer::complex::ComplexFloat;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use crate::ode_sys::{ExtendedLinOp, DynRefExtendedLinOp};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
+use crate::arnoldi::{arnoldi_lop};
 use std::cmp::{min, max};
 
+/// Pre-generated Leja points from file
+/// Real leja points in [-2, 2]
+/// Complex conjugate leja points are on the unit circle.
 
-/// Rescale leja points on the real line to bound the interval [a, b].
-pub fn scale_leja(leja_re: &[f64], a: f64, b: f64) -> Vec<f64>
-{
-    let leja_re_min = leja_re.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
-    let leja_re_max = leja_re.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
-    let scale = (leja_re_max - leja_re_min) / (b - a);
-    // let out = (leja_re - leja_re_min) * scale  + a;
-    let leja_re_scaled = leja_re.iter().map(|x| (x - leja_re_min) * scale + a).collect();
-    leja_re_scaled
+
+/// compute ellipse shift and scale parameters
+pub fn ellipse_shift_scale(a: f64, b: f64, c: f64) -> (f64, f64) {
+    // ellipse half axes
+    let hax1 = (b-a)/2.;
+    let hax2 = c;
+    let shift = (a + b) / 2.;
+    let scale = (hax1 + hax2) / 2.;
+    (shift, scale)
 }
 
-/// Rescale conjugate complex leja points to bound the interval [a, b, -c, +c].
-pub fn scale_leja_conj_complex(leja_re: &[f64], leja_im: &[f64], a: f64, b: f64, c: f64) -> (Vec<f64>, Vec<f64>)
+/// Rescale the leja points to bound the interval [a, b, -c, +c].
+///
+/// Returns:
+///         (leja_re, leja_im, n_real, scale, shift)
+pub fn shift_scale_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f64, c: f64)
+    -> (Col<f64>, Col<f64>, f64, f64)
 {
-    (scale_leja(leja_re, a, b), scale_leja(leja_im, -c, c))
+    assert!(leja_re.nrows() == leja_im.nrows());
+    let (shift, scale) = ellipse_shift_scale(a, b, c);
+    let (hax1, hax2) = ( (b - a) / 2.0, c );
+    // normalize half axes to capacity 1
+    let (h1, h2) = (hax1 / scale, hax2 / scale);
+    // shift and scale the leja points
+    let leja_re_scaled = h1 * leja_re.as_ref();
+    let leja_im_scaled = h2 * leja_im.as_ref();
+    (leja_re_scaled, leja_im_scaled, shift, scale)
 }
 
 
-/// Reads leja points from a file
-/// real leja points in [-2, 2]
-/// complex conj leja points are on the unit circle.
+/// The Leja points
 pub struct LejaPoints {
     leja_re: Col<f64>,
     leja_im: Col<f64>,
     leja_x: Col<c64>,
-    Xi: Mat<c64>,
 }
 
 impl LejaPoints {
@@ -63,24 +76,10 @@ impl LejaPoints {
         let leja_x: Col<c64> = Col::from_fn(
             n_leja, |i: usize| {c64::new(leja_re_v[i], leja_im_v[i])});
 
-        // Build the matrix Xi =
-        // [[leja_00,       0,       0],
-        // [[      1, leja_11,       0],
-        // [[      0,       1, leja_22],
-        // [[      ...                ]]
-        let mut Xi: Mat<c64> = faer::Mat::zeros(n_leja, n_leja);
-        for i in 0..n_leja {
-            Xi[(i, i)] = c64::new(leja_re[i], leja_im[i]);
-            if i+1 < n_leja {
-                Xi[(i+1, i)] = c64::new(1.0, 0.0);
-            }
-        }
-
         Self {
             leja_re,
             leja_im,
             leja_x,
-            Xi,
         }
     }
 
@@ -89,18 +88,10 @@ impl LejaPoints {
         let n_leja = leja_re.nrows();
         let leja_x: Col<c64> = Col::from_fn(
             n_leja, |i: usize| {c64::new(leja_re[i], leja_im[i])});
-        let mut Xi: Mat<c64> = faer::Mat::zeros(n_leja, n_leja);
-        for i in 0..n_leja {
-            Xi[(i, i)] = c64::new(leja_re[i], leja_im[i]);
-            if i+1 < n_leja {
-                Xi[(i+1, i)] = c64::new(1.0, 0.0);
-            }
-        }
         Self {
             leja_re,
             leja_im,
             leja_x,
-            Xi,
         }
     }
 
@@ -111,6 +102,11 @@ impl LejaPoints {
     ///     leja_re_n, leja_im_n
     pub fn new_from_str(file_str: &str) {
         // parse file content string
+    }
+
+    /// Number of leja points
+    pub fn n_leja(&self) -> usize {
+        self.leja_re.nrows()
     }
 
     /// Number of leading leja points on the real axis
@@ -126,16 +122,27 @@ impl LejaPoints {
         nz
     }
 
-    /// Number of leja points
-    pub fn n_leja(&self) -> usize {
-        self.leja_re.nrows()
+    /// Build the matrix Xi =
+    ///         [[leja_00,       0,       0],
+    ///         [[      1, leja_11,       0],
+    ///         [[      0,       1, leja_22],
+    ///         [[      ...                ]]
+    pub fn gen_xi(&self) -> Mat<c64> {
+        let n_leja = self.leja_re.nrows();
+        let mut xi: Mat<c64> = faer::Mat::zeros(n_leja, n_leja);
+        for i in 0..n_leja {
+            xi[(i, i)] = c64::new(self.leja_re[i], self.leja_im[i]);
+            if i+1 < n_leja {
+                xi[(i+1, i)] = c64::new(1.0, 0.0);
+            }
+        }
+        xi
     }
 
     /// Shifted and scaled leja points
     pub fn leja_sc(&self, shift: f64, scale: f64) -> (Col<f64>, Col<f64>) {
         let leja_sc_re = faer::Col::full(self.n_leja(), shift) + scale * self.leja_re.as_ref();
         let leja_sc_im = scale * self.leja_im.as_ref();
-        // split complex and real part
         (leja_sc_re, leja_sc_im)
     }
 
@@ -148,16 +155,13 @@ impl LejaPoints {
         // re-init
         Self::new_from_col(full_re.col(0).to_owned(), full_im.col(0).to_owned())
     }
-}
 
-/// compute ellipse shift and scale parameters
-pub fn ellipse_shift_scale(a: f64, b: f64, c: f64) -> (f64, f64) {
-    // ellipse half axes
-    let hax1 = (b-a)/2.;
-    let hax2 = c;
-    let shift = (a + b) / 2.;
-    let scale = (hax1 + hax2) / 2.;
-    (shift, scale)
+    /// Rescale the leja points
+    pub fn rescale(&self, a: f64, b: f64, c: f64) -> (Self, f64, f64) {
+        let (leja_sc_re, leja_sc_im, shift, scale) = shift_scale_leja(
+            self.leja_re.as_ref(), self.leja_im.as_ref(), a, b, c);
+        (Self::new_from_col(leja_sc_re, leja_sc_im), shift, scale)
+    }
 }
 
 /// computes the factorial
@@ -183,17 +187,18 @@ pub fn dd_expm_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: us
     let n_leja = leja_x.n_leja();
     let eye = faer::Mat::<c64>::identity(n_leja, n_leja);
 
-    let Xi_shift: Mat<c64> = shift * eye.as_ref()
-        + scale * leja_x.Xi.as_ref();
+    let xi = leja_x.gen_xi();
+    let xi_shift: Mat<c64> = shift * eye.as_ref()
+        + scale * xi.as_ref();
 
     // compute mean
     let mut mu_: Col<c64> = Col::zeros(1);
     // col_mean(mu_, h * (shift + scale * leja_x.leja_x.as_ref()));
-    col_mean(mu_.as_mut(), (h * leja_x.Xi.as_ref()).as_ref(), NanHandling::Ignore);
+    col_mean(mu_.as_mut(), (h * xi.as_ref()).as_ref(), NanHandling::Ignore);
     let mu = mu_[0];
 
     // shift to zero mean
-    let z = Xi_shift - faer::Scale(mu) * eye.as_ref();
+    let z = xi_shift - faer::Scale(mu) * eye.as_ref();
 
     // scaling factor (in powers of 2)
     let s_scale = z.norm_l1();
@@ -217,8 +222,10 @@ pub fn dd_expm_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: us
 /// using either the real leja point method (RelPM) or
 /// the conj. complex conj leja point method (CLaPM).
 pub struct LejaPhiEval {
+    /// the leja points
     leja_x: LejaPoints,
-    n: usize,
+    /// maximum leja polynomial degree
+    m: usize,
     n_leja: usize,
     n_leja_real: usize,
     tol: f64,
@@ -236,11 +243,10 @@ pub struct TaylorPhiEval {
 
 /// Leja point phi function evaluator
 impl LejaPhiEval {
-    pub fn new(leja_x: LejaPoints, n: usize, a: f64, b: f64, c: f64, tol: f64) -> Self
+    pub fn new(leja_x: LejaPoints, m: usize, shift: f64, scale: f64, tol: f64) -> Self
     {
-        let (shift, scale) = ellipse_shift_scale(a, b, c);
         Self {
-            n: n,
+            m: m,
             n_leja: (&leja_x).n_leja(),
             n_leja_real: (&leja_x).n_leja_real(),
             leja_x: leja_x,
@@ -264,7 +270,7 @@ impl LejaPhiEval {
         shift: f64,
         scale: f64,
         coeffs: ColRef<f64>,
-        n: usize) -> (bool, usize)
+        ) -> (bool, usize)
     {
         let mut iter: usize = 1;
         let norm_u: f64 = u.norm_l2();
@@ -281,7 +287,7 @@ impl LejaPhiEval {
         let mut err_est = 0.0;
 
         // compute leja poly and check for convergence each iter
-        for i in 1..n {
+        for i in 1..self.m {
             if converged {
                 break;
             }
@@ -314,20 +320,20 @@ impl LejaPhiEval {
         scale: f64,
         coeffs_re: ColRef<f64>,
         coeffs_im: ColRef<f64>,
-        n: usize) -> (bool, usize)
+        ) -> (bool, usize)
     {
         let mut iter: usize = 1;
         let norm_u: f64 = u.norm_l2();
-        let err_est = 2. * norm_u;
+        let mut err_est = 2. * norm_u;
         let mut converged: bool = (err_est == 0.);
 
         // shift and scale leja points to align to the spectrum parameters
         let (leja_x_sc_re, leja_x_sc_im) = self.leja_x.leja_sc(shift, scale);
 
-        // use the real leja point method for all real case
-        if self.n_leja_real >= n {
+        // use the real leja point method if leja points are on the real line
+        if self.n_leja_real >= self.m {
             return self.real_leja_expmv(
-                pm, ext_a_lo, dt, u, shift, scale, coeffs_re, n)
+                pm, ext_a_lo, dt, u, shift, scale, coeffs_re)
         }
 
         // first term of leja polynomial
@@ -335,7 +341,6 @@ impl LejaPhiEval {
         let mut vm = u.to_owned();
         let mut av = u.to_owned();
         let mut aq = u.to_owned();
-        let mut err_est = 0.0;
 
         // compute leja polynomial terms for leading real points
         for i in 1..self.n_leja_real {
@@ -358,7 +363,7 @@ impl LejaPhiEval {
 
         // compute remaining leja polynomial terms suported at
         // conjugate complex points.
-        for i in (self.n_leja_real..self.n_leja).step_by(2) {
+        for i in (self.n_leja_real..self.m).step_by(2) {
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
                 faer::get_global_parallelism(),
                 MemStack::new(&mut MemBuffer::new(StackReq::empty()))
@@ -376,7 +381,7 @@ impl LejaPhiEval {
 
             // error est
             let norm_vm = vm.as_ref().norm_l2();
-            let err_est = (norm_vm * coeffs_re[i+1]).abs();
+            err_est = (norm_vm * coeffs_re[i+1]).abs();
             converged = err_est < self.tol * norm_u;
             iter += 2;
             if err_est > self.abort_tol {
@@ -404,46 +409,27 @@ impl LejaPhiEval {
         // no substep
         let (_conv, _iters) = self.complex_conj_leja_expmv(
             expmv.as_mut(), ext_a_lo, dt, ext_v.as_ref(), self.shift, self.scale,
-            coeffs_re.as_ref(), coeffs_im.as_ref(), self.n);
+            coeffs_re.as_ref(), coeffs_im.as_ref());
 
         // extract the first n elements
         expmv.get(0..n, 0..1).to_owned()
     }
 
-    /// set the shift and scale parameters
-    pub fn set_shift_scale(&mut self, shift: f64, scale: f64) {
-        self.shift = shift;
-        self.scale = scale;
+    /// Set the max leja polynomial degree
+    pub fn set_m(&mut self, m: usize) {
+        self.m = m
     }
 
     /// set the shift and scale parameters
     /// a is min magnitude real spectrum eig (typically 0)
     /// b is max magnitude real spectrum eig (possibly negative number)
     /// c is max imag spectrum eig magnitude
-    pub fn set_shift_scale_abc(&mut self, a: f64, b: f64, c: f64) {
-        (self.shift, self.scale) = ellipse_shift_scale(a, b, c);
+    pub fn update_leja(&mut self, a: f64, b: f64, c: f64) {
+        let (new_leja_x, shift, scale) = self.leja_x.rescale(a, b, c);
+        (self.shift, self.scale) = (shift, scale);
+        self.leja_x = new_leja_x;
     }
 
-    /// auto update the shift and scale parameters
-    /// using the Gershgorin circle theorem
-    /// diagonals of matrix are centers of disks
-    /// sum of each row is radius of each disk
-    /// take max radius and max diag + radius as spectrum bounds
-    pub fn update_shift_scale_gershgorin(&mut self, ext_a_lo: &DynRefExtendedLinOp) {
-        //
-        let a: f64 = 0.0;
-        let mut b: f64 = 0.0;
-        let mut c: f64 = 0.0;
-
-        //let diag = ext_a_lo.inner_lop.apply(eye);
-        //let row_sums = ext_a_lo.inner_lop.apply(ones);
-
-        // ellipse half axes
-        let hax1 = (b-a)/2.;
-        let hax2 = c;
-        self.shift = (a + b) / 2.0;
-        self.scale = (hax1 + hax2) / 2.;
-    }
 }
 
 impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
@@ -463,6 +449,84 @@ impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
         // compute phi_k(a_lo)*v
         self.leja_expmv_substep(&ext_a_lo, dt, &vbk)
     }
+}
+
+
+/// Using the Gershgorin circle theorem to estimate
+/// spectrum paramters.
+/// diagonals of matrix are centers of disks
+/// sum of each row is radius of each disk
+/// take max radius and max diag + radius as spectrum bounds
+pub fn spectrum_gershgorin_disks(ext_a_lo: &DynRefExtendedLinOp) -> (f64, f64, f64) {
+    let mut a: f64 = -1.0;
+    let mut b: f64 = 0.0;
+    let mut c: f64 = 1.0;
+
+    //let diag = ext_a_lo.inner_lop.apply(eye);
+    //let row_sums = ext_a_lo.inner_lop.apply(ones);
+    //let a = (diag - row_sums).min();
+    //let b = 0.0;
+    //let c = row_sums.abs().max();
+    (a, b, c)
+}
+
+/// Using power iteration to estimate
+/// spectrum paramters.
+pub fn spectrum_pwr_itr(ext_a_lo: &DynRefExtendedLinOp, v0: MatRef<f64>, n: usize, tol: f64) -> (f64, f64) {
+    // run power iter
+    let mut b_k = v0.to_owned();
+    let mut b_k1 = v0.to_owned();
+    let mut eig_old = 1.0e20;
+    let mut eig_new = 0.0;
+    for i in 0..n {
+        ext_a_lo.apply(
+            b_k1.as_mut(),
+            b_k.as_ref(),
+            faer::get_global_parallelism(),
+            MemStack::new(&mut MemBuffer::new(StackReq::empty()))
+        );
+        eig_new = (b_k.transpose() * b_k1.as_ref())[(0,0)] / (b_k.transpose() * b_k.as_ref())[(0,0)];
+        let b_k1_norm = b_k1.norm_l2();
+        b_k.copy_from(b_k1.as_ref() / b_k1_norm);
+        let eig_diff = eig_new - eig_old;
+        if eig_diff.abs() < tol {
+            break;
+        }
+        eig_old = eig_new;
+    }
+
+    // estimate spetrum parameters from dominant eigv
+    let a = -eig_new.abs();
+    let b = 0.0;
+    (a, b)
+}
+
+/// Using arnoldi iteration to estimate
+/// spectrum paramters.
+///
+/// #Args
+/// * `ext_a_lo` - linear operator, sparse mat or impls method to apply mat to vec
+/// * `v0` - initial vector
+/// * `n` - max krylov iteration
+/// * `iom` - incomplete ortho depth
+pub fn spectrum_arnoldi_iom(ext_a_lo: &DynRefExtendedLinOp, v0: MatRef<f64>, n: usize, iom: usize, update_b: bool) -> (f64, f64, f64) {
+    // run arnoldi
+    let (h, _q, _bdwn) = arnoldi_lop(ext_a_lo, 1.0, v0, n, iom);
+
+    // compute the ritz values
+    let ritzv = h.eigenvalues().unwrap();
+
+    // approx spetrum parameters
+    let ritz_re = ritzv.iter().map(|v| v.re()).collect::<Vec<f64>>();
+    let ritz_im = ritzv.iter().map(|v| v.im()).collect::<Vec<f64>>();
+    let a = ritz_re.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
+    let b = ritz_re.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
+    let c = ritz_im.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
+    if update_b {
+        return (*a, *b, *c)
+    }
+    let b = 0.0;
+    (*a, b, *c)
 }
 
 
