@@ -244,8 +244,10 @@ impl <'a> DynRefExtendedLinOp<'a> {
             i += 1;
         }
         let mut kmat = faer::Mat::zeros(p, p);
-        kmat.as_mut().get_mut(0..p-1, 1..).copy_from(
-            faer::Mat::<f64>::identity(p-1, p-1));
+        if p > 0 {
+            kmat.as_mut().get_mut(0..p-1, 1..).copy_from(
+                faer::Mat::<f64>::identity(p-1, p-1));
+        }
         Self {
             t,
             inner_lop,

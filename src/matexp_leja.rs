@@ -21,6 +21,7 @@ use faer::stats::{col_mean, NanHandling};
 use faer::matrix_free::LinOp;
 use faer::complex::ComplexFloat;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
+use statrs::function::{factorial};
 use crate::ode_sys::{ExtendedLinOp, DynRefExtendedLinOp};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use crate::arnoldi::{arnoldi_lop};
@@ -125,6 +126,22 @@ impl LejaPoints {
         nr
     }
 
+    /// Number of leading leja points at 0.0 + 0.0j
+    pub fn n_leja_zero(&self) -> usize {
+        // count number of leading real leaja points
+        let tol = 1.0e-25;
+        let mut nz: usize = 0;
+        for i in 0..self.leja_re.nrows() {
+            if self.leja_im[i].abs() < tol && self.leja_re[i].abs() < tol {
+                nz += 1;
+            }
+            else {
+                break;
+            }
+        }
+        nz
+    }
+
     /// Build the matrix Xi =
     ///         [[leja_00,       0,       0],
     ///         [[      1, leja_11,       0],
@@ -167,8 +184,8 @@ impl LejaPoints {
     }
 }
 
-/// computes the factorial
-pub fn factorial(num: usize) -> f64 {
+// computes the factorial
+pub fn ufactorial(num: usize) -> f64 {
     (1..=num).product::<usize>() as f64
 }
 
@@ -178,8 +195,8 @@ pub fn expm_taylor(A: Mat<c64>, shift: f64, scale: f64, p: usize) -> Mat<c64>
     let mut M: Mat<c64> = scale * A.as_ref();
     let mut ts_expm: Mat<c64> = faer::Mat::identity(M.nrows(), M.ncols());
     for i in 0..p {
-        ts_expm.copy_from( ts_expm.as_ref() + M.as_ref() / factorial(i+1) );
-        M.copy_from(A.as_ref() * M.as_ref());
+        ts_expm += M.as_ref() / factorial::factorial((i+1) as u64);
+        M = A.as_ref() * M.as_ref();
     }
     shift.exp() * ts_expm
 }
@@ -231,6 +248,7 @@ pub struct LejaPhiEval {
     m: usize,
     n_leja: usize,
     n_leja_real: usize,
+    n_leja_zero: usize,
     tol: f64,
     abort_tol: f64,
     shift: f64,
@@ -252,6 +270,7 @@ impl LejaPhiEval {
             m: m,
             n_leja: (&leja_x).n_leja(),
             n_leja_real: (&leja_x).n_leja_real(),
+            n_leja_zero: (&leja_x).n_leja_zero(),
             leja_x: leja_x,
             tol: tol,
             abort_tol: 1e10,
@@ -289,18 +308,22 @@ impl LejaPhiEval {
         let mut av = u.to_owned();
         let mut err_est = 0.0;
 
+        let par = faer::get_global_parallelism();
+        let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
+
         // compute leja poly and check for convergence each iter
         for i in 1..self.m {
             if converged {
                 break;
             }
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
-                faer::get_global_parallelism(),
-                MemStack::new(&mut MemBuffer::new(StackReq::empty()))
+                par,
+                MemStack::new(&mut mem_buf)
                 );
             vm = (dt * av.as_ref() - leja_x_sc[i-1]*vm) / scale;
             // leja polynomial update
-            pm.copy_from( pm.as_ref() + coeffs[i] * vm.as_ref() );
+            // pm.copy_from( pm.as_ref() + coeffs[i] * vm.as_ref() );
+            pm += coeffs[i] * vm.as_ref();
 
             // check error estimate
             err_est = (coeffs[i]*pm.norm_l2()).abs();
@@ -309,6 +332,53 @@ impl LejaPhiEval {
             if err_est > self.abort_tol {
                 break;
             }
+        }
+        (converged, iter)
+    }
+
+    /// Use simple taylor series method to estimate the action of
+    /// the matrix exponential on a vector.
+    fn taylor_expmv(
+        &self,
+        mut pm: MatMut<f64>,
+        ext_a_lo: &DynRefExtendedLinOp,
+        dt: f64,
+        u: MatRef<f64>,
+        shift: f64,
+        scale: f64,
+        ) -> (bool, usize)
+    {
+        let mut iter: usize = 1;
+        let norm_u: f64 = u.norm_l2();
+        let mut err_est = 2. * norm_u;
+        let mut converged: bool = (err_est == 0.);
+
+        let mut av = u.to_owned();
+        let mut vm = u.to_owned();
+
+        let par = faer::get_global_parallelism();
+        let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
+
+        // compute first term of the taylor polynomial
+        // ext_a_lo.apply(pm, u, par, mem_scratch);
+        let mut coeff = 1.0;
+        pm.copy_from(coeff * u);
+
+        for j in 1..self.m {
+            if converged {
+                break;
+            }
+            coeff = 1.0 / factorial::factorial(j as u64);
+            let mem_scratch = MemStack::new(&mut mem_buf);
+            ext_a_lo.apply(av.as_mut(), vm.as_ref(), par, mem_scratch);
+            vm = dt * av.as_ref();
+            pm += coeff * vm.as_ref();
+
+            // check error estimate
+            err_est = (coeff * pm.norm_l2()).abs();
+            converged = err_est < self.tol * norm_u;
+            iter += 1;
+
         }
         (converged, iter)
     }
@@ -335,8 +405,13 @@ impl LejaPhiEval {
 
         // use the real leja point method if leja points are on the real line
         if self.n_leja_real >= self.m {
-            return self.real_leja_expmv(
-                pm, ext_a_lo, dt, u, shift, scale, coeffs_re)
+            if self.n_leja_zero >= self.m || self.scale.abs() < 1.0e-20 {
+                return self.taylor_expmv(pm, ext_a_lo, dt, u, shift, scale)
+            }
+            else {
+                return self.real_leja_expmv(
+                    pm, ext_a_lo, dt, u, shift, scale, coeffs_re)
+            }
         }
 
         // first term of leja polynomial
@@ -345,18 +420,22 @@ impl LejaPhiEval {
         let mut av = u.to_owned();
         let mut aq = u.to_owned();
 
+        let par = faer::get_global_parallelism();
+        let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
+
         // compute leja polynomial terms for leading real points
         for i in 1..self.n_leja_real {
             if converged {
                 break;
             }
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
-                faer::get_global_parallelism(),
-                MemStack::new(&mut MemBuffer::new(StackReq::empty()))
+                par,
+                MemStack::new(&mut mem_buf)
                 );
             vm = (dt * av.as_ref() - leja_x_sc_re[i-1]*vm) / scale;
             // leja polynomial update
-            pm.copy_from( pm.as_ref() + coeffs_re[i] * vm.as_ref() );
+            // pm.copy_from( pm.as_ref() + coeffs_re[i] * vm.as_ref() );
+            pm += coeffs_re[i] * vm.as_ref();
 
             // check error estimate
             err_est = (coeffs_re[i]*pm.norm_l2()).abs();
@@ -368,15 +447,15 @@ impl LejaPhiEval {
         // conjugate complex points.
         for i in (self.n_leja_real..self.m).step_by(2) {
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
-                faer::get_global_parallelism(),
-                MemStack::new(&mut MemBuffer::new(StackReq::empty()))
+                par,
+                MemStack::new(&mut mem_buf)
                 );
             let qm = (dt * av.as_ref() - leja_x_sc_re[i-1]*vm.as_ref()) / scale;
             pm += coeffs_re[i] * qm.as_ref();
 
             ext_a_lo.apply(aq.as_mut(), qm.as_ref(),
-                faer::get_global_parallelism(),
-                MemStack::new(&mut MemBuffer::new(StackReq::empty()))
+                par,
+                MemStack::new(&mut mem_buf)
                 );
             vm = (dt * aq.as_ref() - leja_x_sc_re[i-1]*qm.as_ref()) / scale
                 + ((leja_x_sc_im[i-1]/scale).powi(2)) * vm.as_ref();
@@ -460,7 +539,7 @@ impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
 /// diagonals of matrix are centers of disks
 /// sum of each row is radius of each disk
 /// take max radius and max diag + radius as spectrum bounds
-pub fn spectrum_gershgorin_disks(ext_a_lo: &DynRefExtendedLinOp) -> (f64, f64, f64) {
+pub fn spectrum_gershgorin_disks(ext_a_lo: &dyn LinOp<f64>) -> (f64, f64, f64) {
     let mut a: f64 = -1.0;
     let mut b: f64 = 0.0;
     let mut c: f64 = 1.0;
@@ -475,7 +554,7 @@ pub fn spectrum_gershgorin_disks(ext_a_lo: &DynRefExtendedLinOp) -> (f64, f64, f
 
 /// Using power iteration to estimate
 /// spectrum paramters.
-pub fn spectrum_pwr_itr(ext_a_lo: &DynRefExtendedLinOp, v0: MatRef<f64>, n: usize, tol: f64) -> (f64, f64) {
+pub fn spectrum_pwr_itr(ext_a_lo: &dyn LinOp<f64>, v0: MatRef<f64>, n: usize, tol: f64) -> (f64, f64, f64) {
     // run power iter
     let mut b_k = v0.to_owned();
     let mut b_k1 = v0.to_owned();
@@ -490,7 +569,8 @@ pub fn spectrum_pwr_itr(ext_a_lo: &DynRefExtendedLinOp, v0: MatRef<f64>, n: usiz
         );
         eig_new = (b_k.transpose() * b_k1.as_ref())[(0,0)] / (b_k.transpose() * b_k.as_ref())[(0,0)];
         let b_k1_norm = b_k1.norm_l2();
-        b_k.copy_from(b_k1.as_ref() / b_k1_norm);
+        // b_k.copy_from(b_k1.as_ref() / b_k1_norm);
+        b_k = b_k1.as_ref() / b_k1_norm;
         let eig_diff = eig_new - eig_old;
         if eig_diff.abs() < tol {
             break;
@@ -501,7 +581,8 @@ pub fn spectrum_pwr_itr(ext_a_lo: &DynRefExtendedLinOp, v0: MatRef<f64>, n: usiz
     // estimate spetrum parameters from dominant eigv
     let a = -eig_new.abs();
     let b = 0.0;
-    (a, b)
+    let c = 0.0;
+    (a, b, c)
 }
 
 /// Using arnoldi iteration to estimate
@@ -512,9 +593,9 @@ pub fn spectrum_pwr_itr(ext_a_lo: &DynRefExtendedLinOp, v0: MatRef<f64>, n: usiz
 /// * `v0` - initial vector
 /// * `n` - max krylov iteration
 /// * `iom` - incomplete ortho depth
-pub fn spectrum_arnoldi_iom(ext_a_lo: &DynRefExtendedLinOp, v0: MatRef<f64>, n: usize, iom: usize, update_b: bool) -> (f64, f64, f64) {
+pub fn spectrum_arnoldi_iom(ext_a_lo: &dyn LinOp<f64>, v0: MatRef<f64>, n: usize, iom: usize, update_b: bool) -> (f64, f64, f64) {
     // run arnoldi
-    let (h, _q, _bdwn) = arnoldi_lop(ext_a_lo, 1.0, v0, n, iom);
+    let (_q, h, _bdwn) = arnoldi_lop(ext_a_lo, 1.0, v0, n, iom);
 
     // compute the ritz values
     let ritzv = h.eigenvalues().unwrap();
@@ -534,10 +615,67 @@ pub fn spectrum_arnoldi_iom(ext_a_lo: &DynRefExtendedLinOp, v0: MatRef<f64>, n: 
 
 
 #[cfg(test)]
-mod test_matexp_krylov {
+mod test_matexp_leja {
     use assert_approx_eq::assert_approx_eq;
 
     // bring everything from above (parent) module into scope
     use super::*;
+
+    #[test]
+    fn test_spectrum_params() {
+        // test the ability of arnoldi procedure to produce
+        // correct spectrum parameters with a matrix with known
+        // eigenvalues.
+
+        // Generate a test 3x3 matrix
+        let test_a = faer::mat![
+            [-1.0e-1,  0.0,    0.0],
+            [ 1.0e-1, -1.0e2,  0.0],
+            [    0.0,  1.0e2, -1.0e-3],
+            ];
+        // Generate a test vector
+        let test_v = faer::mat![
+            [0.1],
+            [0.2],
+            [0.01],
+            ];
+
+        // compute the spectrum parameters with arnoldi with incomplete orthogonalization
+        let (a, b, c) = spectrum_arnoldi_iom(&test_a.as_ref(), test_v.as_ref(), 10, 2, true);
+        println!("Spectrum params: a= {a}, b= {b}, c= {c}");
+        assert_approx_eq!(a, -1.0e2);
+        assert_approx_eq!(b, -1.0e-3);
+        assert_approx_eq!(c,  0.0);
+
+        // build an extended linear operator
+        let mut vbk: Vec<MatRef<f64>> = vec![];
+        vbk.push(test_v.as_ref());
+        let ext_a_lo = DynRefExtendedLinOp::new(1.0, &test_a, &vbk);
+        let (ext_a, ext_b, ext_c) = spectrum_arnoldi_iom(&ext_a_lo, test_v.as_ref(), 10, 10, true);
+
+        // check for consistency
+        assert_approx_eq!(a, ext_a);
+        assert_approx_eq!(b, ext_b);
+        assert_approx_eq!(c, ext_c);
+
+        // run power iteration
+        let (pwr_a, _pwr_b, _pwr_c) = spectrum_pwr_itr(&ext_a_lo, test_v.as_ref(), 40, 1e-5);
+        // check for consistency
+        assert_approx_eq!(a, pwr_a);
+    }
+
+    #[test]
+    fn test_leja_expmv() {
+        // test that exp(dt*A)*v products can be computed by a
+        // leja polynomial method.
+        // Ensure results are consistent with krylov methods.
+    }
+
+    #[test]
+    fn test_leja_phikv() {
+        // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
+        // leja polynomial method.
+        // Ensure results are consistent with krylov methods.
+    }
 
 }
