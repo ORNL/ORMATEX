@@ -190,10 +190,10 @@ pub fn ufactorial(num: usize) -> f64 {
 }
 
 /// Compute the dense matrix exponential using tayler series
-pub fn expm_taylor(A: Mat<c64>, shift: f64, scale: f64, p: usize) -> Mat<c64>
+pub fn expm_taylor<T: faer::traits::ComplexField>(A: MatRef<T>, shift: f64, scale: f64, p: usize) -> Mat<T>
 {
-    let mut M: Mat<c64> = scale * A.as_ref();
-    let mut ts_expm: Mat<c64> = faer::Mat::identity(M.nrows(), M.ncols());
+    let mut M: Mat<T> = scale * A.as_ref();
+    let mut ts_expm: Mat<T> = faer::Mat::identity(M.nrows(), M.ncols());
     for i in 0..p {
         ts_expm += M.as_ref() / factorial::factorial((i+1) as u64);
         M = A.as_ref() * M.as_ref();
@@ -226,7 +226,7 @@ pub fn dd_expm_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: us
     let hs = 1.0 / (2.0 as f64).powi(s);
 
     // compute expm(Z)
-    let mut F = expm_taylor(hs*h*z, 0.0, 1.0, p);
+    let mut F = expm_taylor((hs*h*z).as_ref(), 0.0, 1.0, p);
 
     // squaring
     for _i in 0..s {
@@ -283,10 +283,10 @@ impl LejaPhiEval {
     /// Ref:  L. Bergamaschi.  M. Caliari. A. Martinez and M. Vianello.
     ///       Comparing Leja and Krylov Approximations of Large Scale
     ///       Matrix Exponentials. Intl. Conf on Computational Science. 2006.
-    fn real_leja_expmv(
+    fn real_leja_expmv<T: LinOp<f64>>(
         &self,
         mut pm: MatMut<f64>,
-        ext_a_lo: &DynRefExtendedLinOp,
+        ext_a_lo: &T,
         dt: f64,
         u: MatRef<f64>,
         shift: f64,
@@ -338,10 +338,10 @@ impl LejaPhiEval {
 
     /// Use simple taylor series method to estimate the action of
     /// the matrix exponential on a vector.
-    fn taylor_expmv(
+    fn taylor_expmv<T: LinOp<f64>>(
         &self,
         mut pm: MatMut<f64>,
-        ext_a_lo: &DynRefExtendedLinOp,
+        ext_a_lo: &T,
         dt: f64,
         u: MatRef<f64>,
         shift: f64,
@@ -384,9 +384,9 @@ impl LejaPhiEval {
     }
 
     /// Complex conjugate leja point method (CLaPM).
-    fn complex_conj_leja_expmv(
+    fn complex_conj_leja_expmv<T: LinOp<f64>>(
         &self, mut pm: MatMut<f64>,
-        ext_a_lo: &DynRefExtendedLinOp,
+        ext_a_lo: &T,
         dt: f64,
         u: MatRef<f64>,
         shift: f64,
@@ -405,7 +405,8 @@ impl LejaPhiEval {
 
         // use the real leja point method if leja points are on the real line
         if self.n_leja_real >= self.m {
-            if self.n_leja_zero >= self.m || self.scale.abs() < 1.0e-20 {
+            // use taylor series if leja points are all near 0
+            if self.scale.abs() < 1.0e-20 {
                 return self.taylor_expmv(pm, ext_a_lo, dt, u, shift, scale)
             }
             else {
@@ -617,18 +618,33 @@ pub fn spectrum_arnoldi_iom(ext_a_lo: &dyn LinOp<f64>, v0: MatRef<f64>, n: usize
 #[cfg(test)]
 mod test_matexp_leja {
     use assert_approx_eq::assert_approx_eq;
+    use crate::matexp_krylov::KrylovExpm;
+    use crate::mat_utils::mat_mat_approx_eq;
 
     // bring everything from above (parent) module into scope
     use super::*;
 
-    #[test]
-    fn test_spectrum_params() {
-        // test the ability of arnoldi procedure to produce
-        // correct spectrum parameters with a matrix with known
-        // eigenvalues.
-
+    fn gen_test_a() -> (Mat<f64>, Mat<f64>)
+    {
         // Generate a test 3x3 matrix
-        let test_a = faer::mat![
+        let test_m = faer::mat![
+            [-1.0e-1,  0.0,    0.0],
+            [ 1.0e-1, -1.0,  0.0],
+            [    0.0,  1.0, -1.0e-3],
+            ];
+        // Generate a test vector
+        let test_v = faer::mat![
+            [0.1],
+            [0.2],
+            [0.01],
+            ];
+        (test_m, test_v)
+    }
+
+    fn gen_test_b() -> (Mat<f64>, Mat<f64>)
+    {
+        // Generate a test 3x3 matrix
+        let test_m = faer::mat![
             [-1.0e-1,  0.0,    0.0],
             [ 1.0e-1, -1.0e2,  0.0],
             [    0.0,  1.0e2, -1.0e-3],
@@ -639,11 +655,22 @@ mod test_matexp_leja {
             [0.2],
             [0.01],
             ];
+        (test_m, test_v)
+    }
+
+    #[test]
+    fn test_spectrum_params() {
+        // test the ability of arnoldi procedure to produce
+        // correct spectrum parameters with a matrix with known
+        // eigenvalues.
+
+        // Generate a test 3x3 matrix
+        let (test_a, test_v) = gen_test_a();
 
         // compute the spectrum parameters with arnoldi with incomplete orthogonalization
         let (a, b, c) = spectrum_arnoldi_iom(&test_a.as_ref(), test_v.as_ref(), 10, 2, true);
         println!("Spectrum params: a= {a}, b= {b}, c= {c}");
-        assert_approx_eq!(a, -1.0e2);
+        assert_approx_eq!(a, -1.0);
         assert_approx_eq!(b, -1.0e-3);
         assert_approx_eq!(c,  0.0);
 
@@ -662,6 +689,32 @@ mod test_matexp_leja {
         let (pwr_a, _pwr_b, _pwr_c) = spectrum_pwr_itr(&ext_a_lo, test_v.as_ref(), 40, 1e-5);
         // check for consistency
         assert_approx_eq!(a, pwr_a);
+    }
+
+    #[test]
+    fn test_taylor_expmv() {
+        // test that exp(dt*A)*v products can be computed by a
+        // taylor polynomial method.
+
+        // Generate a test 3x3 matrix
+        let (test_a, test_v) = gen_test_a();
+
+        // compute the matrix matexp(dt*A)*v using dense impl
+        let expm_tay = expm_taylor(test_a.as_ref(), 0.0, 1.0, 16);
+        let expmv_tay_dense = expm_tay.as_ref() * test_v.as_ref();
+
+        // compute the matrix matexp(dt*A)*v using matfree impl
+        let lp = LejaPoints::new(vec![], vec![]);
+        let leja_phikv_eval = LejaPhiEval::new(lp, 20, 0.0, 1.0, 1e-8);
+        let mut expmv_tay_pm = faer::Mat::zeros(test_a.nrows(), 1);
+        leja_phikv_eval.taylor_expmv(expmv_tay_pm.as_mut(),
+            &test_a, 1.0, test_v.as_ref(), 0.0, 1.0);
+        println!("{:?}", expmv_tay_dense.as_ref());
+        println!("{:?}", expmv_tay_pm.as_ref());
+
+        // Ensure results are consistent.
+        mat_mat_approx_eq(
+            expmv_tay_pm.as_ref(), expmv_tay_dense.as_ref(), 1e-8);
     }
 
     #[test]
