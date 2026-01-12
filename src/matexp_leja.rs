@@ -29,7 +29,9 @@ use std::cmp::{min, max};
 
 /// Pre-generated Leja points from file
 /// Real leja points in [-2, 2]
+const LEJA_REAL_CSV: &str = std::include_str!("leja_points_real");
 /// Complex conjugate leja points are on the unit circle.
+const LEJA_CIRCLE_CSV: &str = std::include_str!("leja_points_circle");
 
 
 /// compute ellipse shift and scale parameters
