@@ -74,7 +74,7 @@ pub trait IntegrateSys<'a>
 
     /// Step solution forward by dt, proposes a new state.
     /// This may outright fail due to numerical issue
-    fn step(&self, sys: &'a dyn OdeSys<'a>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
+    fn step<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
 
     /// Get current time
     fn time(&self) -> Self::TimeType;

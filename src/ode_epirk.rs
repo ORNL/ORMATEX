@@ -28,10 +28,10 @@ use std::marker::PhantomData;
 use std::collections::VecDeque;
 
 
-pub struct EpirkIntegrator<'a>
+pub struct EpirkIntegrator<'a, T: LinOpPhikvEvaluator>
 {
     /// Matrix exponential evaluator
-    expm: &'a dyn LinOpPhikvEvaluator,
+    expm: T,
 
     /// Order
     order: usize,
@@ -53,10 +53,12 @@ pub struct EpirkIntegrator<'a>
     phantom: PhantomData<&'a ()>
 }
 
-impl <'a> EpirkIntegrator <'a>
+impl <'a, T> EpirkIntegrator <'a, T>
+where
+    T: LinOpPhikvEvaluator
 {
     /// Set the initial conditions and seteup bdf integrator
-    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: &'a dyn LinOpPhikvEvaluator) -> Self
+    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: T) -> Self
     {
         let order = match method.as_str() {
             "epi2" | "exprb2" => 2,
@@ -91,7 +93,7 @@ impl <'a> EpirkIntegrator <'a>
 
     /// Computes remainder R(yr) = frhs(yr) - frhs(y0) - J_y0*(yr-y0) - v*t
     /// where if v=d(Frhs)/dt is nonzero for nonautonomous systems
-    fn remf(&self, sys: &'a dyn OdeSys<'a>, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>, v: Option<MatRef<f64>>)
+    fn remf<'b>(&self, sys: &'b dyn OdeSys<'b>, tr: f64, yr: MatRef<f64>, frhs_y0: MatRef<f64>, sys_jac_lop_y0: &dyn LinOp<f64>, v: Option<MatRef<f64>>)
         -> Mat<f64>
     {
         let t = self.t_hist[0];
@@ -112,7 +114,7 @@ impl <'a> EpirkIntegrator <'a>
     }
 
     /// Estimates the time drivative of frhs by finite difference
-    fn frhs_fdt(&self, sys: &'a dyn OdeSys<'a>, fy0: MatRef<f64>, del_t: f64) -> Mat<f64> {
+    fn frhs_fdt<'b>(&self, sys: &'b dyn OdeSys<'b>, fy0: MatRef<f64>, del_t: f64) -> Mat<f64> {
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
         let fy1 = sys.frhs(t+del_t, y0);
@@ -120,7 +122,7 @@ impl <'a> EpirkIntegrator <'a>
     }
 
     /// Correction for nonautonomous case
-    fn fphi2_v(&self, sys: &'a dyn OdeSys<'a>, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> (Mat<f64>, Mat<f64>) {
+    fn fphi2_v<'b>(&self, sys: &'b dyn OdeSys<'b>, fy0: MatRef<f64>, sys_jac_lop: &dyn LinOp<f64>, dt: f64) -> (Mat<f64>, Mat<f64>) {
         let mut phi2_v = Mat::zeros(fy0.nrows(), fy0.ncols());
         if self.tol_fdt < 0. {
             return (phi2_v,  Mat::zeros(fy0.nrows(), fy0.ncols()))
@@ -133,7 +135,7 @@ impl <'a> EpirkIntegrator <'a>
     }
 
     /// EPI2
-    fn step_order_2(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_2<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -158,7 +160,7 @@ impl <'a> EpirkIntegrator <'a>
 
     /// EXPRB32
     /// Exponential Rosenroack order 3 with 2nd order embedded error estimate.
-    fn step_exprb32(&self, sys: &'a dyn OdeSys<'a>, dt: f64)
+    fn step_exprb32<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64)
         -> Result<StepResult<f64, Mat<f64>>, StepError>
     {
         // current state
@@ -197,7 +199,7 @@ impl <'a> EpirkIntegrator <'a>
     /// From Gaudreault et. al.
     /// An efficient exponential time integration method for the numerical
     /// solution of the shallow water equations.
-    fn step_order_3(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_3<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -230,12 +232,14 @@ impl <'a> EpirkIntegrator <'a>
     }
 }
 
-impl <'a> IntegrateSys<'a> for EpirkIntegrator<'a>
+impl <'a, T> IntegrateSys<'a> for EpirkIntegrator<'a, T>
+where
+    T: LinOpPhikvEvaluator
 {
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&self, sys: &'a dyn OdeSys<'a>,  dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step<'b>(&self, sys: &'b dyn OdeSys<'b>,  dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
         match self.method.as_str() {
             "epi2" | "exprb2" => {
                 self.step_order_2(sys, dt)
