@@ -77,7 +77,8 @@ fn arnoldi_inner_lop<T>(
         let qci: ColRef<T> = qs.rb_mut().col(i);
         let ht = qv.col(0).transpose() * qci;
         h[i] = ht;
-        qv = qv - (qci.as_mat() * faer::Scale(ht));
+        // qv = qv - (qci.as_mat() * faer::Scale(ht));
+        zip!(qv.col_mut(0), qci).for_each(|unzip!(mut y, x)| *y = *y - ht * *x);
     }
 
     let norm_v = qv.norm_l2();
