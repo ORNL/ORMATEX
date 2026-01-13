@@ -115,9 +115,9 @@ impl LejaPoints {
 
     /// Leja points from pre-generated library
     pub fn new_from_lib(lib_str: &str) -> Self {
-        let lp_str = match lib_str {
-            "leja_real" => LEJA_REAL_CSV,
-            "leja_circle" => LEJA_CIRCLE_CSV,
+        let (lp_str, prescale) = match lib_str {
+            "leja_real" => (LEJA_REAL_CSV, 0.5),
+            "leja_circle" => (LEJA_CIRCLE_CSV, 1.0),
             _ => panic!("Invalid lib_str.")
             };
         // storage for real and complex leja points
@@ -129,8 +129,8 @@ impl LejaPoints {
             let record = result.expect("parsing record failed");
             let re: f64 = record.get(0).unwrap().replace(" ", "").parse::<f64>().unwrap();
             let im: f64 = record.get(1).unwrap().replace(" ", "").parse::<f64>().unwrap();
-            real_lp.push(re);
-            complex_lp.push(im);
+            real_lp.push(re * prescale);
+            complex_lp.push(im * prescale);
         }
         Self::new(real_lp, complex_lp)
     }
@@ -693,7 +693,7 @@ mod test_matexp_leja {
         let lambda_c = 1.0;
         let lambda_a = 0.5;
         let lambda_b = 0.1;
-        let vs = 1.0;
+        let vs = 10.0;
         let test_m = faer::mat![
             [-lambda_a,    -vs,            0.0],
             [ lambda_a+vs, -lambda_b,      0.0],
@@ -745,9 +745,16 @@ mod test_matexp_leja {
         // check spectrum parameters of matrix with conj complex eig pair
         let (a, b, c) = spectrum_arnoldi_iom(&test_b.as_ref(), test_v.as_ref(), 10, 2, true);
         println!("Spectrum params: a= {a}, b= {b}, c= {c}");
-        assert_approx_eq!(a, -1.0);
-        assert_approx_eq!(b, -0.3);
-        assert_approx_eq!(c,  1.2083046);
+        // eigen decomp of b
+        let b_eigs = test_b.eigenvalues().unwrap();
+        let b_eigs_re: Vec<f64> = b_eigs.iter().map(|x| { x.re() }).collect();
+        let b_eigs_im: Vec<f64> = b_eigs.iter().map(|x| { x.im() }).collect();
+        let min_b_re = b_eigs_re.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
+        let max_b_re = b_eigs_re.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
+        let max_b_im = b_eigs_im.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
+        assert_approx_eq!(a, min_b_re);
+        assert_approx_eq!(b, max_b_re);
+        assert_approx_eq!(c, max_b_im);
     }
 
     #[test]
@@ -781,10 +788,12 @@ mod test_matexp_leja {
         // test that exp(dt*A)*v products can be computed by a
         // leja polynomial method.
         // load leja points
-        let lp_re = LejaPoints::new_from_lib("leja_real").head(40);
-        let lp_clp = LejaPoints::new_from_lib("leja_circle").head(40);
-        // println!("{:?}", &lp_re);
-        // println!("{:?}", &lp_clp);
+        let lp_re = LejaPoints::new_from_lib("leja_real").head(100);
+        let lp_clp = LejaPoints::new_from_lib("leja_circle").head(100);
+        assert!(lp_re.n_leja() == lp_clp.n_leja());
+        assert!(lp_re.n_leja_real() == lp_re.n_leja());
+        assert!(lp_clp.n_leja_real() == 2);
+        let lp = lp_clp;
 
         // Generate a test 3x3 matricies
         let (test_a, test_v) = gen_test_a();
@@ -796,18 +805,14 @@ mod test_matexp_leja {
             let (a, b, c) = spectrum_arnoldi_iom(&test_m.as_ref(), test_v.as_ref(), 10, 2, true);
 
             // apply shift and scaling to the leja sequence to match spectrum of the test_m linop
-            let (lp_re_sc, _shift, _scale) = lp_re.rescale(a, b, c);
-            let (lp_clp_sc, shift, scale) = lp_clp.rescale(a, b, c);
-
-            // println!("{:?}", &lp_re_sc);
-            // println!("{:?}", &lp_clp_sc);
+            let (lp_sc, shift, scale) = lp.rescale(a, b, c);
             println!("shift: {}, scale: {}", &shift, &scale);
 
             // compute the leja polynomial coeffs
-            let coeffs = dd_expm_taylor(&lp_clp_sc, shift, scale, 1.0, 16);
+            let coeffs = dd_expm_taylor(&lp_sc, shift, scale, 1.0, 16);
 
             // compute the matexp(dt*A)*v product via leja poly approx
-            let leja_phikv_eval = LejaPhiEval::new(lp_clp_sc, 20, shift, scale, 1e-8);
+            let leja_phikv_eval = LejaPhiEval::new(lp_sc, 80, shift, scale, 1e-8);
             let mut expmv_leja_pm: Mat<f64> = faer::Mat::zeros(test_m.nrows(), 1);
             let (conv, iter) = leja_phikv_eval.complex_conj_leja_expmv(expmv_leja_pm.as_mut(),
                 &test_m, 1.0, test_v.as_ref(), shift, scale, coeffs.as_ref());
