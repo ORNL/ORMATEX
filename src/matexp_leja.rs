@@ -68,7 +68,7 @@ pub fn shift_scale_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f
 
 
 /// The Leja points
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LejaPoints {
     leja_re: Col<f64>,
     leja_im: Col<f64>,
@@ -292,15 +292,15 @@ pub fn dd_expm_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: us
 pub struct LejaPhiEval {
     /// the leja points
     leja_x: LejaPoints,
+    leja_base: LejaPoints,
     /// maximum leja polynomial degree
     m: usize,
-    n_leja: usize,
     n_leja_real: usize,
-    n_leja_zero: usize,
     tol: f64,
     abort_tol: f64,
     shift: f64,
     scale: f64,
+    max_substep: usize,
 }
 
 
@@ -310,14 +310,14 @@ impl LejaPhiEval {
     {
         Self {
             m: m,
-            n_leja: (&leja_x).n_leja(),
             n_leja_real: (&leja_x).n_leja_real(),
-            n_leja_zero: (&leja_x).n_leja_zero(),
-            leja_x: leja_x,
+            leja_x: leja_x.clone(),
+            leja_base: leja_x,
             tol: tol,
             abort_tol: 1e10,
             shift: shift,
             scale: scale,
+            max_substep: 0,
         }
     }
 
@@ -520,6 +520,8 @@ impl LejaPhiEval {
         (converged, iter)
     }
 
+    /// Computes the linear combination: phi_0(dt*A)*v_0 + ... phi_k(dt*A)*v_k
+    /// by leja polynomial approximation with optional substepping
     pub fn leja_expmv_substep(&self, ext_a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64>
     {
         // setup the extended rhs vector
@@ -548,13 +550,14 @@ impl LejaPhiEval {
     }
 
     /// set the shift and scale parameters
-    /// a is min magnitude real spectrum eig (typically 0)
-    /// b is max magnitude real spectrum eig (possibly negative number)
-    /// c is max imag spectrum eig magnitude
+    ///
+    /// #Args
+    /// * `a` - is min magnitude real spectrum eig (typically 0)
+    /// * `b` - is max magnitude real spectrum eig (possibly negative number)
+    /// * `c` - is max imag spectrum eig magnitude
     pub fn update_leja(&mut self, a: f64, b: f64, c: f64) {
-        let (new_leja_x, shift, scale) = self.leja_x.rescale(a, b, c);
-        (self.shift, self.scale) = (shift, scale);
-        self.leja_x = new_leja_x;
+        (self.leja_x, self.shift, self.scale) = self.leja_base.rescale(a, b, c);
+        self.n_leja_real = self.leja_x.n_leja_real();
     }
 
 }
@@ -827,8 +830,6 @@ mod test_matexp_leja {
             mat_mat_approx_eq(
                 expmv_leja_pm.as_ref(), expmv_pade_dense.as_ref(), 1e-8);
         }
-
-
     }
 
     #[test]
@@ -836,6 +837,15 @@ mod test_matexp_leja {
         // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
         // leja polynomial method.
         // Ensure results are consistent with pade methods.
+
+        // Generate a test matrix
+        let (test_b, test_v) = gen_test_b();
+
+        // generate vb vector: vb = [b0, b1, ... bk]
+        let zeros = faer::Mat::zeros(test_v.nrows(), test_v.ncols());
+        let test_vb = vec![zeros.as_ref(), test_v.as_ref(), zeros.as_ref()];
+
+        // compute phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk
     }
 
 }
