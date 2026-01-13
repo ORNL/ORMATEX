@@ -32,6 +32,7 @@ use crate::arnoldi::{arnoldi_lop};
 
 /// Pre-generated Leja points from file
 /// Real leja points in [-2, 2]
+/// TODO: Generate leja points in [-1, 1]
 const LEJA_REAL_CSV: &str = std::include_str!("leja_points_real");
 /// Complex conjugate leja points are on the unit circle.
 const LEJA_CIRCLE_CSV: &str = std::include_str!("leja_points_circle");
@@ -368,7 +369,7 @@ impl LejaPhiEval {
             pm += coeffs[i].re * vm.as_ref();
 
             // check error estimate
-            err_est = (coeffs[i].re * pm.norm_l2()).abs();
+            err_est = (coeffs[i].re * vm.norm_l2()).abs();
             converged = err_est < self.tol * norm_u;
             iter += 1;
             if err_est > self.abort_tol {
@@ -418,7 +419,7 @@ impl LejaPhiEval {
             pm += coeff * vm.as_ref();
 
             // check error estimate
-            err_est = (coeff * pm.norm_l2()).abs();
+            err_est = (coeff * vm.norm_l2()).abs();
             converged = err_est < self.tol * norm_u;
             iter += 1;
 
@@ -482,7 +483,7 @@ impl LejaPhiEval {
             pm += coeffs[i].re * vm.as_ref();
 
             // check error estimate
-            err_est = (coeffs[i].re * pm.norm_l2()).abs();
+            err_est = (coeffs[i].re * vm.norm_l2()).abs();
             converged = err_est < self.tol * norm_u;
             iter += 1;
         }
@@ -490,6 +491,9 @@ impl LejaPhiEval {
         // compute remaining leja polynomial terms suported at
         // conjugate complex points.
         for i in (self.n_leja_real+1..self.m).step_by(2) {
+            if converged {
+                break;
+            }
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
                 par,
                 MemStack::new(&mut mem_buf)
@@ -506,8 +510,7 @@ impl LejaPhiEval {
             pm += coeffs[i+1].re * vm.as_ref();
 
             // error est
-            let norm_vm = vm.as_ref().norm_l2();
-            err_est = (norm_vm * coeffs[i+1].re).abs();
+            let err_est = (vm.norm_l2() * coeffs[i+1].re).abs();
             converged = err_est < self.tol * norm_u;
             iter += 2;
             if err_est > self.abort_tol {
@@ -804,7 +807,7 @@ mod test_matexp_leja {
             let coeffs = dd_expm_taylor(&lp_clp_sc, shift, scale, 1.0, 16);
 
             // compute the matexp(dt*A)*v product via leja poly approx
-            let leja_phikv_eval = LejaPhiEval::new(lp_clp_sc, 20, shift, scale, 1e-12);
+            let leja_phikv_eval = LejaPhiEval::new(lp_clp_sc, 20, shift, scale, 1e-8);
             let mut expmv_leja_pm: Mat<f64> = faer::Mat::zeros(test_m.nrows(), 1);
             let (conv, iter) = leja_phikv_eval.complex_conj_leja_expmv(expmv_leja_pm.as_mut(),
                 &test_m, 1.0, test_v.as_ref(), shift, scale, coeffs.as_ref());
