@@ -209,10 +209,15 @@ impl <'a> EpirkIntegrator <'a>
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
 
         // correction for nonautonomous case
-        let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+        let v: Mat<f64> = if self.tol_fdt < 0.0 {
+                faer::Mat::zeros(y0.nrows(), 1)
+            } else {
+                self.frhs_fdt(sys, fy0.as_ref(), 1e-8)
+            };
 
         let rn_dt = faer::Scale(dt * 2.0 / 3.0) * self.remf(
             sys, tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
+        let vb2 = rn_dt + dt.powi(2) * v;
 
         // only need single apply linop using kiops
         // build vector of rhs
@@ -220,10 +225,10 @@ impl <'a> EpirkIntegrator <'a>
         let vb = vec![
             zero_mat.as_ref(),
             fy0_dt.as_ref(),
-            rn_dt.as_ref(),
+            vb2.as_ref(),
         ];
         let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
-        let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb) + phi2_v;
+        let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, None))

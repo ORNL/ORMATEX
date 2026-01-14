@@ -1,3 +1,5 @@
+use std::error::Error;
+
 /*
  * Copyright© 2025 UT-Battelle, LLC
  *
@@ -17,6 +19,15 @@
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use crate::ode_sys::{ExtendedLinOp, DynRefExtendedLinOp};
+
+pub struct PhikvResult {
+    /// converged status
+    conv: bool,
+    /// number of internal iterations required
+    iter: usize,
+    /// err estimate
+    err: f64,
+}
 
 
 /// Trait for implementors of a phi_k(A*dt)*v method for dense A

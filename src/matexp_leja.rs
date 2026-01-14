@@ -601,23 +601,23 @@ pub fn spectrum_gershgorin_disks(ext_a_lo: &dyn LinOp<f64>) -> (f64, f64, f64) {
 
 /// Using power iteration to estimate
 /// spectrum paramters.
-pub fn spectrum_pwr_itr(ext_a_lo: &dyn LinOp<f64>, v0: MatRef<f64>, n: usize, tol: f64) -> (f64, f64, f64) {
+pub fn spectrum_pwr_itr(ext_a_lo: &dyn LinOp<f64>, v0: MatRef<f64>, scale: f64, n: usize, tol: f64) -> (f64, f64, f64) {
     // run power iter
     let mut b_k = v0.to_owned();
     let mut b_k1 = v0.to_owned();
     let mut eig_old = 1.0e20;
     let mut eig_new = 0.0;
-    for i in 0..n {
+    for _i in 0..n {
         ext_a_lo.apply(
             b_k1.as_mut(),
             b_k.as_ref(),
             faer::get_global_parallelism(),
             MemStack::new(&mut MemBuffer::new(StackReq::empty()))
         );
-        eig_new = (b_k.transpose() * b_k1.as_ref())[(0,0)] / (b_k.transpose() * b_k.as_ref())[(0,0)];
-        let b_k1_norm = b_k1.norm_l2();
-        // b_k.copy_from(b_k1.as_ref() / b_k1_norm);
-        b_k = b_k1.as_ref() / b_k1_norm;
+        let sb_k1 = scale * b_k1.as_ref();
+        eig_new = (b_k.transpose() * sb_k1.as_ref())[(0,0)] / (b_k.transpose() * b_k.as_ref())[(0,0)];
+        let norm = sb_k1.norm_l2();
+        b_k = sb_k1.as_ref() / norm;
         let eig_diff = eig_new - eig_old;
         if eig_diff.abs() < tol {
             break;
@@ -640,9 +640,9 @@ pub fn spectrum_pwr_itr(ext_a_lo: &dyn LinOp<f64>, v0: MatRef<f64>, n: usize, to
 /// * `v0` - initial vector
 /// * `n` - max krylov iteration
 /// * `iom` - incomplete ortho depth
-pub fn spectrum_arnoldi_iom(ext_a_lo: &dyn LinOp<f64>, v0: MatRef<f64>, n: usize, iom: usize, update_b: bool) -> (f64, f64, f64) {
+pub fn spectrum_arnoldi_iom(ext_a_lo: &dyn LinOp<f64>, v0: MatRef<f64>, scale: f64, n: usize, iom: usize, update_b: bool) -> (f64, f64, f64) {
     // run arnoldi
-    let (_q, h, _bdwn) = arnoldi_lop(ext_a_lo, 1.0, v0, n, iom);
+    let (_q, h, _bdwn) = arnoldi_lop(ext_a_lo, scale, v0, n, iom);
 
     // compute the ritz values
     let ritzv = h.eigenvalues().unwrap();
@@ -722,7 +722,7 @@ mod test_matexp_leja {
         let (test_b, _test_v) = gen_test_b();
 
         // compute the spectrum parameters with arnoldi with incomplete orthogonalization
-        let (a, b, c) = spectrum_arnoldi_iom(&test_a.as_ref(), test_v.as_ref(), 10, 2, true);
+        let (a, b, c) = spectrum_arnoldi_iom(&test_a.as_ref(), test_v.as_ref(), 1.0, 10, 2, true);
         println!("Spectrum params: a= {a}, b= {b}, c= {c}");
         assert_approx_eq!(a, -1.0);
         assert_approx_eq!(b, -1.0e-3);
@@ -732,7 +732,7 @@ mod test_matexp_leja {
         let mut vbk: Vec<MatRef<f64>> = vec![];
         vbk.push(test_v.as_ref());
         let ext_a_lo = DynRefExtendedLinOp::new(1.0, &test_a, &vbk);
-        let (ext_a, ext_b, ext_c) = spectrum_arnoldi_iom(&ext_a_lo, test_v.as_ref(), 10, 10, true);
+        let (ext_a, ext_b, ext_c) = spectrum_arnoldi_iom(&ext_a_lo, test_v.as_ref(), 1.0, 10, 10, true);
 
         // check for consistency
         assert_approx_eq!(a, ext_a);
@@ -740,12 +740,12 @@ mod test_matexp_leja {
         assert_approx_eq!(c, ext_c);
 
         // run power iteration
-        let (pwr_a, _pwr_b, _pwr_c) = spectrum_pwr_itr(&ext_a_lo, test_v.as_ref(), 40, 1e-5);
+        let (pwr_a, _pwr_b, _pwr_c) = spectrum_pwr_itr(&ext_a_lo, test_v.as_ref(), 1.0, 40, 1e-5);
         // check for consistency
         assert_approx_eq!(a, pwr_a);
 
         // check spectrum parameters of matrix with conj complex eig pair
-        let (a, b, c) = spectrum_arnoldi_iom(&test_b.as_ref(), test_v.as_ref(), 10, 2, true);
+        let (a, b, c) = spectrum_arnoldi_iom(&test_b.as_ref(), test_v.as_ref(), 1.0, 10, 2, true);
         println!("Spectrum params: a= {a}, b= {b}, c= {c}");
         // eigen decomp of b
         let b_eigs = test_b.eigenvalues().unwrap();
@@ -804,7 +804,7 @@ mod test_matexp_leja {
 
         for test_m in test_mats.iter() {
             // compute the spectrum parameters with arnoldi with incomplete orthogonalization
-            let (a, b, c) = spectrum_arnoldi_iom(&test_m.as_ref(), test_v.as_ref(), 10, 2, true);
+            let (a, b, c) = spectrum_arnoldi_iom(&test_m.as_ref(), test_v.as_ref(), 1.0, 10, 2, true);
 
             // apply shift and scaling to the leja sequence to match spectrum of the test_m linop
             let (lp_sc, shift, scale) = lp.rescale(a, b, c);
@@ -849,7 +849,7 @@ mod test_matexp_leja {
         let mut leja_phikv_eval = LejaPhiEval::new(lp, 80, 0.0, 1.0, 1e-8);
 
         // compute the spectrum parameters with arnoldi with incomplete orthogonalization
-        let (a, b, c) = spectrum_arnoldi_iom(&test_b.as_ref(), test_v.as_ref(), 10, 2, true);
+        let (a, b, c) = spectrum_arnoldi_iom(&test_b.as_ref(), test_v.as_ref(), 1.0, 10, 2, true);
         // update the phi evaluator
         leja_phikv_eval.update_leja(a, b, c);
 
