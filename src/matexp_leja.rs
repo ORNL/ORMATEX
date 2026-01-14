@@ -32,7 +32,6 @@ use crate::arnoldi::{arnoldi_lop};
 
 /// Pre-generated Leja points from file
 /// Real leja points in [-2, 2]
-/// TODO: Generate leja points in [-1, 1]
 const LEJA_REAL_CSV: &str = std::include_str!("leja_points_real");
 /// Complex conjugate leja points are on the unit circle.
 const LEJA_CIRCLE_CSV: &str = std::include_str!("leja_points_circle");
@@ -836,16 +835,51 @@ mod test_matexp_leja {
     fn test_leja_phikv() {
         // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
         // leja polynomial method.
-        // Ensure results are consistent with pade methods.
+
+        // load leja points
+        let lp = LejaPoints::new_from_lib("leja_circle").head(100);
 
         // Generate a test matrix
         let (test_b, test_v) = gen_test_b();
 
         // generate vb vector: vb = [b0, b1, ... bk]
+        let test_vb = vec![test_v.as_ref(),];
+
+        // setup the phi evaluator
+        let mut leja_phikv_eval = LejaPhiEval::new(lp, 80, 0.0, 1.0, 1e-8);
+
+        // compute the spectrum parameters with arnoldi with incomplete orthogonalization
+        let (a, b, c) = spectrum_arnoldi_iom(&test_b.as_ref(), test_v.as_ref(), 10, 2, true);
+        // update the phi evaluator
+        leja_phikv_eval.update_leja(a, b, c);
+
+        // compute phi_0(dt*A)*b0
+        // fn apply_phi_k_v(&self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
+        let dt = 1.0;
+        let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
+        let phi0mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, dt, &test_vb);
+
+        // Ensure results are consistent with pade methods.
+        let phi0mv_pade_dense = matexp(test_b.as_ref(), 1.0) * test_v.as_ref();
+        println!("leja phi0mv: {:?}", &phi0mv_leja_pm);
+        println!("pade phi0mv: {:?}", &phi0mv_pade_dense);
+        mat_mat_approx_eq(
+            phi0mv_leja_pm.as_ref(), phi0mv_pade_dense.as_ref(), 1e-8);
+
+        // generate vb vector: vb = [b0, b1, ... bk]
         let zeros = faer::Mat::zeros(test_v.nrows(), test_v.ncols());
-        let test_vb = vec![zeros.as_ref(), test_v.as_ref(), zeros.as_ref()];
+        let test_vb = vec![zeros.as_ref(), test_v.as_ref()];
 
         // compute phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk
+        let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
+        let phi1mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, dt, &test_vb);
+
+        // Ensure results are consistent with pade methods.
+        let phi1mv_pade_dense = phi(test_b.as_ref(), 1) * test_v.as_ref();
+        println!("leja phi1mv: {:?}", &phi1mv_leja_pm);
+        println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
+        mat_mat_approx_eq(
+            phi1mv_leja_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);
     }
 
 }
