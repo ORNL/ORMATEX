@@ -142,11 +142,11 @@ impl <'a> EpirkIntegrator <'a>
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 20);
 
         // correction for nonautonomous case
         let (phi2_v, _) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
 
-        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 20);
         let y_new = y0.as_ref() + phi2_v +
             self.expm.apply_phi_k(
                 sys_jac_lop.as_ref(),
@@ -158,7 +158,7 @@ impl <'a> EpirkIntegrator <'a>
 
     /// EXPRB32
     /// Exponential Rosenroack order 3 with 2nd order embedded error estimate.
-    fn step_exprb32(&self, sys: &'a dyn OdeSys<'a>, dt: f64)
+    fn step_exprb32(&mut self, sys: &'a dyn OdeSys<'a>, dt: f64)
         -> Result<StepResult<f64, Mat<f64>>, StepError>
     {
         // current state
@@ -169,6 +169,7 @@ impl <'a> EpirkIntegrator <'a>
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 20);
 
         // correction for nonautonomous case
         let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
@@ -197,7 +198,7 @@ impl <'a> EpirkIntegrator <'a>
     /// From Gaudreault et. al.
     /// An efficient exponential time integration method for the numerical
     /// solution of the shallow water equations.
-    fn step_order_3(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_3(&mut self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -207,6 +208,7 @@ impl <'a> EpirkIntegrator <'a>
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 20);
 
         // correction for nonautonomous case
         let v: Mat<f64> = if self.tol_fdt < 0.0 {
@@ -219,7 +221,6 @@ impl <'a> EpirkIntegrator <'a>
             sys, tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
         let vb2 = rn_dt + dt.powi(2) * v;
 
-        // only need single apply linop using kiops
         // build vector of rhs
         let zero_mat = faer::Mat::zeros(y0.nrows(), 1);
         let vb = vec![
