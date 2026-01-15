@@ -130,7 +130,7 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&self, sys: &'a dyn OdeSys<'a>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step(&mut self, sys: &'a dyn OdeSys<'a>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
        self.step_rk(sys, dt)
     }
 

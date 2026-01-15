@@ -31,7 +31,7 @@ use std::collections::VecDeque;
 pub struct EpirkIntegrator<'a>
 {
     /// Matrix exponential evaluator
-    expm: &'a dyn LinOpPhikvEvaluator<'a>,
+    expm: &'a mut dyn LinOpPhikvEvaluator<'a>,
 
     /// Order
     order: usize,
@@ -56,7 +56,7 @@ pub struct EpirkIntegrator<'a>
 impl <'a> EpirkIntegrator <'a>
 {
     /// Set the initial conditions and seteup bdf integrator
-    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: &'a dyn LinOpPhikvEvaluator<'a>) -> Self
+    pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: &'a mut dyn LinOpPhikvEvaluator<'a>) -> Self
     {
         let order = match method.as_str() {
             "epi2" | "exprb2" => 2,
@@ -133,11 +133,10 @@ impl <'a> EpirkIntegrator <'a>
     }
 
     /// EPI2
-    fn step_order_2(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_2(&mut self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
-
 
         // setup jacobian linear operator evaluated at y0
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
@@ -147,6 +146,7 @@ impl <'a> EpirkIntegrator <'a>
         // correction for nonautonomous case
         let (phi2_v, _) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
 
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 20);
         let y_new = y0.as_ref() + phi2_v +
             self.expm.apply_phi_k(
                 sys_jac_lop.as_ref(),
@@ -240,7 +240,7 @@ impl <'a> IntegrateSys<'a> for EpirkIntegrator<'a>
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&self, sys: &'a dyn OdeSys<'a>,  dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step(&mut self, sys: &'a dyn OdeSys<'a>,  dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
         match self.method.as_str() {
             "epi2" | "exprb2" => {
                 self.step_order_2(sys, dt)

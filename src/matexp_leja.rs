@@ -300,6 +300,8 @@ pub struct LejaPhiEval {
     shift: f64,
     scale: f64,
     max_substep: usize,
+    norm_a: f64,
+    norm_a_tol: f64,
 }
 
 
@@ -317,6 +319,8 @@ impl LejaPhiEval {
             shift: shift,
             scale: scale,
             max_substep: 0,
+            norm_a: -1.0,
+            norm_a_tol: 1e-8,
         }
     }
 
@@ -577,6 +581,23 @@ impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
         let ext_a_lo = DynRefExtendedLinOp::new(dt, a_lo, &vbk);
         // compute phi_k(a_lo)*v
         self.leja_expmv_substep(&ext_a_lo, dt, &vbk)
+    }
+
+    fn apply_prepare(&mut self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, n: usize) {
+        let ones = faer::Mat::ones(v.nrows(), v.ncols());
+        let mut av = faer::Mat::ones(v.nrows(), v.ncols());
+        a_lo.apply(
+            av.as_mut(),
+            ones.as_ref(),
+            faer::get_global_parallelism(),
+            MemStack::new(&mut MemBuffer::new(StackReq::empty())));
+        let norm_a = av.norm_l2();
+        // only recompute a_lo spectrum parameters if norm has changed
+        if (norm_a - self.norm_a).abs() > self.norm_a_tol {
+            let (a, b, c) = spectrum_arnoldi_iom(a_lo, v, dt, n, 2, true);
+            self.update_leja(a, b, c);
+            self.norm_a = norm_a;
+        }
     }
 }
 

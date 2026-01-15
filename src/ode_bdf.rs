@@ -168,7 +168,7 @@ impl <'a> IntegrateSys<'a> for BdfIntegrator<'a>
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&self, sys: &'a dyn OdeSys<'a>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step(&mut self, sys: &'a dyn OdeSys<'a>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
         match self.order {
             1 => self.step_order_1(sys, dt),
             2 => {
