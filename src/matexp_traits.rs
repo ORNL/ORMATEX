@@ -20,7 +20,7 @@ use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use crate::ode_sys::{ExtendedLinOp, DynRefExtendedLinOp};
 
-pub struct PhikvResult {
+pub struct PhikvStatus {
     /// converged status
     conv: bool,
     /// number of internal iterations required
@@ -51,7 +51,7 @@ pub trait LinOpPhikvEvaluator <'a>
     fn apply_phi_k(&self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, k: usize) -> Mat<f64>;
 
     /// Prepare for apply_*
-    fn apply_prepare(&mut self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, n: usize) {
+    fn apply_prepare(&mut self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>) {
         // default is null-op
     }
 }

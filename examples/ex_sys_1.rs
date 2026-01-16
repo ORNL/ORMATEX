@@ -5,6 +5,7 @@ use ormatex::ode_bdf;
 use ormatex::ode_rk;
 use ormatex::ode_epirk;
 use ormatex::matexp_krylov;
+use ormatex::matexp_leja;
 use ormatex::ode_test_common::*;
 use ormatex::matexp_pade;
 // use plotters::prelude::*;
@@ -28,6 +29,10 @@ pub fn main() {
     let krylov_dim = 4;
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
     let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
+
+    // let lp = matexp_leja::LejaPoints::new_from_lib("leja_real").slice(0, 300);
+    // let mut matexp_m = matexp_leja::LejaPhiEval::new(lp, 200, 0.0, 1.0, 1e-12, 1e-12, 20, false);
+
     let mut sys_solver = ode_epirk::EpirkIntegrator::new(
         0.0, y0.as_ref(), "epi3".to_string(), &mut matexp_m);
 

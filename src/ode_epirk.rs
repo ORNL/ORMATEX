@@ -142,7 +142,7 @@ impl <'a> EpirkIntegrator <'a>
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
-        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 20);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref());
 
         // correction for nonautonomous case
         let (phi2_v, _) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
@@ -169,7 +169,7 @@ impl <'a> EpirkIntegrator <'a>
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
-        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 20);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref());
 
         // correction for nonautonomous case
         let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
@@ -208,7 +208,7 @@ impl <'a> EpirkIntegrator <'a>
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
-        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 20);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref());
 
         // correction for nonautonomous case
         let v: Mat<f64> = if self.tol_fdt < 0.0 {
