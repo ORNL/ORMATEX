@@ -529,19 +529,22 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
         let x_norm_l1 = self.x.norm_max().abs();
         let eps = 0.5e-8 * x_norm_l1;
         let ieps = self.scale * 1.0 / eps;
-        let x_pert = self.x.as_ref() + faer::Scale(eps) * rhs.as_ref();
 
-        // compute unshifted jacobian vector product
-        let mut j_v = (self.frhs.frhs(self.t, x_pert.as_ref())-self.frhs_x.as_ref())*faer::Scale(ieps);
+        for j in 0..out.ncols() {
+            let x_pert = self.x.as_ref() + faer::Scale(eps) * rhs.col(j).as_mat();
 
-        // compute optional shift
-        match self.gamma {
-            Some(gamma) => { j_v += faer::Scale(gamma) * rhs.as_ref() },
-            _ => { },
+            // compute unshifted jacobian vector product
+            let mut j_v = (self.frhs.frhs(self.t, x_pert.as_ref())-self.frhs_x.as_ref())*faer::Scale(ieps);
+
+            // compute optional shift
+            match self.gamma {
+                Some(gamma) => { j_v += faer::Scale(gamma) * rhs.col(j).as_mat() },
+                _ => { },
+            }
+
+            // (gamma*I + scale*J) * v
+            out.as_mut().col_mut(j).copy_from(j_v.col(0));
         }
-
-        // (gamma*I + scale*J) * v
-        out.copy_from(j_v);
     }
 
     /// Apply transpose of the linear operator to vec or mat. Stores result in `out`.

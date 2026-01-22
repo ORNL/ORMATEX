@@ -38,26 +38,19 @@ const LEJA_REAL_CSV: &str = std::include_str!("leja_points_real");
 const LEJA_CIRCLE_CSV: &str = std::include_str!("leja_points_circle");
 
 
-/// compute ellipse shift and scale parameters
-pub fn ellipse_shift_scale(a: f64, b: f64, c: f64) -> (f64, f64) {
-    // ellipse half axes
-    let hax1 = (b-a)/2.;
-    let hax2 = c;
-    let shift = (a + b) / 2.;
-    let scale = (hax1 + hax2) / 2.;
-    (shift, scale)
-}
-
 /// Rescale the leja points to bound the interval [a, b, -c, +c].
 ///
 /// Returns:
-///         (leja_re, leja_im, n_real, scale, shift)
+///         (leja_re, leja_im, shift, scale)
 pub fn shift_scale_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f64, c: f64)
     -> (Col<f64>, Col<f64>, f64, f64)
 {
     assert!(leja_re.nrows() == leja_im.nrows());
-    let (shift, scale) = ellipse_shift_scale(a, b, c);
-    let (hax1, hax2) = ( (b - a) / 2.0, c );
+    // half axes
+    let hax1 = (b - a) / 2.0;
+    let hax2 = c;
+    let shift = (a + b) / 2.0;
+    let scale = (hax1 + hax2) / 2.0;
     // normalize half axes to capacity 1
     let (h1, h2) = (hax1 / scale, hax2 / scale);
     // shift and scale the leja points
@@ -66,9 +59,16 @@ pub fn shift_scale_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f
     (leja_re_scaled, leja_im_scaled, shift, scale)
 }
 
-pub fn normalize_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f64, c: f64, re_scale: f64, im_scale: f64)
+/// Inverse operation to shift_scale_leja.  Inverts the shift and scale
+/// operation from the bounds [a, b, -c, +c]  back to the original leja
+/// sequence bounds.
+///
+/// Returns:
+///         (leja_re, leja_im)
+pub fn inv_shift_scale_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f64, c: f64, re_scale: f64, im_scale: f64)
     -> (Col<f64>, Col<f64>)
 {
+    assert!(b >= a);
     // shift to zero-mean
     let shift = (a + b) / 2.;
     let mut leja_re_s = leja_re - faer::Mat::full(leja_re.nrows(), 1, shift).col(0);
@@ -76,10 +76,10 @@ pub fn normalize_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f64
     // scale
     let width_re = b - a;
     let width_im = 2.0 * c;
-    if width_re > 1.0e-12 {
+    if width_re > f64::EPSILON * 128.0 {
         leja_re_s = 2.0 * re_scale * (&leja_re_s / width_re);
     }
-    if width_im > 1.0e-12 {
+    if width_im > f64::EPSILON * 128.0 {
         leja_im_s = 2.0 * im_scale * (&leja_im_s / width_im);
     }
     (leja_re_s, leja_im_s)
@@ -251,7 +251,7 @@ impl LejaPoints {
     }
 
     pub fn normalize(&self, a: f64, b: f64, c: f64) -> Self {
-        let (leja_re_normed, leja_im_normed) = normalize_leja(
+        let (leja_re_normed, leja_im_normed) = inv_shift_scale_leja(
             self.leja_re.as_ref(), self.leja_im.as_ref(), a, b, c, 1.0, 1.0);
         Self::new_from_col(leja_re_normed, leja_im_normed)
     }
@@ -768,6 +768,37 @@ impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
                     let (a, b, c, ritz_re, ritz_im) = spectrum_arnoldi_iom(
                         a_lo, av.as_ref(), dt, self.spec_iters, 2, false);
                     println!("Arnoldi Spectrum params: a={}, b={}, c={}", a, b, c);
+                    // println!("Ritz re: {:?}", &ritz_re);
+                    // println!("Ritz im: {:?}", &ritz_im);
+                    // apply shift and scale to the ritz values
+                    // splice complex conj ritz values into the leja sequence
+                    if self.splice_ritz == true {
+//                         let lp_ritz = LejaPoints::new(ritz_re, ritz_im)
+//                             .normalize(a, b, c)
+//                             .mirror();
+                        let (lp_ritz, _, _) = LejaPoints::new(ritz_re, ritz_im)
+                            .normalize(a, b, c)
+                            .mirror()
+                            .rescale(a, b, c);
+                        // println!("Appending ritz re: {:?}", lp_ritz.leja_re.as_ref());
+                        // println!("Appending ritz im: {:?}", lp_ritz.leja_im.as_ref());
+                        self.update_leja_splice(a, b, c, 2, lp_ritz);
+                        // println!("New Leja sequence re: {:?}", self.leja_x.leja_re.as_ref().get(0..10));
+                        // println!("New Leja sequence im: {:?}", self.leja_x.leja_im.as_ref().get(0..10));
+                        // println!("New Shift: {}, New Scale: {}", self.shift, self.scale);
+                        // let (_leja_sc_re, _leja_sc_im) = self.leja_x.leja_sc(self.shift, self.scale);
+                        // println!("New Shifted-Scaled Leja sequence re: {:?}", _leja_sc_re.get(0..10));
+                        // println!("New Shifted-Scaled Leja sequence im: {:?}", _leja_sc_im.get(0..10));
+                    } else {
+                        self.update_leja(a, b, c);
+                    }
+                },
+                "schur" => {
+                    let (a, b, c, ritz_re, ritz_im) = spectrum_krylov_schur(
+                        a_lo, av.as_ref(), dt, self.spec_iters, 1.0e-6, false);
+                    println!("Schur Spectrum params: a={}, b={}, c={}", a, b, c);
+                    // println!("Schur eig re: {:?}", &ritz_re);
+                    // println!("Schur eig im: {:?}", &ritz_im);
                     // apply shift and scale to the ritz values
                     // splice complex conj ritz values into the leja sequence
                     if self.splice_ritz == true {
@@ -775,8 +806,6 @@ impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
                             .normalize(a, b, c)
                             .mirror()
                             .rescale(a, b, c);
-                        // println!("Appending ritz re: {:?}", lp_ritz.leja_re.as_ref());
-                        // println!("Appending ritz im: {:?}", lp_ritz.leja_im.as_ref());
                         self.update_leja_splice(a, b, c, 2, lp_ritz);
                     } else {
                         self.update_leja(a, b, c);
@@ -787,26 +816,8 @@ impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
                         a_lo, av.as_ref(), dt, self.spec_iters, 1.0e-6);
                     self.update_leja(a, b, c);
                 },
-                "schur" => {
-                    let (a, b, c, ritz_re, ritz_im) = spectrum_krylov_schur(
-                        a_lo, av.as_ref(), dt, self.spec_iters, 1.0e-6, false);
-                    println!("Schur Spectrum params: a={}, b={}, c={}", a, b, c);
-                    // apply shift and scale to the ritz values
-                    // splice complex conj ritz values into the leja sequence
-                    if self.splice_ritz == true {
-                        let (lp_ritz, _, _) = LejaPoints::new(ritz_re, ritz_im)
-                            .normalize(a, b, c)
-                            .mirror()
-                            .rescale(a, b, c);
-                        // println!("Appending ritz re: {:?}", lp_ritz.leja_re.as_ref());
-                        // println!("Appending ritz im: {:?}", lp_ritz.leja_im.as_ref());
-                        self.update_leja_splice(a, b, c, 2, lp_ritz);
-                    } else {
-                        self.update_leja(a, b, c);
-                    }
-                },
                 "none" => {},
-                _s => panic!("Unknown spec_method: {_s}. Pick one of: (arnoldi, power, schur, none)")
+                _s => panic!("Unknown spec_method: {_s}. Pick one of: (arnoldi, schur, none)")
             }
 
             self.spec_norm = spec_norm;
@@ -849,15 +860,13 @@ pub fn spectrum_krylov_schur(
     let nev = std::cmp::min(n, ext_a_lo.nrows());
     let mut eigvals = vec![Complex64::ZERO; nev];
     let mut eigvecs = Mat::<Complex64>::zeros(ext_a_lo.nrows(), nev);
-
-    //let random_f64 = |_| rand::random::<f64>().into();
-    //let mut v0: Col<f64> = Col::from_fn(n, random_f64);
-    //v0 /= v0.norm_l2();
-    //let v0 = v0.as_ref();
+    // let random_f64 = |_| rand::random::<f64>().into();
+    // let mut r0: Col<f64> = Col::from_fn(ext_a_lo.nrows(), random_f64);
+    // r0 /= r0.norm_l2();
+    let r0 = v0.col(0) / v0.norm_l2();
 
     let par = faer::get_global_parallelism();
-
-    let params = faer::matrix_free::eigen::PartialEigenParams::default();
+    let mut params = faer::matrix_free::eigen::PartialEigenParams::default();
     let stack_req =
         faer::matrix_free::eigen::partial_eigen_scratch(ext_a_lo, nev, par, params);
     let mut membuffer = MemBuffer::new(stack_req);
@@ -867,7 +876,7 @@ pub fn spectrum_krylov_schur(
         eigvecs.rb_mut(),
         &mut eigvals,
         ext_a_lo,
-        v0.col(0),
+        r0.as_ref(),
         tol,
         par,
         memstack,
@@ -878,19 +887,20 @@ pub fn spectrum_krylov_schur(
     let ritz_re = eigvals.iter().map(|v| scale * v.re()).collect::<Vec<f64>>();
     let ritz_im = eigvals.iter().map(|v| scale * v.im()).collect::<Vec<f64>>();
     let a = ritz_re.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
+    let b = ritz_re.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
     let c = ritz_im.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
     if update_b {
-        let b = ritz_re.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
         return (*a, *b, *c, ritz_re, ritz_im)
     }
-    let b = 0.0;
-    (*a, b, *c, ritz_re, ritz_im)
+    // let b = 0.0;
+    // (*a, b, *c, ritz_re, ritz_im)
+    (a.min(-1.0e-2), b.max(0.0), *c, ritz_re, ritz_im)
 }
 
 /// Using power iteration to estimate
 /// spectrum paramters.
 /// WARNING: this method does not work for systems
-/// with complex conjugate eigenvalues.
+/// with complex eigenvalues.
 pub fn spectrum_pwr_itr(
     ext_a_lo: &dyn LinOp<f64>,
     v0: MatRef<f64>,
@@ -899,7 +909,6 @@ pub fn spectrum_pwr_itr(
     tol: f64)
     -> (f64, f64, f64, Mat<f64>)
 {
-    // run power iter
     let mut b_k = v0.to_owned();
     let mut b_k1 = v0.to_owned();
     let mut eig_old = 1.0e20;

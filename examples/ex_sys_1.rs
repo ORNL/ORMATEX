@@ -31,7 +31,7 @@ pub fn main() {
     // let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
 
     let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 60);
-    let mut matexp_m = matexp_leja::LejaPhiEval::new(lp, 20, 0.0, 1.0, 1e-12, 1e-12, 20, "arnoldi", false);
+    let mut matexp_m = matexp_leja::LejaPhiEval::new(lp, 20, 0.0, 1.0, 1e-12, 1e-8, 20, "arnoldi", true);
 
     let mut sys_solver = ode_epirk::EpirkIntegrator::new(
         0.0, y0.as_ref(), "epi3".to_string(), &mut matexp_m);
