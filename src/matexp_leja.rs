@@ -450,7 +450,17 @@ impl LejaPhiEval {
     /// Leja and Krylov Approximations of Large Scale
     /// Matrix Exponentials. Intl. Conf on Computational Science. 2006.
     ///
+    /// Computes the matrix exponential-vector product: exp(dt*A)*u
+    ///
     /// #Args
+    /// * `pm` - the output vector holding the polynomial approximation of
+    ///    the matrix exponential-vector product.
+    /// * `ext_a_lo` - the linear operator A
+    /// * `dt` - the stepsize
+    /// * `u` - the rhs vector
+    /// * `shift` - the leja point sequence shift
+    /// * `scale` - the leja point sequence scale
+    /// * `coeffs` - the leja polynomial coefficients
     fn real_leja_expmv<T: LinOp<f64>>(
         &self,
         mut pm: MatMut<f64>,
@@ -466,7 +476,7 @@ impl LejaPhiEval {
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
         let err_est: f64 = 2. * norm_u;
-        let mut converged: bool = (err_est == 0.);
+        let mut converged: bool = err_est == 0.;
 
         // shift and scale leja points to align to the spectrum parameters
         let (leja_x_sc, _leja_x_sc_im) = self.leja_x.leja_sc(shift, scale);
@@ -509,6 +519,16 @@ impl LejaPhiEval {
 
     /// Taylor series method to estimate the action of
     /// the matrix exponential on a vector.
+    ///
+    /// #Args
+    /// * `pm` - the output vector holding the polynomial approximation of
+    ///    the matrix exponential-vector product.
+    /// * `ext_a_lo` - the linear operator A
+    /// * `dt` - the stepsize
+    /// * `u` - the rhs vector
+    /// * `shift` - location on the real axis about which the
+    ///    taylor expansion is conducted.
+    /// * `scale` - unused
     fn taylor_expmv<T: LinOp<f64>>(
         &self,
         mut pm: MatMut<f64>,
@@ -523,7 +543,7 @@ impl LejaPhiEval {
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
         let mut err_est = 2. * norm_u;
-        let mut converged: bool = (err_est == 0.);
+        let mut converged: bool = err_est == 0.;
 
         let mut av = u.to_owned();
         let mut vm = u.to_owned();
@@ -557,6 +577,18 @@ impl LejaPhiEval {
     }
 
     /// Complex conjugate leja point method (CLaPM).
+    ///
+    /// Computes the matrix exponential-vector product: exp(dt*A)*u
+    ///
+    /// #Args
+    /// * `pm` - the output vector holding the polynomial approximation of
+    ///    the matrix exponential-vector product.
+    /// * `ext_a_lo` - the linear operator A
+    /// * `dt` - the stepsize
+    /// * `u` - the rhs vector
+    /// * `shift` - the leja point sequence shift
+    /// * `scale` - the leja point sequence scale
+    /// * `coeffs` - the leja polynomial coefficients
     fn complex_conj_leja_expmv<T: LinOp<f64>>(
         &self, mut pm: MatMut<f64>,
         ext_a_lo: &T,
@@ -570,7 +602,7 @@ impl LejaPhiEval {
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
         let mut err_est = 2. * norm_u;
-        let mut converged: bool = (err_est == 0.);
+        let mut converged: bool = err_est == 0.;
 
         // shift and scale leja points to align to the spectrum parameters
         let (leja_x_sc_re, leja_x_sc_im) = self.leja_x.leja_sc(shift, scale);
@@ -653,6 +685,11 @@ impl LejaPhiEval {
 
     /// Computes the linear combination: phi_0(dt*A)*v_0 + ... phi_k(dt*A)*v_k
     /// by leja polynomial approximation with optional substepping
+    ///
+    /// #Args
+    /// * `ext_a_lo` - the linear operator A
+    /// * `dt` - the stepsize
+    /// * `vb` - a k-len sequence of rhs vectors corrosponding to each phi-function: phi_k
     pub fn leja_expmv_substep(&self, ext_a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64>
     {
         // setup the extended rhs vector
@@ -709,7 +746,7 @@ impl LejaPhiEval {
         self.n_leja_real = self.leja_x.n_leja_real();
     }
 
-    /// set the shift and scale parameters
+    /// Set the shift and scale parameters
     ///
     /// #Args
     /// * `a` - is min real spectrum eig
@@ -768,27 +805,14 @@ impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
                     let (a, b, c, ritz_re, ritz_im) = spectrum_arnoldi_iom(
                         a_lo, av.as_ref(), dt, self.spec_iters, 2, false);
                     println!("Arnoldi Spectrum params: a={}, b={}, c={}", a, b, c);
-                    // println!("Ritz re: {:?}", &ritz_re);
-                    // println!("Ritz im: {:?}", &ritz_im);
                     // apply shift and scale to the ritz values
                     // splice complex conj ritz values into the leja sequence
                     if self.splice_ritz == true {
-//                         let lp_ritz = LejaPoints::new(ritz_re, ritz_im)
-//                             .normalize(a, b, c)
-//                             .mirror();
                         let (lp_ritz, _, _) = LejaPoints::new(ritz_re, ritz_im)
                             .normalize(a, b, c)
                             .mirror()
                             .rescale(a, b, c);
-                        // println!("Appending ritz re: {:?}", lp_ritz.leja_re.as_ref());
-                        // println!("Appending ritz im: {:?}", lp_ritz.leja_im.as_ref());
                         self.update_leja_splice(a, b, c, 2, lp_ritz);
-                        // println!("New Leja sequence re: {:?}", self.leja_x.leja_re.as_ref().get(0..10));
-                        // println!("New Leja sequence im: {:?}", self.leja_x.leja_im.as_ref().get(0..10));
-                        // println!("New Shift: {}, New Scale: {}", self.shift, self.scale);
-                        // let (_leja_sc_re, _leja_sc_im) = self.leja_x.leja_sc(self.shift, self.scale);
-                        // println!("New Shifted-Scaled Leja sequence re: {:?}", _leja_sc_re.get(0..10));
-                        // println!("New Shifted-Scaled Leja sequence im: {:?}", _leja_sc_im.get(0..10));
                     } else {
                         self.update_leja(a, b, c);
                     }
@@ -797,10 +821,6 @@ impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
                     let (a, b, c, ritz_re, ritz_im) = spectrum_krylov_schur(
                         a_lo, av.as_ref(), dt, self.spec_iters, 1.0e-6, false);
                     println!("Schur Spectrum params: a={}, b={}, c={}", a, b, c);
-                    // println!("Schur eig re: {:?}", &ritz_re);
-                    // println!("Schur eig im: {:?}", &ritz_im);
-                    // apply shift and scale to the ritz values
-                    // splice complex conj ritz values into the leja sequence
                     if self.splice_ritz == true {
                         let (lp_ritz, _, _) = LejaPoints::new(ritz_re, ritz_im)
                             .normalize(a, b, c)
