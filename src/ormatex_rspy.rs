@@ -206,8 +206,8 @@ impl OdeSys<'_> for PySysWrapped {
 }
 
 /// Select ode solver
-fn select_solver<'a>(
-    sys: &'a PySysWrapped,
+fn select_solver<'a, T: LinOpPhikvEvaluator + 'a>(
+    sys: &'_ PySysWrapped,
     t0: f64,
     y0_mat: MatRef<'_, f64>,
     method: String,
@@ -215,7 +215,7 @@ fn select_solver<'a>(
     krylov_dim: usize,
     iom: usize,
     tol_fdt: f64,
-    matexp_m: &'a dyn LinOpPhikvEvaluator,
+    matexp_m: T,
     )
     -> Rc < RefCell<dyn IntegrateSys<'a, TimeType=f64, SysStateType=Mat<f64>> + 'a> >
 {
@@ -282,7 +282,7 @@ fn integrate_wrapper_rs<'py>(
     };
     let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     let solver = select_solver(
-        sys, t0, y0_mat, method, expmv_method, krylov_dim, iom, tol_fdt, &matexp_m);
+        sys, t0, y0_mat, method, expmv_method, krylov_dim, iom, tol_fdt, matexp_m);
 
     // storage for results
     let mut y_out: Vec<Bound<PyArray2<f64>>> = Vec::with_capacity(nsteps);
@@ -417,7 +417,7 @@ impl DensePhikvEvalRs {
 }
 
 #[pymodule]
-#[pyo3(name="ormatex")]
+#[pyo3(name="_ormatex")]
 fn ormatex<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()>
 {
     // Adds PySys wrapper
