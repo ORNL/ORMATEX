@@ -132,7 +132,16 @@ impl <'a> EpirkIntegrator <'a>
         (phi2_v, v)
     }
 
-    /// EPI2
+    /// Exponential Propagative Iterative Order 2 method (EPI3)
+    ///
+    /// Gaudreault, Stéphane, and Janusz A. Pudykiewicz.
+    /// An efficient exponential time integration method for the numerical
+    /// solution of the shallow water equations on the sphere.
+    /// Journal of Computational Physics 322 (2016): 827-848.
+    ///
+    /// Tokman, Mayya. Efficient integration of large stiff systems of ODEs
+    /// with exponential propagation iterative (EPI) methods.
+    /// Journal of Computational Physics 213.2 (2006): 748-776.
     fn step_order_2(&mut self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
@@ -145,12 +154,22 @@ impl <'a> EpirkIntegrator <'a>
         self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref());
 
         // correction for nonautonomous case
-        let (phi2_v, _) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+        let v: Mat<f64> = if self.tol_fdt < 0.0 {
+                faer::Mat::zeros(y0.nrows(), 1)
+            } else {
+                self.frhs_fdt(sys, fy0.as_ref(), 1e-8)
+            };
+        let vb2 = dt.powi(2) * v;
 
-        let y_new = y0.as_ref() + phi2_v +
-            self.expm.apply_phi_k(
-                sys_jac_lop.as_ref(),
-                dt, fy0_dt.as_ref(), 1);
+        // build vector of rhs
+        let zero_mat = faer::Mat::zeros(y0.nrows(), 1);
+        let vb = vec![
+            zero_mat.as_ref(),
+            fy0_dt.as_ref(),
+            vb2.as_ref(),
+        ];
+        let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
+        let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, None))
@@ -158,6 +177,9 @@ impl <'a> EpirkIntegrator <'a>
 
     /// EXPRB32
     /// Exponential Rosenroack order 3 with 2nd order embedded error estimate.
+    /// Ref: Hochbruck, Marlis, Alexander Ostermann, and Julia Schweitzer.
+    /// Exponential Rosenbrock-type methods.
+    /// SIAM Journal on Numerical Analysis 47.1 (2009): 786-803.
     fn step_exprb32(&mut self, sys: &'a dyn OdeSys<'a>, dt: f64)
         -> Result<StepResult<f64, Mat<f64>>, StepError>
     {
@@ -194,11 +216,15 @@ impl <'a> EpirkIntegrator <'a>
         Ok(StepResult::new(t+dt, dt, y_new, Some(y_err)))
     }
 
-    /// EPI3
-    /// From Gaudreault et. al.
+    /// Exponential Propagative Iterative Order 3 method (EPI3)
+    ///
+    /// Gaudreault, Stéphane, and Janusz A. Pudykiewicz.
     /// An efficient exponential time integration method for the numerical
-    /// solution of the shallow water equations.
-    fn step_order_3(&mut self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    /// solution of the shallow water equations on the sphere.
+    /// Journal of Computational Physics 322 (2016): 827-848.
+    fn step_order_3(&mut self, sys: &'a dyn OdeSys<'a>, dt: f64)
+        -> Result<StepResult<f64, Mat<f64>>, StepError>
+    {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
