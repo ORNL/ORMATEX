@@ -288,12 +288,12 @@ impl <'a> LinOp<f64> for DynRefExtendedLinOp<'a>   {
 
     /// Number of rows in the linop
     fn nrows(&self) -> usize {
-        self.inner_lop.nrows()
+        self.inner_lop.nrows() + self.kmat.nrows()
     }
 
     /// Number of cols in the linop
     fn ncols(&self) -> usize {
-        self.inner_lop.ncols()
+        self.inner_lop.ncols() + self.kmat.ncols()
     }
 
     /// Apply the extended lop

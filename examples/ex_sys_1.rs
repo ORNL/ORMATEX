@@ -25,13 +25,13 @@ pub fn main() {
     // setup the integrator
     // let mut sys_solver = ode_bdf::BdfIntegrator::new(0.0, y0.as_ref(), 2);
     // let mut sys_solver = ode_rk::RkIntegrator::new(0.0, y0.as_ref(), 2);
-    let iom = 4;
+    let iom = 2;
     let krylov_dim = 4;
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
-    let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
+    // let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
 
-    // let lp = matexp_leja::LejaPoints::new_from_lib("leja_real").slice(0, 300);
-    // let mut matexp_m = matexp_leja::LejaPhiEval::new(lp, 200, 0.0, 1.0, 1e-12, 1e-12, 20, false);
+    let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 60);
+    let mut matexp_m = matexp_leja::LejaPhiEval::new(lp, 20, 0.0, 1.0, 1e-12, 1e-12, 20, "arnoldi", false);
 
     let mut sys_solver = ode_epirk::EpirkIntegrator::new(
         0.0, y0.as_ref(), "epi3".to_string(), &mut matexp_m);
