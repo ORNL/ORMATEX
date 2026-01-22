@@ -56,7 +56,7 @@ impl <'a> BdfIntegrator <'a>
         }
     }
 
-    fn _nonlin_gfn(&self, sys: &'a dyn OdeSys<'a>, t: f64, y: MatRef<f64>, dt: f64, order: usize) -> Mat<f64> {
+    fn _nonlin_gfn<'b>(&self, sys: &'b dyn OdeSys<'b>, t: f64, y: MatRef<f64>, dt: f64, order: usize) -> Mat<f64> {
         // current state
         let y0 = self.y_hist[0].as_ref();
         match order {
@@ -68,7 +68,7 @@ impl <'a> BdfIntegrator <'a>
         }
     }
 
-    fn _nonlin_gfn_jac(&self, sys: &'a dyn OdeSys<'a>, t: f64, y: MatRef<f64>, dt: f64, order: usize) -> ShiftedLinOp<'_> {
+    fn _nonlin_gfn_jac<'b>(&self, sys: &'b dyn OdeSys<'b>, t: f64, y: MatRef<f64>, dt: f64, order: usize) -> ShiftedLinOp<'b> {
         let gamma = 1.0;
         let scale = match order {
             // bdf1
@@ -81,7 +81,7 @@ impl <'a> BdfIntegrator <'a>
     }
 
     /// BDF1
-    fn step_order_1(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_1<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -95,7 +95,7 @@ impl <'a> BdfIntegrator <'a>
         // objective is to find the zero of this function
         // y_k+1 =  y_k + dt * frhs(y_k+1, t+dt) or
         // -dt*frhs(y_k+1, t+dt) + y_k+1 - y_k = 0
-        let gfn: &dyn for<'b> Fn(f64, MatRef<'_, f64>) -> Mat<f64> = &|t, y|
+        let gfn: &dyn for<'c> Fn(f64, MatRef<'_, f64>) -> Mat<f64> = &|t, y|
             { -dt*sys.frhs(t+dt, y) - y0.as_ref() + y.as_ref() };
 
         // Create jacobian of gfn
@@ -113,7 +113,7 @@ impl <'a> BdfIntegrator <'a>
     }
 
     /// BDF2
-    fn step_order_2(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_2<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -134,7 +134,7 @@ impl <'a> BdfIntegrator <'a>
     }
 
     /// Crank-Nicholson
-    fn step_cn(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_cn<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -145,7 +145,7 @@ impl <'a> BdfIntegrator <'a>
         // objective is to find the zero of this function
         // y_k+1 =  y_k + 0.5*dt * frhs(y_k+1, t+dt) + 0.5*dt * frhs(y_k, t)
         // -0.5*dt*frhs(y_k+1, t+dt) - 0.5*dt*frhs(y_k, t) + y_k+1 - y_k = 0
-        let gfn: &dyn for<'b> Fn(f64, MatRef<'_, f64>) -> Mat<f64> = &|t, y|
+        let gfn: &dyn for<'c> Fn(f64, MatRef<'_, f64>) -> Mat<f64> = &|t, y|
             { -dt*0.5*sys.frhs(t+dt, y) -dt*0.5*sys.frhs(t, y0.as_ref()) - y0.as_ref() + y.as_ref() };
 
         // Create jacobian of gfn
@@ -168,7 +168,7 @@ impl <'a> IntegrateSys<'a> for BdfIntegrator<'a>
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&mut self, sys: &'a dyn OdeSys<'a>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step<'b>(&mut self, sys: &'b dyn OdeSys<'b>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
         match self.order {
             1 => self.step_order_1(sys, dt),
             2 => {
