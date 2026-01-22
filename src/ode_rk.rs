@@ -102,7 +102,7 @@ impl RkIntegrator
         }
     }
 
-    pub fn step_rk<'a>(&self, sys: &'a dyn OdeSys<'a>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    pub fn step_rk<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -130,7 +130,7 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step(&self, sys: &'a dyn OdeSys<'a>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
        self.step_rk(sys, dt)
     }
 
