@@ -8,7 +8,12 @@ use ormatex::ode_epirk;
 use ormatex::matexp_krylov;
 use ormatex::ode_test_common::*;
 use ormatex::matexp_pade;
-// use plotters::prelude::*;
+
+// optional deps for plotting
+#[cfg(feature="plot")]
+use plotlars::{ScatterPlot, LinePlot, Plot, Rgb};
+#[cfg(feature="plot")]
+use polars::prelude::*;
 
 
 pub fn main() {
@@ -61,58 +66,31 @@ pub fn main() {
         println!("{:?}, {:?}, {:?}, {:?}", t_points[i], c0[i], c1[i], c2[i]);
     }
 
-    // plot_time_series(t_points.clone(), c0.clone(), c1.clone(), c2.clone());
+    #[cfg(feature="plot")]
+    plot_time_series(t_points.clone(), c0.clone(), c1.clone(), c2.clone());
 }
 
+#[cfg(feature="plot")]
+fn plot_time_series(t: Vec<f64>, c0: Vec<f64>, c1: Vec<f64>, c2: Vec<f64>)
+    -> Result<(), Box<dyn std::error::Error>>
+{
+    // create polars dataframe from vecs
+    let df = df! [
+        "t" => t,
+        "y0" => c0,
+        "y1" => c1,
+        "y1" => c2,
+    ]?;
 
-// fn plot_time_series(t: Vec<f64>, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), Box<dyn std::error::Error>> {
-//     let root = BitMapBackend::new("ex_bateman.png", (640, 480)).into_drawing_area();
-//     root.fill(&WHITE)?;
-//     let mut chart = ChartBuilder::on(&root)
-//         .margin(5)
-//         .x_label_area_size(30)
-//         .y_label_area_size(30)
-//         .build_cartesian_2d((0f64..10000f64).log_scale(), (1e-9f64..2.0f64).log_scale())?;
-// 
-//     chart.configure_mesh()
-//         .y_desc("Population")
-//         .x_desc("Time")
-//         .draw()?;
-// 
-//     chart
-//         .draw_series(LineSeries::new(
-//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-//             t.clone().into_iter().zip(x),
-//             &RED,
-//         ))?
-//         .label("n0")
-//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
-// 
-//     chart
-//         .draw_series(LineSeries::new(
-//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-//             t.clone().into_iter().zip(y),
-//             &BLUE,
-//         ))?
-//         .label("n1")
-//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
-// 
-//     chart
-//         .draw_series(LineSeries::new(
-//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-//             t.clone().into_iter().zip(z),
-//             &GREEN,
-//         ))?
-//         .label("n2")
-//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
-// 
-//     chart
-//         .configure_series_labels()
-//         .background_style(&WHITE.mix(0.8))
-//         .border_style(&BLACK)
-//         .draw()?;
-// 
-//     root.present()?;
-// 
-//     Ok(())
-// }
+    // plot the dataframe contents
+    let plot = LinePlot::builder()
+        .data(&df)
+        .x("t")
+        .y("y0")
+        .y("y1")
+        .y("y2")
+        .build();
+    plot.write_image("ex_sys_2.png", 1200, 800, 2.0)?;
+
+    Ok(())
+}

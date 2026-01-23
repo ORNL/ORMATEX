@@ -135,7 +135,7 @@ impl KrylovExpm {
     }
 }
 
-impl <'a> LinOpPhikvEvaluator <'a> for KrylovExpm {
+impl LinOpPhikvEvaluator for KrylovExpm {
     fn apply_phi_k_v(&self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
         self.kiops_fixedsteps(a_lo, dt, vb)
     }

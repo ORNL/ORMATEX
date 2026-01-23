@@ -325,15 +325,15 @@ pub fn dd_expm_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: us
     let hs = 1.0 / (2.0 as f64).powi(s);
 
     // compute expm(Z)
-    let mut F = expm_taylor((hs*h*z).as_ref(), 0.0, 1.0, p);
+    let mut f_out = expm_taylor((hs*h*z).as_ref(), 0.0, 1.0, p);
 
     // squaring
     for _i in 0..s {
-        F = F.as_ref() * F.as_ref();
+        f_out = f_out.as_ref() * f_out.as_ref();
     }
 
     // reshift and extract first col
-    faer::Scale( (h * mu).exp() ) * F.col(0)
+    faer::Scale( (h * mu).exp() ) * f_out.col(0)
 }
 
 /// Used for phi function evaluation at the leja points
@@ -762,7 +762,7 @@ impl LejaPhiEval {
 
 }
 
-impl <'a> LinOpPhikvEvaluator <'a> for LejaPhiEval {
+impl LinOpPhikvEvaluator for LejaPhiEval {
     fn apply_phi_k_v(&self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
         let clock = std::time::Instant::now();
         let res = self.leja_expmv_substep(a_lo, dt, vb);

@@ -18,7 +18,8 @@ use std::error::Error;
 /// The phi-function evaluator traits
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
-use crate::ode_sys::{ExtendedLinOp, DynRefExtendedLinOp};
+use crate::ode_sys::{DynRefExtendedLinOp};
+
 
 pub struct PhikvStatus {
     /// converged status
@@ -40,7 +41,7 @@ pub trait DensePhikvEvaluator
 
 
 /// Trait for implementors of a phi_k(A*dt)*v method for Sparse or LinOp A
-pub trait LinOpPhikvEvaluator <'a>
+pub trait LinOpPhikvEvaluator
 {
     /// Evaluate a linear combination of phi-function vector prodcuts
     /// of the form [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]

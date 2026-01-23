@@ -16,19 +16,14 @@
 /// Exponential prop-iterative RK class of exponential integrators
 ///
 use faer::prelude::*;
-use num_traits::real::Real;
-use num_traits::Float;
-use crate::matexp_krylov::KrylovExpm;
 use crate::matexp_traits::LinOpPhikvEvaluator;
 use crate::ode_sys::*;
 use faer::matrix_free::LinOp;
-use faer::dyn_stack::PodStack;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
-use std::marker::PhantomData;
 use std::collections::VecDeque;
 
 
-pub struct EpirkIntegrator<'a, T: LinOpPhikvEvaluator<'a>>
+pub struct EpirkIntegrator<T: LinOpPhikvEvaluator>
 {
     /// Matrix exponential evaluator
     expm: T,
@@ -48,14 +43,11 @@ pub struct EpirkIntegrator<'a, T: LinOpPhikvEvaluator<'a>>
     /// Storage for past system solution states
     y_hist: VecDeque<Mat<f64>>,
     t_hist: VecDeque<f64>,
-
-    /// Use a lifetime
-    phantom: PhantomData<&'a ()>
 }
 
-impl <'a, T> EpirkIntegrator <'a, T>
+impl <T> EpirkIntegrator <T>
 where
-    T: LinOpPhikvEvaluator<'a>
+    T: LinOpPhikvEvaluator
 {
     /// Set the initial conditions and seteup bdf integrator
     pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: T) -> Self
@@ -77,7 +69,6 @@ where
             tol_fdt: -1.0,
             y_hist,
             t_hist,
-            phantom: Default::default()
         }
     }
 
@@ -264,9 +255,9 @@ where
     }
 }
 
-impl <'a, T> IntegrateSys<'a> for EpirkIntegrator<'a, T>
+impl <'a, T> IntegrateSys<'a> for EpirkIntegrator<T>
 where
-    T: LinOpPhikvEvaluator<'a>
+    T: LinOpPhikvEvaluator
 {
     type TimeType = f64;
     type SysStateType = Mat<f64>;
