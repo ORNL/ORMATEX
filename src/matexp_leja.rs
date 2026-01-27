@@ -145,7 +145,9 @@ impl LejaPoints {
         let mut real_lp: Vec<f64> = vec![];
         let mut complex_lp: Vec<f64> = vec![];
         // parse the leja point string
-        let mut rdr = csv::ReaderBuilder::new().has_headers(false).from_reader(lp_str.as_bytes());
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(lp_str.as_bytes());
         for result in rdr.records() {
             let record = result.expect("parsing record failed");
             let re: f64 = record.get(0).unwrap().replace(" ", "").parse::<f64>().unwrap();
