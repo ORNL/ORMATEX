@@ -199,6 +199,12 @@ class SysJacLinOp(LinOp):
         """
         return self._frhs(self._t, self._u, **self._frhs_kwargs)
 
+    def dim(self) -> int:
+        """
+        Operator dimension
+        """
+        return len(self._u)
+
 
 class CustomJacLinOp(SysJacLinOp):
     _f_du: jax.Array

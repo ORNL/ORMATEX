@@ -116,8 +116,13 @@ impl LinOp<f64> for PyJaxJacLinOp {
 
     /// Number of rows in the linop
     fn nrows(&self) -> usize {
-        // Not implented error!
-        panic!("Not Implemented");
+        let nr: usize = Python::attach(|py| {
+            let dim_py = self.py_linop.call_method(py, "dim", (), None).unwrap();
+            let inner_bound = dim_py.downcast_bound(py).unwrap();
+            let inner: usize = inner_bound.extract().unwrap();
+            inner
+        });
+        nr
     }
 
     /// Number of cols in the linop
@@ -139,18 +144,18 @@ impl LinOp<f64> for PyJaxJacLinOp {
         _ = stack;
 
         // compute jacobian vector product in python
-        let j_v = Python::with_gil(|py| {
+        Python::attach(|py| {
             // convert MatRef to PyArray
             let x_slice = rhs.col(0).try_as_col_major().unwrap().as_slice();
             let x_np = x_slice.to_vec().into_pyarray(py);
             let j_v_py = self.py_linop.call_method(py, "matvec_npcompat", (x_np,), None).unwrap();
             let inner_bound = j_v_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
             let inner: PyReadonlyArray1<f64> = inner_bound.extract().unwrap();
-            let slice_view = inner.as_slice().unwrap();
-            faer::col::ColRef::from_slice(slice_view).as_mat().to_owned()
+            // out.col_mut(0).copy_from(
+            //     faer::col::ColRef::from_slice(inner.as_slice().unwrap())
+            //     );
+            out.col_mut(0).copy_from(inner.into_faer());
         });
-
-        out.copy_from(j_v);
     }
 
     fn conj_apply(
@@ -171,7 +176,7 @@ impl LinOp<f64> for PyJaxJacLinOp {
 /// python implementations via pyO3 obj.call_method()
 impl OdeSys<'_> for PySysWrapped {
     fn frhs(&self, t: f64, x: MatRef<f64>) -> Mat<f64> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // convert x to numpy array
             let x_ndarray = x.into_ndarray().to_owned();
             let x_np = x_ndarray.into_pyarray(py);
@@ -192,7 +197,7 @@ impl OdeSys<'_> for PySysWrapped {
                 x: MatRef<'b, f64>)
             -> Box<dyn LinOp<f64> + '_> {
         // Box::new(get_fd_jac(self, t, x))
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // convert x to numpy array
             let x_ndarray = x.into_ndarray().to_owned();
             let x_np = x_ndarray.into_pyarray(py);
@@ -279,8 +284,7 @@ fn integrate_wrapper_rs<'py>(
     let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
     let osteps: usize = get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
 
-    let y = y0.as_array();
-    let y0_mat = y.view().into_faer();
+    let y0_mat = y0.into_faer();
 
     // setup the dense phi evaluator
     let expmv: Box<dyn DensePhikvEvaluator> = match expmv_method.as_str() {
@@ -343,8 +347,7 @@ fn phi_k_rs<'py>(
     -> Bound<'py, PyArray2<f64>>
 {
     // convert a mat into fear mat
-    let a_ndarray = a.as_array();
-    let a_mat = a_ndarray.view().into_faer();
+    let a_mat = a.into_faer();
 
     // run phi_k(dt*A)
     let phik = phi_ext(a_mat, k);
@@ -381,8 +384,7 @@ fn arnoldi_rs<'py>(
     let lop_wrapped = PyJaxJacLinOp::new(py_linop);
 
     // convert b vec into fear mat
-    let b_ndarray = b.as_array();
-    let b_mat = b_ndarray.into_faer();
+    let b_mat = b.into_faer();
 
     // run arnoldi
     let (q, h, bkdwn) = arnoldi_lop(
@@ -427,10 +429,8 @@ impl DensePhikvEvalRs {
     pub fn eval(&self, py: Python<'_>, a_np: PyReadonlyArray2<f64>, dt: f64, v0_np: PyReadonlyArray2<f64>, k: usize)
         -> Py<PyArray2<f64>>
     {
-        let a_arr = a_np.as_array();
-        let a = a_arr.view().into_faer();
-        let v0_arr = v0_np.as_array();
-        let v0 = v0_arr.view().into_faer();
+        let a = a_np.into_faer();
+        let v0 = v0_np.into_faer();
         let phikv = self.evaluator.phik_apply(a, dt, v0, k);
         let ndarray_phikv = phikv.as_ref().into_ndarray().to_owned();
         ndarray_phikv.into_pyarray(py).to_owned().into()

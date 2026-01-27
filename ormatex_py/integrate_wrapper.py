@@ -85,7 +85,7 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     elif is_rs:
         # try to integrate with rust ormatex integrators
         if not HAS_ORMATEX_RUST:
-            raise ImportError("import ormatex_py.ormatex failed. Rust ormatex bindings not found. Run: maturin develop --release")
+            raise ImportError("import ormatex_py.ormatex failed. Rust ormatex bindings not found. Run: maturin develop --release --features python")
         if not isinstance(ode_sys, PySysWrapped):
             ode_sys = PySysWrapped(OdeSysNp(ode_sys))
         y_res, t_res = integrate_wrapper_rs(ode_sys, np.asarray(y0).reshape((-1, 1)), t0, dt, nsteps, method=str(method[0:-3]), **kwargs)

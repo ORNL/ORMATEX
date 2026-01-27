@@ -12,6 +12,7 @@ path = 'src/lib.rs'
 [features]
 plot = ["dep:plotlars", "dep:polars"]
 python = ["dep:pyo3", "dep:numpy", "dep:ndarray", "dep:faer-ext"]
+default = ["python"]
 
 [dependencies]
 thiserror = "1.0"
@@ -38,7 +39,7 @@ polars = {version="0.52", optional=true}
 pyo3 = {version="=0.26", features = ["extension-module"], optional=true}
 numpy = {version="0.26", optional=true}
 ndarray = {version=">=0.16", features=["rayon"], optional=true}
-faer-ext = {version=">=0.7.1", features=["ndarray"], optional=true}
+faer-ext = {version=">=0.7.1", features=["ndarray", "numpy"], optional=true}
 
 [tool.maturin]
 module-name = "ormatex"
