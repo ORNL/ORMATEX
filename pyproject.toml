@@ -1,7 +1,7 @@
 [build-system]
 requires = ["setuptools >= 64", "maturin>=1.0,<2.0"]
-# build-backend = "setuptools.build_meta"
-build-backend = "maturin"
+build-backend = "setuptools.build_meta"
+# build-backend = "maturin"
 
 [project]
 name = "ormatex_py"
