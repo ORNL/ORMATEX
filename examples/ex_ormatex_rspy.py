@@ -3,7 +3,7 @@
 # NOTE: Before executing this example demo.  Ensure the ormatex
 # package is installed by running the following:
 #
-#     maturin develop --release
+#     maturin develop --release --features python
 #
 import numpy as np
 import jax

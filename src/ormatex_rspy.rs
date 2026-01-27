@@ -55,9 +55,11 @@ use crate::ode_bdf;
 use crate::ode_rk;
 use crate::ode_epirk;
 use crate::matexp_krylov;
+use crate::matexp_leja;
 use crate::matexp_pade::{PadeExpm, phi_ext};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use crate::matexp_cauchy;
+
 
 /// Wrapper around python PySys object
 #[pyclass]
@@ -164,7 +166,6 @@ impl LinOp<f64> for PyJaxJacLinOp {
 }
 
 
-
 /// Implement required OdeSys interface for interop
 /// with Rust ormatex integrators.  Calls the
 /// python implementations via pyO3 obj.call_method()
@@ -207,28 +208,35 @@ impl OdeSys<'_> for PySysWrapped {
 
 /// Select ode solver
 fn select_solver<'a, T: LinOpPhikvEvaluator + 'a>(
-    sys: &'_ PySysWrapped,
     t0: f64,
     y0_mat: MatRef<'_, f64>,
     method: String,
-    expmv_method: String,
-    krylov_dim: usize,
-    iom: usize,
     tol_fdt: f64,
     matexp_m: T,
     )
     -> Rc < RefCell<dyn IntegrateSys<'a, TimeType=f64, SysStateType=Mat<f64>> + 'a> >
 {
+    // backward euler
     if method.as_str() == "bdf1" || method.as_str() == "backeuler" {
         return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 1)))
     }
+    // backward difference formula 2
     else if method.as_str() == "bdf2" {
         return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 2)))
     }
+    // crank-nicolson
     else if method.as_str() == "cn" {
         return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 3)))
     }
-    // exp integrator family is default
+    // forward euler
+    else if method.as_str() == "rk1" || method.as_str() == "forwardeuler" {
+        return Rc::new( RefCell::new(ode_rk::RkIntegrator::new(t0, y0_mat, 1)))
+    }
+    // rk4
+    else if method.as_str() == "rk4" {
+        return Rc::new( RefCell::new(ode_rk::RkIntegrator::new(t0, y0_mat, 4)))
+    }
+    // exponential integrator fallthrough
     Rc::new( RefCell::new(ode_epirk::EpirkIntegrator::new(
         t0, y0_mat, method, matexp_m).with_opt(String::from("tol_fdt"), tol_fdt)))
 }
@@ -263,8 +271,9 @@ fn integrate_wrapper_rs<'py>(
     let kd_hash: HashMap<String, PyObject> = kd.extract().unwrap_or(HashMap::new());
 
     let method: String = get_val_or_default(py, &kd_hash, String::from("method"), String::from("epi2"));
+    let phikv_method: String = get_val_or_default(py, &kd_hash, String::from("phikv_method"), String::from("krylov"));
     let expmv_method: String = get_val_or_default(py, &kd_hash, String::from("expmv_method"), String::from("pade"));
-    let krylov_dim: usize = get_val_or_default(py, &kd_hash, String::from("max_krylov_dim"), 100);
+    let m: usize = get_val_or_default(py, &kd_hash, String::from("m"), 100);
     let iom: usize = get_val_or_default(py, &kd_hash, String::from("iom"), 2);
     let tol: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
     let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
@@ -273,16 +282,28 @@ fn integrate_wrapper_rs<'py>(
     let y = y0.as_array();
     let y0_mat = y.view().into_faer();
 
-    // setup the integrator
+    // setup the dense phi evaluator
     let expmv: Box<dyn DensePhikvEvaluator> = match expmv_method.as_str() {
         "cram" | "cram_16" => { Box::new(matexp_cauchy::gen_cram_expm(16)) },
         "parabolic" => { Box::new(matexp_cauchy::gen_parabolic_expm(24)) },
         // pade is default
         _ => { Box::new(PadeExpm::new(12)) },
     };
-    let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
-    let solver = select_solver(
-        sys, t0, y0_mat, method, expmv_method, krylov_dim, iom, tol_fdt, matexp_m);
+
+    // setup the time integrator
+    let solver = match phikv_method.as_str() {
+        "leja" => {
+            let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 400);
+            let matexp_m = matexp_leja::LejaPhiEval::new(
+                lp, std::cmp::min(m, 400), 0.0, 1.0, tol, 1e-8, 20, "arnoldi", true);
+            select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
+        },
+        // krylov is default
+        _ => {
+            let matexp_m = matexp_krylov::KrylovExpm::new(expmv, m, Some(iom));
+            select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
+        },
+    };
 
     // storage for results
     let mut y_out: Vec<Bound<PyArray2<f64>>> = Vec::with_capacity(nsteps);
@@ -416,24 +437,21 @@ impl DensePhikvEvalRs {
     }
 }
 
-#[pymodule]
-#[pyo3(name="_ormatex")]
-fn ormatex<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()>
-{
-    // Adds PySys wrapper
-    m.add_class::<PySysWrapped>()?;
 
-    // Adds dense phi_k(A*dt)*v0 evaluator
-    m.add_class::<DensePhikvEvalRs>()?;
+#[pymodule(name="ormatex")]
+mod ormatex {
+    #[pymodule_export]
+    use super::PySysWrapped;
 
-    // Adds rust ormatex integrate method
-    m.add_function(wrap_pyfunction!(integrate_wrapper_rs, m)?)?;
+    #[pymodule_export]
+    use super::DensePhikvEvalRs;
 
-    // Adds rust based arnoldi method
-    m.add_function(wrap_pyfunction!(arnoldi_rs, m)?)?;
+    #[pymodule_export]
+    use super::integrate_wrapper_rs;
 
-    // Adds rust based phi_k method
-    m.add_function(wrap_pyfunction!(phi_k_rs, m)?)?;
+    #[pymodule_export]
+    use super::arnoldi_rs;
 
-    Ok(())
+    #[pymodule_export]
+    use super::phi_k_rs;
 }

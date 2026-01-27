@@ -219,23 +219,23 @@ For an optimized build run:
 To use the rust-based ORMATEX integrators from a python interface, build the python-rust bindings with:
 
     pip install maturin
-    maturin develop --release
+    maturin develop --release --features python
 
 Ensure to use the `--release` flag for an optimized build.  Forgetting this flag will build in debug mode and will result in significantly degraded performance.
 
 ### Python-Rust Examples
 
-After running the above `maturin develop --release` command from the directory containing this `README.md` file (the root ORMATEX project directory), the following example can be run:
+After running the above `maturin develop --release --features python` command from the directory containing this `README.md` file (the root ORMATEX project directory), the following example can be run:
 
     cd examples
     python ex_ormatex_rspy.py
 
 ### Rust Examples
 
-Run the examples with
+Run the rust examples with
 
-    cargo run --example ex_sys_1 --release
-    cargo run --example ex_sys_2 --release
+    cargo run --example ex_sys_1 --release --features plot
+    cargo run --example ex_sys_2 --release --features plot
 
 Expected resulting images from running the first example of the Lotka-Volterra system integrated with EPI3:
 

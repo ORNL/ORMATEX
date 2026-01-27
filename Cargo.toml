@@ -41,8 +41,7 @@ ndarray = {version=">=0.16", features=["rayon"], optional=true}
 faer-ext = {version=">=0.7.1", features=["ndarray"], optional=true}
 
 [tool.maturin]
-module-name = "_ormatex"
-python-source = "ormatex_py"
+module-name = "ormatex"
 profile = "release"
 editable-profile = "release"
 features = ["python"]

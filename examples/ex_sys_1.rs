@@ -88,7 +88,7 @@ fn plot_time_series(t: Vec<f64>, y0: Vec<f64>, y1: Vec<f64>)
         .data(&df)
         .x("t")
         .y("y0")
-        .y("y1")
+        .additional_lines(vec!["y1"])
         .build();
     plot.write_image("ex_sys_1.png", 1200, 800, 2.0)?;
 

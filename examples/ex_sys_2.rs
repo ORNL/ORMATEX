@@ -79,7 +79,7 @@ fn plot_time_series(t: Vec<f64>, c0: Vec<f64>, c1: Vec<f64>, c2: Vec<f64>)
         "t" => t,
         "y0" => c0,
         "y1" => c1,
-        "y1" => c2,
+        "y2" => c2,
     ]?;
 
     // plot the dataframe contents
@@ -87,8 +87,7 @@ fn plot_time_series(t: Vec<f64>, c0: Vec<f64>, c1: Vec<f64>, c2: Vec<f64>)
         .data(&df)
         .x("t")
         .y("y0")
-        .y("y1")
-        .y("y2")
+        .additional_lines(vec!["y1", "y2"])
         .build();
     plot.write_image("ex_sys_2.png", 1200, 800, 2.0)?;
 
