@@ -18,7 +18,6 @@ use faer::complex::Complex64;
 ///
 use faer::reborrow::*;
 use faer::prelude::*;
-use faer::stats::{col_mean, NanHandling};
 use faer::matrix_free::LinOp;
 use faer::complex::ComplexFloat;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};

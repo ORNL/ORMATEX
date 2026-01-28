@@ -120,3 +120,45 @@ impl <'a> OdeSys<'a> for TestBatemanFdSys<'a> {
         Box::new(get_fd_jac(self, t, x))
     }
 }
+
+/// Simple test matrix for matexp tests
+pub fn gen_test_a() -> (Mat<f64>, Mat<f64>)
+{
+    // Generate a test 3x3 matrix with pure real eigs
+    let test_m = faer::mat![
+        [-1.0e-1,  0.0,    0.0],
+        [ 1.0e-1, -1.0,  0.0],
+        [    0.0,  1.0, -1.0e-3],
+        ];
+    // Generate a test vector
+    let test_v = faer::mat![
+        [0.1],
+        [0.2],
+        [0.01],
+        ];
+    (test_m, test_v)
+}
+
+/// Simple test matrix for matexp tests
+pub fn gen_test_b() -> (Mat<f64>, Mat<f64>)
+{
+    // Generate a test 3x3 matrix with one real eig and
+    // conjugate complex eigen pair
+    let lambda_c = 1.0;
+    let lambda_a = 0.5;
+    let lambda_b = 0.1;
+    let vs = 10.0;
+    let test_m = faer::mat![
+        [-lambda_a,    -vs,            0.0],
+        [ lambda_a+vs, -lambda_b,      0.0],
+        [    0.0,       lambda_b, -lambda_c],
+        ];
+    // eigs = [-1. +0.j       , -0.3+1.2083046j, -0.3-1.2083046j]:
+    // Generate a test vector
+    let test_v = faer::mat![
+        [0.1],
+        [0.2],
+        [0.01],
+        ];
+    (test_m, test_v)
+}

@@ -49,7 +49,7 @@ def run_model(dt, nsteps, method="exprb2_rs", tol_fdt=1.0e-6, ft_scale=1.0, phik
     t0 = 0.0
     y0 = np.array([0.1, 0.2])
     res = integrate(LotkaVolterra(ft_scale=ft_scale), y0, t0, dt, nsteps,
-                    method=method, tol_fdt=tol_fdt, phikv_method=phikv_method)
+                    method=method, m=20, tol_fdt=tol_fdt, phikv_method=phikv_method)
     y0 = jnp.array(y0.flatten())
     # Check against dopri5 in diffrax
     res_expected = integrate(LotkaVolterra(ft_scale=ft_scale), y0, t0, dt, nsteps,

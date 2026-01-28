@@ -12,7 +12,6 @@ path = 'src/lib.rs'
 [features]
 plot = ["dep:plotlars", "dep:polars"]
 python = ["dep:pyo3", "dep:numpy", "dep:ndarray", "dep:faer-ext"]
-default = ["python"]
 
 [dependencies]
 thiserror = "1.0"

@@ -28,37 +28,33 @@
 /// routines for performant time integration method implementations
 /// on the CPU.
 ///
+use pyo3::prelude::*;
+use pyo3::{pymethods, pymodule, Python};
+use pyo3::types::{PyList, PyDict};
 use numpy::{IntoPyArray, PyArray1, PyArray2,
             PyReadonlyArray1, PyReadonlyArray2};
-use numpy::ndarray::Array2;
-use pyo3::prelude::*;
-use pyo3::{pymethods, pymodule, types::PyModule, PyResult, Python};
-use pyo3::types::{PyList, PyDict};
-use std::collections::HashMap;
-use std::fmt;
 
 use faer::prelude::*;
 use faer_ext::*;
 use faer::Par;
 use faer::matrix_free::LinOp;
-use faer::dyn_stack::PodStack;
-use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
+use faer::dyn_stack::{MemStack, StackReq};
 
+use std::fmt;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
-use reborrow::{ReborrowMut, Reborrow};
 
 use crate::ode_sys::*;
-use crate::ode_sys::*;
-use crate::arnoldi::arnoldi_lop;
 use crate::ode_bdf;
 use crate::ode_rk;
 use crate::ode_epirk;
 use crate::matexp_krylov;
 use crate::matexp_leja;
+use crate::matexp_cauchy;
 use crate::matexp_pade::{PadeExpm, phi_ext};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
-use crate::matexp_cauchy;
+use crate::arnoldi::arnoldi_lop;
 
 
 /// Wrapper around python PySys object
@@ -151,9 +147,6 @@ impl LinOp<f64> for PyJaxJacLinOp {
             let j_v_py = self.py_linop.call_method(py, "matvec_npcompat", (x_np,), None).unwrap();
             let inner_bound = j_v_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
             let inner: PyReadonlyArray1<f64> = inner_bound.extract().unwrap();
-            // out.col_mut(0).copy_from(
-            //     faer::col::ColRef::from_slice(inner.as_slice().unwrap())
-            //     );
             out.col_mut(0).copy_from(inner.into_faer());
         });
     }
@@ -275,6 +268,7 @@ fn integrate_wrapper_rs<'py>(
     let kd: pyo3::Bound<'_, PyDict> = kwds.unwrap_or(PyDict::new(py));
     let kd_hash: HashMap<String, PyObject> = kd.extract().unwrap_or(HashMap::new());
 
+    // stepper settings
     let method: String = get_val_or_default(py, &kd_hash, String::from("method"), String::from("epi2"));
     let phikv_method: String = get_val_or_default(py, &kd_hash, String::from("phikv_method"), String::from("krylov"));
     let expmv_method: String = get_val_or_default(py, &kd_hash, String::from("expmv_method"), String::from("pade"));
@@ -283,6 +277,10 @@ fn integrate_wrapper_rs<'py>(
     let tol: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
     let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
     let osteps: usize = get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
+    // jacobian spectrum analysis settings
+    let spec_tol: f64 = get_val_or_default(py, &kd_hash, String::from("spec_tol"), 1.0e-8);
+    let spec_iter: usize = get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
+    let spec_splice: bool = get_val_or_default(py, &kd_hash, String::from("spec_splice"), true);
 
     let y0_mat = y0.into_faer();
 
@@ -297,9 +295,9 @@ fn integrate_wrapper_rs<'py>(
     // setup the time integrator
     let solver = match phikv_method.as_str() {
         "leja" => {
-            let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 400);
+            let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, m+2);
             let matexp_m = matexp_leja::LejaPhiEval::new(
-                lp, std::cmp::min(m, 400), 0.0, 1.0, tol, 1e-8, 20, "arnoldi", true);
+                lp, std::cmp::min(m, 800), 0.0, 1.0, tol, spec_tol, spec_iter, "arnoldi", spec_splice);
             select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
         },
         // krylov is default

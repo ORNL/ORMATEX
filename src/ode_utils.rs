@@ -15,11 +15,10 @@
  */
 /// Useful tools for testing ODE integration methods
 use faer::prelude::*;
-use faer::sparse::*;
 
 
 /// define Lotka-Volterra system for testing ONLY
-pub fn lv_sys_rhs(t: f64, x: MatRef<f64>) -> Mat<f64> {
+pub fn lv_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
     let alpha = 1.0;
     let beta = 1.0;
     let delta = 1.0;
@@ -32,7 +31,7 @@ pub fn lv_sys_rhs(t: f64, x: MatRef<f64>) -> Mat<f64> {
 }
 
 /// define Lotka-Volterra jacobian for testing ONLY
-pub fn lv_sys_jac(t: f64, x: MatRef<f64>) -> SparseColMat<usize, f64> {
+pub fn lv_sys_jac(_t: f64, x: MatRef<f64>) -> SparseColMat<usize, f64> {
     let alpha = 1.0;
     let beta = 1.0;
     let delta = 1.0;
@@ -56,7 +55,7 @@ pub fn lv_sys_jac(t: f64, x: MatRef<f64>) -> SparseColMat<usize, f64> {
 
 // Bateman
 /// Linear stiff.  Best-case scinario for ETD methods
-pub fn bateman_sys_rhs(t: f64, x: MatRef<f64>) -> Mat<f64> {
+pub fn bateman_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
     // slow decay
     let lambda_0 = 1.0e-3;
     // fast decay
@@ -65,10 +64,6 @@ pub fn bateman_sys_rhs(t: f64, x: MatRef<f64>) -> Mat<f64> {
     let lambda_2 = 1.0e-1;
     // near stable
     // let lambda_3 = 1.0e-16;
-
-    let n0 = x[(0, 0)];
-    let n1 = x[(1, 0)];
-    let n2 = x[(2, 0)];
 
     let bat_mat = faer::mat![
         [-lambda_0,  lambda_1,        0.],
@@ -82,7 +77,7 @@ pub fn bateman_sys_rhs(t: f64, x: MatRef<f64>) -> Mat<f64> {
 
 /// Robertson
 /// Nonlinear stiff example system.
-pub fn rob_sys_rhs(t: f64, x_in: MatRef<f64>) -> Mat<f64> {
+pub fn rob_sys_rhs(_t: f64, x_in: MatRef<f64>) -> Mat<f64> {
     let x = x_in[(0, 0)];
     let y = x_in[(1, 0)];
     let z = x_in[(2, 0)];

@@ -20,10 +20,7 @@
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use faer::Par;
-use faer::dyn_stack::PodStack;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
-use faer_traits::math_utils::abs;
-use std::ops::{Add, Sub};
 use std::{error::Error, fmt};
 
 #[derive(Debug)]

@@ -15,7 +15,6 @@
  */
 use std::cell::RefCell;
 use faer::prelude::*;
-use faer::sparse::*;
 use faer_traits::ComplexField;
 use faer_traits::RealField;
 use num_traits::Float;
