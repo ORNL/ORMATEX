@@ -272,7 +272,8 @@ fn integrate_wrapper_rs<'py>(
     let method: String = get_val_or_default(py, &kd_hash, String::from("method"), String::from("epi2"));
     let phikv_method: String = get_val_or_default(py, &kd_hash, String::from("phikv_method"), String::from("krylov"));
     let expmv_method: String = get_val_or_default(py, &kd_hash, String::from("expmv_method"), String::from("pade"));
-    let m: usize = get_val_or_default(py, &kd_hash, String::from("m"), 100);
+    let max_krylov_dim: usize = get_val_or_default(py, &kd_hash, String::from("max_krylov_dim"), 100);
+    let m: usize = get_val_or_default(py, &kd_hash, String::from("m"), max_krylov_dim);
     let iom: usize = get_val_or_default(py, &kd_hash, String::from("iom"), 2);
     let tol: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
     let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
@@ -314,7 +315,7 @@ fn integrate_wrapper_rs<'py>(
     // integrate the sys
     let mut borrowed_solver = solver.borrow_mut();
     for i in 0..nsteps {
-        if i % osteps == 0 {
+        if i % osteps == 0 || i == nsteps-1 {
             let _y = borrowed_solver.state();
             let _t = borrowed_solver.time();
             y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));

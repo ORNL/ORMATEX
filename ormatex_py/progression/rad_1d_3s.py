@@ -54,7 +54,6 @@ class RAD_SEM(OdeSplitSys):
     A: jsp.JAXSparse
     Ml: jax.Array
     xs: jax.Array
-
     dirichlet_bd: np.array
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
@@ -265,7 +264,8 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
 
     # integrate the system
     res = integrate_wrapper.integrate(
-            ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10, **kwargs)
+            ode_sys, y0, t0, dt, nsteps, method,
+            max_krylov_dim=120, iom=2, phikv_method="leja", osteps=500, **kwargs)
     t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
