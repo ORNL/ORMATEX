@@ -145,6 +145,9 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>) {
        self.t = s.t;
        self.y_hist.push_front(s.y);
+       if self.y_hist.len() >= self.order+1 {
+           self.y_hist.pop_back();
+       }
     }
 
     fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType) {

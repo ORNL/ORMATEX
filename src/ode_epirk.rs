@@ -293,10 +293,15 @@ where
        self.t = s.t;
        self.y_hist.push_front(s.y);
        self.t_hist.push_front(s.t);
+       if self.y_hist.len() >= self.order+1 {
+           self.y_hist.pop_back();
+           self.t_hist.pop_back();
+       }
     }
 
     fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType) {
         self.y_hist.clear();
+        self.t_hist.clear();
         self.y_hist.push_front(y0.to_owned());
         self.t_hist.push_front(t0);
         self.t = t0;
