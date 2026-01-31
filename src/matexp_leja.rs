@@ -298,6 +298,10 @@ pub fn expm_taylor<T: faer::traits::ComplexField>(A: MatRef<T>, shift: f64, scal
 
 /// Compute leja divided differences using taylor series method
 ///
+/// Ref: M. Caliari, Padua. Accurate evaluation of divided differences
+/// for polynomial interpolation of exponential integrators.
+/// Computing. 80. 2007.
+///
 /// # Args
 /// * `leja_x` : the leja points
 /// * `shift` : spectrum shift parameter
@@ -1002,49 +1006,10 @@ mod test_matexp_leja {
     use crate::matexp_krylov::KrylovExpm;
     use crate::mat_utils::mat_mat_approx_eq;
     use crate::matexp_pade::{matexp, phi};
+    use crate::ode_test_common::{gen_test_a, gen_test_b};
 
     // bring everything from above (parent) module into scope
     use super::*;
-
-    fn gen_test_a() -> (Mat<f64>, Mat<f64>)
-    {
-        // Generate a test 3x3 matrix with pure real eigs
-        let test_m = faer::mat![
-            [-1.0e-1,  0.0,    0.0],
-            [ 1.0e-1, -1.0,  0.0],
-            [    0.0,  1.0, -1.0e-3],
-            ];
-        // Generate a test vector
-        let test_v = faer::mat![
-            [0.1],
-            [0.2],
-            [0.01],
-            ];
-        (test_m, test_v)
-    }
-
-    fn gen_test_b() -> (Mat<f64>, Mat<f64>)
-    {
-        // Generate a test 3x3 matrix with one real eig and
-        // conjugate complex eigen pair
-        let lambda_c = 1.0;
-        let lambda_a = 0.5;
-        let lambda_b = 0.1;
-        let vs = 10.0;
-        let test_m = faer::mat![
-            [-lambda_a,    -vs,            0.0],
-            [ lambda_a+vs, -lambda_b,      0.0],
-            [    0.0,       lambda_b, -lambda_c],
-            ];
-        // eigs = [-1. +0.j       , -0.3+1.2083046j, -0.3-1.2083046j]:
-        // Generate a test vector
-        let test_v = faer::mat![
-            [0.1],
-            [0.2],
-            [0.01],
-            ];
-        (test_m, test_v)
-    }
 
     #[test]
     fn test_spectrum_params() {
