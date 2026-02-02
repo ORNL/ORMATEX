@@ -265,7 +265,8 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=120, iom=2, phikv_method="leja", spec_splice=True, osteps=500, **kwargs)
+            max_krylov_dim=120, iom=2, phikv_method="leja",
+            spec_splice=True, osteps=500, **kwargs)
     t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()

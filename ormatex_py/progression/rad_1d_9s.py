@@ -235,7 +235,8 @@ if __name__ == "__main__":
     parser.add_argument("-nsteps", help="number of time steps", type=int, default=100)
     parser.add_argument("-multi_plot", help="multiple plots", action='store_true', default=False)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
-    parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-method", help="time step method", type=str, default="epi2")
+    parser.add_argument("-baseline_method", help="baseline time step method", type=str, default="exprb3")
     parser.add_argument("-fine", help="compare to fine step solution", default=False, action='store_true')
     parser.add_argument("-leja_c", help="optional max complex part of the J*dt spectrum", type=float, default=20.0)
     parser.add_argument("-leja_plot", help="additional leja polynomial convergence plots", default=False, action='store_true')
@@ -290,50 +291,40 @@ if __name__ == "__main__":
             g_prof0(xs),
     ]
     y0 = flatten_u(jnp.asarray(y0_profile).transpose())
-
-    # integrate the system
     t0 = 0.
     dt = args.dt
     nsteps = args.nsteps
     tf = dt * nsteps
     method = args.method
+    baseline_method = args.baseline_method
+
     if args.fine:
         # Compute ground-truth baseline solution
         dt_fine = 0.5
         nsteps_fine = int(tf / dt_fine)
         res_fine = integrate_wrapper.integrate(
-                ode_sys, y0, t0, dt_fine, nsteps_fine, "exprb3",
+                ode_sys, y0, t0, dt_fine, nsteps_fine, baseline_method,
                 max_krylov_dim=240, iom=2)
         t_res_fine, y_res_fine = res_fine.t_res, res_fine.y_res
-    if "_rs" in method:
-        # use a rust ormatex integrator
-        # NOTE: the rust integrators currently require
-        # converting jax types to np, so the wrapper does this
-        # conversion automatically but with some overhead.
-        # Despite this, on a multi-core CPU, the rust exp int
-        # impls are slightly faster than the JAX impl.
-        y0 = np.asarray(y0).reshape((-1, 1))
-        res = integrate_wrapper.integrate(
-                PySysWrapped(OdeSysNp(ode_sys)), y0, t0, dt, nsteps,
-                method, max_krylov_dim=200, iom=2, osteps=20)
-        t_res, y_res = res.t_res, res.y_res
-    else:
-        # use a python ormatex integrator
-        res = integrate_wrapper.integrate(
-                ode_sys, y0, t0, dt, nsteps, method,
-                max_krylov_dim=200, iom=2, leja_c=args.leja_c, leja_tol=1e-12)
-        t_res, y_res = res.t_res, res.y_res
+
+    # integrate the system
+    res = integrate_wrapper.integrate(
+            ode_sys, y0, t0, dt, nsteps, method,
+            max_krylov_dim=200, iom=2,
+            leja_c=args.leja_c, leja_tol=1e-12,
+            phikv_method="leja", spec_splice=True)
+    t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
     sx = xs[si]
     print("Mesh Spacing: %0.4e" % (sx[2] - sx[0]))
     fig, ax = plt.subplots(nrows=3, ncols=3, figsize=(15,8.5))
-    plt.title(r"method: %s" % (method))
 
     i = -1
     t = t_res[i]
     yf = y_res[i]
     uf = stack_u(yf, n_species)
+    plt.title(r"t=%0.2f, method: %s" % (t, method))
     # fine solution
     if args.fine:
         i_fine = nsteps_fine
@@ -347,21 +338,19 @@ if __name__ == "__main__":
         fr, fc = n%3, int(n/3)
         ax[fr, fc].axvspan(0.0, 1.0, alpha=0.3, color='red')
         ax[fr, fc].axvspan(3.8, 4.2, alpha=0.3, color='blue')
-        ax[fr, fc].plot(sx, us[si], label=r't=%0.4f, $u_{%s}$' % (t, str(n)))
+        ax[fr, fc].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+        ax[fr, fc].plot(sx, us[si], label='%s' % (method))
         if args.fine:
             us_fine = uf_fine[:, n]
             rel_diff = (us[si] - us_fine[si]) / jnp.mean(us_fine)
             mae = jnp.mean(jnp.abs(rel_diff))
-            ax[fr, fc].plot(sx, us_fine[si], ls='--', label='t=%0.4f, baseln $u_{%s}$' % (t_fine, str(n)))
-            ax[fr, fc].set_title(r"%s, $\Delta t=$%0.2e, Rel.Err=%0.3e" % (method, dt, mae))
-        ax[fr, fc].set_ylabel(r"$u_{%d}$ [mol/cc]" % n)
-        ax[fr, fc].legend()
+            ax[fr, fc].plot(sx, us_fine[si], ls='--', label='%s' % (baseline_method))
+            ax[fr, fc].set_title(r"t=%0.2f, $\Delta t=$%0.2e, Rel.Err=%0.3e" % (t_fine, dt, mae))
+        # ax[fr, fc].set_ylabel(r"$u_{%d}$ [mol/cc]" % n)
+        ax[fr, fc].set_ylabel(r"%s [mol/cc]" % str(keymap[n]))
+        ax[fr, fc].legend(loc=4)
         ax[fr, fc].grid(ls='--')
 
-    # TODO: mark reactor boundaries on the plot
-    # ax[1].vlines([0, 0.5], 0.0, 1.0, ls='--', colors='k')
-    # ax[0].set_yscale('log')
-    # ax[0].set_xlabel("location [m]")
     plt.tight_layout()
     plt.savefig(outdir + 'reac_adv_diff_s9.png', dpi=160)
     plt.close()
@@ -370,13 +359,15 @@ if __name__ == "__main__":
         # plot results at multiple time steps
         for i in range(0, len(t_res)):
             fig, ax = plt.subplots(nrows=3, ncols=3, figsize=(15,8.5))
-            plt.title(r"method: %s" % (method))
+            plt.title(r"t=%0.2f, method: %s" % (t, method))
             t = t_res[i]
             yf = y_res[i]
             uf = stack_u(yf, n_species)
             # fine solution
             if args.fine:
                 i_fine = nsteps_fine
+                if dt == dt_fine:
+                    i_fine = i
                 t_fine = t_res_fine[i_fine]
                 yf_fine = y_res_fine[i_fine]
                 uf_fine = stack_u(yf_fine, n_species)
@@ -387,19 +378,23 @@ if __name__ == "__main__":
                 fr, fc = n%3, int(n/3)
                 ax[fr, fc].axvspan(0.0, 1.0, alpha=0.3, color='red')
                 ax[fr, fc].axvspan(3.8, 4.2, alpha=0.3, color='blue')
-                ax[fr, fc].plot(sx, us[si], label=r't=%0.4f, $u_{%s}$' % (t, str(n)))
+                ax[fr, fc].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+                ax[fr, fc].plot(sx, us[si], label=r'%s' % (str(method)))
                 if args.fine:
                     us_fine = uf_fine[:, n]
                     rel_diff = (us[si] - us_fine[si]) / jnp.mean(us_fine)
                     mae = jnp.mean(jnp.abs(rel_diff))
-                    ax[fr, fc].plot(sx, us_fine[si], ls='--', label='t=%0.4f, baseln $u_{%s}$' % (t_fine, str(n)))
-                    ax[fr, fc].set_title(r"%s, $\Delta t=$%0.2e, Rel.Err=%0.3e" % (method, dt, mae))
-                ax[fr, fc].set_ylabel(r"$u_{%d}$ [mol/cc]" % n)
-                ax[fr, fc].legend()
+                    ax[fr, fc].plot(sx, us_fine[si], ls='--',
+                                    label='%s' % str(baseline_method))
+                    ax[fr, fc].set_title(
+                            r"t=%0.2f, $\Delta t=$%0.2e, Rel.Err=%0.3e" % (t, dt, mae))
+                # ax[fr, fc].set_ylabel(r"$u_{%d}$ [mol/cc]" % n)
+                ax[fr, fc].set_ylabel(r"%s [mol/cc]" % str(keymap[n]))
+                ax[fr, fc].legend(loc=4)
                 ax[fr, fc].grid(ls='--')
 
             plt.tight_layout()
-            plt.savefig(outdir + 'reac_adv_diff_s12_%d.png' % i, dpi=160)
+            plt.savefig(outdir + 'reac_adv_diff_s12_%s.png' % str(i).zfill(4), dpi=160)
             plt.close()
 
     # plot eigvals of Jac
