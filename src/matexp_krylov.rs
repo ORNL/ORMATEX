@@ -151,7 +151,7 @@ mod test_matexp_krylov {
     use assert_approx_eq::assert_approx_eq;
     use crate::mat_utils::mat_mat_approx_eq;
     use crate::matexp_pade::{matexp, phi};
-    use crate::ode_test_common::{gen_test_a, gen_test_b};
+    use crate::test_common::{gen_test_a, gen_test_b};
 
     // bring everything from above (parent) module into scope
     use super::*;

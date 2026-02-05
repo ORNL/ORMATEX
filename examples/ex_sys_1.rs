@@ -8,7 +8,7 @@ use ormatex::ode_rk;
 use ormatex::ode_epirk;
 use ormatex::matexp_krylov;
 use ormatex::matexp_leja;
-use ormatex::ode_test_common::*;
+use ormatex::test_common::*;
 use ormatex::matexp_pade;
 
 // optional deps for plotting

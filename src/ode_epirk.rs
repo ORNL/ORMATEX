@@ -162,7 +162,8 @@ where
             vb2.as_ref(),
         ];
         let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
-        self.expm.apply_prepare(&ext_a_lo, dt, vb[0].as_ref());
+        let (v, _n) = &ext_a_lo.get_v(&vb);
+        self.expm.apply_prepare(&ext_a_lo, 1.0, v.as_ref());
         let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result
@@ -247,7 +248,8 @@ where
             vb2.as_ref(),
         ];
         let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
-        self.expm.apply_prepare(&ext_a_lo, dt, vb[0].as_ref());
+        let (v, _n) = &ext_a_lo.get_v(&vb);
+        self.expm.apply_prepare(&ext_a_lo, 1.0, v.as_ref());
         let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result

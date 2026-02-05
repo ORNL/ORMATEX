@@ -160,7 +160,7 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
 
 #[cfg(test)]
 mod test_rk {
-    use crate::ode_test_common::*;
+    use crate::test_common::*;
 
     // bring everything from above (parent) module into scope
     use super::*;

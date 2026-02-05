@@ -99,7 +99,7 @@ pub fn jac_newton <'a> (
 #[cfg(test)]
 mod test_newton {
     use assert_approx_eq::assert_approx_eq;
-    use crate::ode_test_common::*;
+    use crate::test_common::*;
 
     // bring everything from above (parent) module into scope
     use super::*;
