@@ -631,56 +631,61 @@ impl LejaPhiEval {
     /// Compute the augmenting first term in the krylov-leja sequence
     /// with krylov subspace polynomial, if available.
     ///
-    /// krylov_pr is the partial rth degree polynomial approximation to the matexp(A)*u
-    /// krylov_pp is the product:  ||u|| Q \prod_0^r (H-\rho I)*e1
-    ///
     /// If the krylov subspace has not been computed, or is unavailable,
     /// this routine returns None.
-    ///
-    fn krylov_poly_expmv(&self, u: MatRef<f64>, norm_u: f64)
-        -> Result<(Mat<f64>, Mat<f64>), ()>
+    fn krylov_poly_expmv(
+        &self,
+        leja_x_sc_re: ColRef<f64>,
+        leja_x_sc_im: ColRef<f64>,
+        coeffs: ColRef<c64>,
+        norm_u: f64
+        )
+        -> Result<(usize, Mat<f64>, Mat<f64>), ()>
     {
-        let mut krylov_pr = faer::Mat::zeros(u.nrows(), u.ncols());
-        let mut krylov_pp_re = krylov_pr.to_owned();
         match (&self.arnld_q, &self.arnld_h, &self.ritz_re, &self.ritz_im) {
             (Some(q), Some(h), Some(ritz_re), Some(ritz_im)) => {
                 // number of ritz values available
                 let n_r = ritz_re.len();
-                // TODO: extend hat_v by number of leading 0s
-                let hat_v = q;
-                println!("q shape: ({}, {})", q.nrows(), q.ncols());
-                println!("n: {}", u.nrows());
-
-                let mut e1 = faer::Mat::zeros(h.nrows(), 1);
-                e1[(0, 0)] = 1.0;
 
                 // compute krylov estimate
-                let exph = matexp_pade::matexp(h.as_ref(), 1.0);
-                krylov_pr = norm_u * hat_v.as_ref() * exph * e1.as_ref();
+                // let hat_v = q;
+                // let mut e1 = faer::Mat::zeros(h.nrows(), 1);
+                // e1[(0, 0)] = 1.0;
+                // let exph = matexp_pade::matexp(h.as_ref(), 1.0);
+                // krylov_pr = norm_u * hat_v.as_ref() * exph * e1.as_ref();
                 // println!("inner krylov_pr = {:?}", krylov_pr.as_ref());
 
-                // compute the product
                 let cmplx_h: Mat<c64> = faer::Mat::from_fn(
                     h.nrows(), h.ncols(), |i, j| { c64::new(h[(i, j)], 0.0) } );
-                let cmplx_hat_v: Mat<c64> = faer::Mat::from_fn(
-                    hat_v.nrows(), hat_v.ncols(), |i, j| { c64::new(hat_v[(i, j)], 0.0) } );
-                let eyeh: Mat<c64> = Mat::identity(h.nrows(), h.ncols());
-                let mut pr: Mat<c64> = Mat::zeros(h.nrows(), 1);
-                pr[(0, 0)] = c64::new(1.0, 0.0);
+                let cmplx_q: Mat<c64> = faer::Mat::from_fn(
+                    q.nrows(), q.ncols(), |i, j| { c64::new(q[(i, j)], 0.0) } );
 
-                for r in 0..n_r {
-                    let rho = c64::new(ritz_re[r], ritz_im[r]);
-                    println!("r={}, rho={}", r, rho);
-                    pr = (cmplx_h.as_ref() - faer::Scale(rho)*eyeh.as_ref()) * pr;
-                    // println!("nr={n_r}, r={}, rho={}, inner pr = {:?}", r, rho, pr.as_ref());
+                let mut dr: Mat<c64> = Mat::zeros(h.nrows(), 1);
+                dr[(0, 0)] = c64::new(1.0, 0.0);
+                let gamma = c64::new(self.scale, 0.0);
+
+                // compute the first n_r polynomial terms
+                let mut xi = faer::Scale(coeffs[0]) * dr.as_ref();
+                let mut r_: usize = 0;
+                for r in 1..n_r+1 {
+                    // let rho = c64::new(ritz_re[r], ritz_im[r]);
+                    // println!("r={}, rho={}", r, rho);
+                    let z = c64::new(leja_x_sc_re[r-1], leja_x_sc_im[r-1]);
+                    dr = (cmplx_h.as_ref()*dr.as_ref() - faer::Scale(z)*dr.as_ref()) / faer::Scale(gamma);
+                    xi += faer::Scale(coeffs[r]) * dr.as_ref();
+                    r_ = r;
                 }
-                let krylov_pp = faer::Scale(c64::new(norm_u, 0.0)) * cmplx_hat_v.as_ref() * pr.as_ref();
-                krylov_pp_re = faer::Mat::from_fn(
-                    krylov_pp.nrows(), krylov_pp.ncols(), |i, j| { krylov_pp[(i, j)].re } );
-                println!("n_r: {n_r}, krylov_pr: {:?}", krylov_pr.as_ref());
-                println!("krylov_pp: {:?}", krylov_pp_re.as_ref());
-                // println!("pr: {:?}", pr.as_ref());
-                Ok((krylov_pr, krylov_pp_re))
+                let xr = norm_u * cmplx_q.as_ref() * xi;
+                dr = norm_u * cmplx_q.as_ref() * dr;
+
+                // convert to reals
+                let xr_re = faer::Mat::from_fn(
+                    xr.nrows(), xr.ncols(), |i, j| { xr[(i, j)].re } );
+                let dr_re = faer::Mat::from_fn(
+                    dr.nrows(), dr.ncols(), |i, j| { dr[(i, j)].re } );
+                println!("n_r: {n_r}, krylov_xr: {:?}", xr.as_ref());
+                println!("n_r: {n_r}, krylov_dr: {:?}", dr_re.as_ref());
+                Ok((n_r, xr_re, dr_re))
             },
             _ => Err(())
         }
@@ -740,19 +745,26 @@ impl LejaPhiEval {
         let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
 
         // Augment leja sequence with krylov subspace polynomial if available
-        // krylov_pr is the approximation to the matexp(A)*u
-        // krylov_pp is the product:  ||u|| Q \prod_0^r (H-\rho I)*e1
-        let krylov_res = self.krylov_poly_expmv(u, norm_u);
+        let krylov_res = self.krylov_poly_expmv(
+            leja_x_sc_re.as_ref(), leja_x_sc_im.as_ref(), coeffs, norm_u);
+        let mut r: usize = 0;  // number of ritz values
         match krylov_res {
-            Ok((krylov_pr, krylov_pp)) => {
-                pm.copy_from(krylov_pr.as_ref());
-                vm = krylov_pp;
+            Ok((n_r, xr, dr)) => {
+                // pm.copy_from(krylov_pr.as_ref());
+                pm.copy_from(xr);
+                vm = dr;
+                r = n_r;
             }
             _ => {}
         }
 
+        // extract next m>r leja points in the sequence
+        let leja_r = self.leja_x.slice(r, self.leja_base.n_leja());
+        let n_leja_real = leja_r.n_leja_real();
+        println!("n_leja_real: {n_leja_real}");
+
         // compute leja polynomial terms for leading real points
-        for i in 1..=self.n_leja_real {
+        for i in 1+r..=n_leja_real+r {
             if converged {
                 break;
             }
@@ -773,7 +785,7 @@ impl LejaPhiEval {
 
         // compute remaining leja polynomial terms suported at
         // conjugate complex points.
-        for i in (self.n_leja_real+1..self.m).step_by(2) {
+        for i in (n_leja_real+1+r..self.m).step_by(2) {
             if converged {
                 break;
             }
@@ -952,7 +964,7 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
                         self.ritz_im = Some(ritz_im.clone());
                         let (lp_ritz, _, _) = LejaPoints::new(ritz_re, ritz_im)
                             .normalize(a, b, c)
-                            .reorder_conj_pairs()
+                            // .reorder_conj_pairs()
                             .rescale(a, b, c);
                         self.update_leja_splice(a, b, c, SPLICE_IDX, lp_ritz);
                     } else {
@@ -1327,7 +1339,7 @@ mod test_matexp_leja {
         let test_vb = vec![test_v.as_ref(),];
 
         // setup the phi evaluator
-        let max_arnoldi_iters = 40;
+        let max_arnoldi_iters = 10;
         let krylov_reuse = true;
         let mut leja_phikv_eval = LejaPhiEval::new(
             lp, 280, 0.0, 1.0, 1e-10, 1e-10, max_arnoldi_iters,
@@ -1393,7 +1405,7 @@ mod test_matexp_leja {
     fn test_leja_ritz_phikv_large() {
         // similar test on a larger system
         let dt = 1.0;
-        let (test_b, test_v) = gen_test_c(30);
+        let (test_b, test_v) = gen_test_c(40);
         _test_leja_ritz_phikv(dt, test_b, test_v);
     }
 
