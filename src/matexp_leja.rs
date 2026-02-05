@@ -500,6 +500,11 @@ impl LejaPhiEval {
 
     /// The Real leja point method (ReLPM) method of
     ///
+    /// Caliari, Marco, Marco Vianello, and Luca Bergamaschi.
+    /// "Interpolating discrete advection–diffusion propagators at
+    /// Leja sequences."
+    /// Journal of Computational and Applied Mathematics 172.1 (2004): 79-99.
+    ///
     /// L. Bergamaschi.  M. Caliari. A. Martinez and M. Vianello.
     /// Leja and Krylov Approximations of Large Scale
     /// Matrix Exponentials. Intl. Conf on Computational Science. 2006.
@@ -634,6 +639,13 @@ impl LejaPhiEval {
     ///
     /// If the krylov subspace has not been computed, or is unavailable,
     /// this routine returns None.
+    ///
+    /// Ref:
+    /// Caliari, Marco, Fabio Cassini, and Franco Zivcovich.
+    /// "BAMPHI: Matrix-free and transpose-free action of linear combinations
+    /// of phi-functions from exponential integrators."
+    /// Journal of Computational and Applied Mathematics 423 (2023): 114973.
+    ///
     fn krylov_poly_expmv(
         &self,
         leja_x_sc_re: ColRef<f64>,
