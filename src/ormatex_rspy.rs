@@ -276,12 +276,12 @@ fn integrate_wrapper_rs<'py>(
     let m: usize = get_val_or_default(py, &kd_hash, String::from("m"), max_krylov_dim);
     let iom: usize = get_val_or_default(py, &kd_hash, String::from("iom"), 2);
     let tol: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
-    let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
+    let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol_fdt"), 1e-8);
     let osteps: usize = get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
     // jacobian spectrum analysis settings
     let spec_tol: f64 = get_val_or_default(py, &kd_hash, String::from("spec_tol"), 1.0e-8);
     let spec_iter: usize = get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
-    let spec_splice: bool = get_val_or_default(py, &kd_hash, String::from("spec_splice"), true);
+    let krylov_reuse: bool = get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), true);
 
     let y0_mat = y0.into_faer();
 
@@ -298,7 +298,7 @@ fn integrate_wrapper_rs<'py>(
         "leja" => {
             let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, m+2);
             let matexp_m = matexp_leja::LejaPhiEval::new(
-                lp, std::cmp::min(m, 800), 0.0, 1.0, tol, spec_tol, spec_iter, "arnoldi", spec_splice);
+                lp, std::cmp::min(m, 800), 0.0, 1.0, tol, spec_tol, spec_iter, "arnoldi", krylov_reuse);
             select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
         },
         // krylov is default

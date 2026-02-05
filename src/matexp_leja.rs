@@ -286,7 +286,7 @@ impl LejaPoints {
         Self::new(leja_re_reordered, leja_im_reordered)
     }
 
-    /// Normalize the Leja points such that the capacity is 1
+    /// Normalize the Leja points such that the capacity of the set is 1
     pub fn normalize(&self, a: f64, b: f64, c: f64) -> Self {
         let (leja_re_normed, leja_im_normed) = inv_shift_scale_leja(
             self.leja_re.as_ref(), self.leja_im.as_ref(), a, b, c, 1.0, 1.0);
@@ -320,13 +320,15 @@ pub fn ufactorial(num: usize) -> f64 {
 /// * `shift` : spectrum shift parameter. 0.0 for unshifted matexp.
 /// * `scale` : spectrum shift parameter. 1.0 for unscaled matexp.
 /// * `p` : polynomial order
+/// * `k` : phi-fn order
 ///
-pub fn expm_taylor<T: faer::traits::ComplexField>(A: MatRef<T>, shift: f64, scale: f64, p: usize) -> Mat<T>
+pub fn phik_taylor<T: faer::traits::ComplexField>(A: MatRef<T>, shift: f64, scale: f64, p: usize, k: usize) -> Mat<T>
 {
     let mut M: Mat<T> = scale * A.as_ref();
     let mut ts_expm: Mat<T> = faer::Mat::identity(M.nrows(), M.ncols());
+    ts_expm = ts_expm / factorial::factorial((k) as u64);
     for i in 0..p {
-        ts_expm += M.as_ref() / factorial::factorial((i+1) as u64);
+        ts_expm += M.as_ref() / factorial::factorial((i+1+k) as u64);
         M = A.as_ref() * M.as_ref();
     }
     shift.exp() * ts_expm
@@ -344,8 +346,9 @@ pub fn expm_taylor<T: faer::traits::ComplexField>(A: MatRef<T>, shift: f64, scal
 /// * `scale` : spectrum shift parameter
 /// * `h` : substep size
 /// * `p` : polynomial order
+/// * `k` : phi-fn order
 ///
-pub fn dd_expm_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: usize) -> Col<c64>
+pub fn dd_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: usize, k: usize) -> Col<c64>
 {
     let n_leja = leja_x.n_leja();
     let eye = faer::Mat::<c64>::identity(n_leja, n_leja);
@@ -366,7 +369,7 @@ pub fn dd_expm_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: us
     let hs = 1.0 / (2.0 as f64).powi(s);
 
     // compute expm(Z)
-    let mut f_out = expm_taylor((hs*h*z).as_ref(), 0.0, 1.0, p);
+    let mut f_out = phik_taylor((hs*h*z).as_ref(), 0.0, 1.0, p, k);
 
     // squaring
     for _i in 0..s {
@@ -374,6 +377,7 @@ pub fn dd_expm_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: us
     }
 
     // reshift and extract first col
+    // faer::Scale( matexp_pade::phi_scaler(h * mu, k) ) * f_out.col(0)
     faer::Scale( (h * mu).exp() ) * f_out.col(0)
 }
 
@@ -548,8 +552,21 @@ impl LejaPhiEval {
         let par = faer::get_global_parallelism();
         let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
 
+        // Augment leja sequence with krylov subspace polynomial if available
+        let krylov_res = self.krylov_poly_expmv(
+            leja_x_sc.as_ref(), _leja_x_sc_im.as_ref(), coeffs, norm_u);
+        let mut r: usize = 0;  // number of ritz values
+        match krylov_res {
+            Ok((n_r, xr, dr)) => {
+                pm.copy_from(xr);
+                vm = dr;
+                r = n_r;
+            }
+            _ => {}
+        }
+
         // compute leja poly and check for convergence each iter
-        for i in 1..self.m {
+        for i in 1+r..self.m {
             if converged {
                 break;
             }
@@ -638,7 +655,7 @@ impl LejaPhiEval {
     /// with krylov subspace polynomial, if available.
     ///
     /// If the krylov subspace has not been computed, or is unavailable,
-    /// this routine returns None.
+    /// this routine returns Err(()).
     ///
     /// Ref:
     /// Caliari, Marco, Fabio Cassini, and Franco Zivcovich.
@@ -670,7 +687,7 @@ impl LejaPhiEval {
                 // compute the first n_r polynomial terms
                 let mut xi = faer::Scale(coeffs[0]) * dr.as_ref();
                 for r in 1..=n_r {
-                    println!("{r}, krylov pre lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[r-1], leja_x_sc_im[r-1], coeffs[r]);
+                    // println!("{r}, krylov pre lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[r-1], leja_x_sc_im[r-1], coeffs[r]);
                     let z = c64::new(leja_x_sc_re[r-1], leja_x_sc_im[r-1]);
                     dr = (cmplx_h.as_ref()*dr.as_ref() - faer::Scale(z)*dr.as_ref()) / faer::Scale(gamma);
                     xi += faer::Scale(coeffs[r]) * dr.as_ref();
@@ -756,18 +773,15 @@ impl LejaPhiEval {
             }
             _ => {}
         }
-
         // extract next m>r leja points in the sequence
         let n_leja_real = self.leja_x.slice(r, r+10).n_leja_real();
-        assert!(n_leja_real == 2);
-        println!("n_leja_real: {n_leja_real}");
 
         // compute leja polynomial terms for leading real points
         for i in 1+r..=n_leja_real+r {
             if converged {
                 break;
             }
-            println!("{i}, clapm real lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i]);
+            // println!("{i}, clapm real lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i]);
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
                 par,
                 MemStack::new(&mut mem_buf)
@@ -789,8 +803,8 @@ impl LejaPhiEval {
             if converged {
                 break;
             }
-            println!("{}, clapm conj lp: {:0.8} + {:0.8}i, dd: {:0.6e}", i, leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i]);
-            println!("{}, clapm conj lp: {:0.8} + {:0.8}i, dd: {:0.6e}", i+1, leja_x_sc_re[i], leja_x_sc_im[i], coeffs[i+1]);
+            // println!("{}, clapm conj lp: {:0.8} + {:0.8}i, dd: {:0.6e}", i, leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i]);
+            // println!("{}, clapm conj lp: {:0.8} + {:0.8}i, dd: {:0.6e}", i+1, leja_x_sc_re[i], leja_x_sc_im[i], coeffs[i+1]);
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
                 par,
                 MemStack::new(&mut mem_buf)
@@ -836,9 +850,10 @@ impl LejaPhiEval {
         let mut expmv: Mat<f64> = faer::Mat::zeros(ext_v.nrows(), ext_v.ncols());
 
         // compute leja poly coeffs by divided difference
-        let p = 16;  // dd taylor series poly order
-        let coeffs: Col<c64> = dd_expm_taylor(
-            &self.leja_x.slice(0, self.m), self.shift, self.scale, 1.0, p);
+        let p = 16; // dd taylor series poly order
+        let k = 0;  // phi-fn order
+        let coeffs: Col<c64> = dd_taylor(
+            &self.leja_x.slice(0, self.m), self.shift, self.scale, 1.0, p, k);
 
         // no substep
         let (_conv, _iters) = self.complex_conj_leja_expmv(
@@ -1219,7 +1234,7 @@ mod test_matexp_leja {
         let (test_a, test_v) = gen_test_a();
 
         // compute the matrix matexp(dt*A)*v using dense impl
-        let expm_tay = expm_taylor(test_a.as_ref(), 0.0, 1.0, 16);
+        let expm_tay = phik_taylor(test_a.as_ref(), 0.0, 1.0, 16, 0);
         let expmv_tay_dense = expm_tay.as_ref() * test_v.as_ref();
 
         // compute the matrix matexp(dt*A)*v using matfree impl
@@ -1234,6 +1249,12 @@ mod test_matexp_leja {
         // Ensure results are consistent.
         mat_mat_approx_eq(
             expmv_tay_pm.as_ref(), expmv_tay_dense.as_ref(), 1e-8);
+
+        // compute the matrix phi_2(dt*A)*v using dense impl
+        let phi2v_tay = phik_taylor((1.0*&test_a).as_ref(), 0.0, 1.0, 16, 2) * test_v.as_ref();
+        let phi2v_pade = phi((1.0*&test_a).as_ref(), 2) * test_v.as_ref();
+        mat_mat_approx_eq(
+            phi2v_pade.as_ref(), phi2v_tay.as_ref(), 1e-8);
     }
 
     #[test]
@@ -1262,7 +1283,7 @@ mod test_matexp_leja {
             println!("shift: {}, scale: {}", &shift, &scale);
 
             // compute the leja polynomial coeffs
-            let coeffs = dd_expm_taylor(&lp_sc, shift, scale, 1.0, 16);
+            let coeffs = dd_taylor(&lp_sc, shift, scale, 1.0, 16, 0);
 
             // compute the matexp(dt*A)*v product via leja poly approx
             let leja_phikv_eval = LejaPhiEval::new(lp_sc, 80, shift, scale, 1e-8, 1e-8, 20, "arnoldi", true);
