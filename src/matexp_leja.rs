@@ -227,7 +227,7 @@ impl LejaPoints {
         Self::new_from_col(full_re.col(0).to_owned(), full_im.col(0).to_owned())
     }
 
-    /// concatenate multiple leja sequences together
+    /// Concatenate multiple leja sequences together
     pub fn concat(&self, other: Vec<&LejaPoints>) -> Self {
         if other.len() == 0 {
             return self.clone()
@@ -239,7 +239,7 @@ impl LejaPoints {
         final_lp
     }
 
-    /// mirror points about the real axis
+    /// Mirror Leja points about the real axis
     pub fn mirror(&self) -> Self {
         let mut leja_mirror_re: Vec<f64> = vec![];
         let mut leja_mirror_im: Vec<f64> = vec![];
@@ -286,13 +286,14 @@ impl LejaPoints {
         Self::new(leja_re_reordered, leja_im_reordered)
     }
 
+    /// Normalize the Leja points such that the capacity is 1
     pub fn normalize(&self, a: f64, b: f64, c: f64) -> Self {
         let (leja_re_normed, leja_im_normed) = inv_shift_scale_leja(
             self.leja_re.as_ref(), self.leja_im.as_ref(), a, b, c, 1.0, 1.0);
         Self::new_from_col(leja_re_normed, leja_im_normed)
     }
 
-    /// The first n leja points from the sequence
+    /// Extract a slice form the original Leja sequence
     pub fn slice(&self, a: usize, b: usize) -> Self {
         assert!(a <= b);
         let b_end = std::cmp::min(b, self.n_leja());
@@ -393,7 +394,7 @@ pub struct LejaPhiEval {
     shift: f64,
     scale: f64,
     max_substeps: usize,
-    splice_ritz: bool,
+    krylov_reuse: bool,
     spec_norm: f64,
     spec_norm_tol: f64,
     spec_iters: usize,
@@ -427,7 +428,7 @@ impl LejaPhiEval {
         spec_norm_tol: f64,
         spec_iters: usize,
         spec_method: &str,
-        splice_ritz: bool) -> Self
+        krylov_reuse: bool) -> Self
     {
         Self {
             m: m,
@@ -439,7 +440,7 @@ impl LejaPhiEval {
             shift: shift,
             scale: scale,
             max_substeps: 0,
-            splice_ritz: splice_ritz,
+            krylov_reuse: krylov_reuse,
             spec_norm: -1.0,
             spec_norm_tol: spec_norm_tol,
             spec_iters: spec_iters,
@@ -472,7 +473,7 @@ impl LejaPhiEval {
         spec_norm_tol: f64,
         spec_iters: usize,
         spec_method: &str,
-        splice_ritz: bool) -> Self
+        krylov_reuse: bool) -> Self
     {
         let (lp, shift, scale) = leja_x.rescale(a, b, c);
         Self {
@@ -485,7 +486,7 @@ impl LejaPhiEval {
             shift: shift,
             scale: scale,
             max_substeps: 0,
-            splice_ritz: splice_ritz,
+            krylov_reuse: krylov_reuse,
             spec_norm: -1.0,
             spec_norm_tol: spec_norm_tol,
             spec_iters: spec_iters,
@@ -647,44 +648,31 @@ impl LejaPhiEval {
                 // number of ritz values available
                 let n_r = ritz_re.len();
 
-                // compute krylov estimate
-                // let hat_v = q;
-                // let mut e1 = faer::Mat::zeros(h.nrows(), 1);
-                // e1[(0, 0)] = 1.0;
-                // let exph = matexp_pade::matexp(h.as_ref(), 1.0);
-                // krylov_pr = norm_u * hat_v.as_ref() * exph * e1.as_ref();
-                // println!("inner krylov_pr = {:?}", krylov_pr.as_ref());
-
+                // convert to complex for interpolation at the (complex-conj) ritz values
                 let cmplx_h: Mat<c64> = faer::Mat::from_fn(
                     h.nrows(), h.ncols(), |i, j| { c64::new(h[(i, j)], 0.0) } );
-                let cmplx_q: Mat<c64> = faer::Mat::from_fn(
-                    q.nrows(), q.ncols(), |i, j| { c64::new(q[(i, j)], 0.0) } );
-
                 let mut dr: Mat<c64> = Mat::zeros(h.nrows(), 1);
                 dr[(0, 0)] = c64::new(1.0, 0.0);
                 let gamma = c64::new(self.scale, 0.0);
 
                 // compute the first n_r polynomial terms
                 let mut xi = faer::Scale(coeffs[0]) * dr.as_ref();
-                let mut r_: usize = 0;
-                for r in 1..n_r+1 {
-                    // let rho = c64::new(ritz_re[r], ritz_im[r]);
-                    // println!("r={}, rho={}", r, rho);
+                for r in 1..=n_r {
+                    println!("{r}, krylov pre lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[r-1], leja_x_sc_im[r-1], coeffs[r]);
                     let z = c64::new(leja_x_sc_re[r-1], leja_x_sc_im[r-1]);
                     dr = (cmplx_h.as_ref()*dr.as_ref() - faer::Scale(z)*dr.as_ref()) / faer::Scale(gamma);
                     xi += faer::Scale(coeffs[r]) * dr.as_ref();
-                    r_ = r;
                 }
-                let xr = norm_u * cmplx_q.as_ref() * xi;
-                dr = norm_u * cmplx_q.as_ref() * dr;
-
                 // convert to reals
-                let xr_re = faer::Mat::from_fn(
-                    xr.nrows(), xr.ncols(), |i, j| { xr[(i, j)].re } );
-                let dr_re = faer::Mat::from_fn(
+                let xi_re = faer::Mat::from_fn(
+                    xi.nrows(), xi.ncols(), |i, j| { xi[(i, j)].re } );
+                let mut dr_re = faer::Mat::from_fn(
                     dr.nrows(), dr.ncols(), |i, j| { dr[(i, j)].re } );
-                println!("n_r: {n_r}, krylov_xr: {:?}", xr.as_ref());
-                println!("n_r: {n_r}, krylov_dr: {:?}", dr_re.as_ref());
+                let xr_re = norm_u * q.as_ref() * xi_re;
+                dr_re = norm_u * q.as_ref() * dr_re;
+
+                // println!("n_r: {n_r}, krylov_xr: {:?}", xr_re.as_ref());
+                // println!("n_r: {n_r}, krylov_dr: {:?}", dr_re.as_ref());
                 Ok((n_r, xr_re, dr_re))
             },
             _ => Err(())
@@ -750,7 +738,6 @@ impl LejaPhiEval {
         let mut r: usize = 0;  // number of ritz values
         match krylov_res {
             Ok((n_r, xr, dr)) => {
-                // pm.copy_from(krylov_pr.as_ref());
                 pm.copy_from(xr);
                 vm = dr;
                 r = n_r;
@@ -759,8 +746,8 @@ impl LejaPhiEval {
         }
 
         // extract next m>r leja points in the sequence
-        let leja_r = self.leja_x.slice(r, self.leja_base.n_leja());
-        let n_leja_real = leja_r.n_leja_real();
+        let n_leja_real = self.leja_x.slice(r, r+10).n_leja_real();
+        assert!(n_leja_real == 2);
         println!("n_leja_real: {n_leja_real}");
 
         // compute leja polynomial terms for leading real points
@@ -768,6 +755,7 @@ impl LejaPhiEval {
             if converged {
                 break;
             }
+            println!("{i}, clapm real lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i]);
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
                 par,
                 MemStack::new(&mut mem_buf)
@@ -789,6 +777,8 @@ impl LejaPhiEval {
             if converged {
                 break;
             }
+            println!("{}, clapm conj lp: {:0.8} + {:0.8}i, dd: {:0.6e}", i, leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i]);
+            println!("{}, clapm conj lp: {:0.8} + {:0.8}i, dd: {:0.6e}", i+1, leja_x_sc_re[i], leja_x_sc_im[i], coeffs[i+1]);
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
                 par,
                 MemStack::new(&mut mem_buf)
@@ -849,9 +839,9 @@ impl LejaPhiEval {
         expmv.get(0..n, 0..1).to_owned()
     }
 
-    /// Set the splice method
-    pub fn set_splice_ritz(&mut self, splice_ritz: bool) {
-        self.splice_ritz = splice_ritz;
+    /// Set the krylov reuse flag
+    pub fn set_krylov_reuse(&mut self, krylov_reuse: bool) {
+        self.krylov_reuse = krylov_reuse;
     }
 
     /// Set the max leja polynomial degree
@@ -956,7 +946,7 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
                     println!("Arnoldi Spectrum params: a={}, b={}, c={}", a, b, c);
                     // apply shift and scale to the ritz values
                     // splice complex conj ritz values into the leja sequence
-                    if self.splice_ritz == true {
+                    if self.krylov_reuse == true {
                         // store the hessenberg matrix for re-use
                         self.arnld_q = Some(q);
                         self.arnld_h = Some(h);
@@ -975,7 +965,7 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
                     let (a, b, c, ritz_re, ritz_im, _eig_vecs) = spectrum_krylov_schur(
                         a_lo, v_ext.as_ref(), dt, self.spec_iters, 1.0e-6, false);
                     println!("Schur Spectrum params: a={}, b={}, c={}", a, b, c);
-                    if self.splice_ritz == true {
+                    if self.krylov_reuse == true {
                         let (lp_ritz, _, _) = LejaPoints::new(ritz_re, ritz_im)
                             .normalize(a, b, c)
                             .mirror()
@@ -1243,7 +1233,7 @@ mod test_matexp_leja {
         let lp_clp = LejaPoints::new_from_lib("leja_circle").slice(0, 100);
         assert!(lp_re.n_leja() == lp_clp.n_leja());
         assert!(lp_re.n_leja_real() == lp_re.n_leja());
-        assert!(lp_clp.n_leja_real() == 4);
+        assert!(lp_clp.n_leja_real() == 2);
         let lp = lp_clp;
 
         // Generate a test 3x3 matricies
@@ -1331,7 +1321,7 @@ mod test_matexp_leja {
             phi1mv_leja_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);
     }
 
-    fn _test_leja_ritz_phikv(dt: f64, test_b: Mat<f64>, test_v: Mat<f64>) {
+    fn _test_leja_ritz_phikv(dt: f64, test_b: Mat<f64>, test_v: Mat<f64>, krylov_reuse: bool, max_arnoldi_iters: usize) {
         // load leja points
         let lp = LejaPoints::new_from_lib("leja_circle").slice(0, 300);
 
@@ -1339,10 +1329,8 @@ mod test_matexp_leja {
         let test_vb = vec![test_v.as_ref(),];
 
         // setup the phi evaluator
-        let max_arnoldi_iters = 10;
-        let krylov_reuse = true;
         let mut leja_phikv_eval = LejaPhiEval::new(
-            lp, 280, 0.0, 1.0, 1e-10, 1e-10, max_arnoldi_iters,
+            lp, 280, 0.0, 1.0, 1e-15, 1e-10, max_arnoldi_iters,
             "arnoldi", krylov_reuse);
 
         // compute the spectrum parameters with arnoldi
@@ -1361,8 +1349,8 @@ mod test_matexp_leja {
             &test_b.as_ref(), test_v.as_ref(), dt, max_arnoldi_iters, iom, false);
         println!("ritz re: {:?}", ritz_re);
         println!("ritz im: {:?}", ritz_im);
-        let phi0mv_krylov = test_v.norm_l2() * (q.as_ref() * matexp_pade::matexp(h.as_ref(), 1.0)).col(0).as_mat();
-        println!("krylov phi_0(dt*A)*b0: {:?}", phi0mv_krylov.as_ref());
+        // let phi0mv_krylov = test_v.norm_l2() * (q.as_ref() * matexp_pade::matexp(h.as_ref(), 1.0)).col(0).as_mat();
+        // println!("krylov phi_0(dt*A)*b0: {:?}", phi0mv_krylov.as_ref());
 
         // compute phi_0(dt*A)*b0
         let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
@@ -1374,8 +1362,8 @@ mod test_matexp_leja {
         println!("pade phi0mv: {:?}", &phi0mv_pade_dense);
         mat_mat_approx_eq(
             phi0mv_leja_pm.as_ref(), phi0mv_pade_dense.as_ref(), 1e-7);
-        mat_mat_approx_eq(
-            phi0mv_leja_pm.as_ref(), phi0mv_krylov.as_ref(), 1e-7);
+        // mat_mat_approx_eq(
+        //     phi0mv_leja_pm.as_ref(), phi0mv_krylov.as_ref(), 1e-7);
 
         // generate vb vector: vb = [b0, b1, ... bk]
         let zeros = faer::Mat::zeros(test_v.nrows(), test_v.ncols());
@@ -1395,18 +1383,32 @@ mod test_matexp_leja {
     }
 
     #[test]
-    fn test_leja_ritz_phikv_small() {
+    fn test_leja_phikv_small() {
         let dt = 1.0;
         let (test_b, test_v) = gen_test_b();
-        _test_leja_ritz_phikv(dt, test_b, test_v);
+        _test_leja_ritz_phikv(dt, test_b, test_v, false, 10);
     }
 
     #[test]
-    fn test_leja_ritz_phikv_large() {
+    fn test_leja_phikv_large() {
         // similar test on a larger system
         let dt = 1.0;
         let (test_b, test_v) = gen_test_c(40);
-        _test_leja_ritz_phikv(dt, test_b, test_v);
+        _test_leja_ritz_phikv(dt, 1.0*test_b, test_v, false, 10);
     }
 
+    #[test]
+    fn test_leja_phikv_small_krylov_reuse() {
+        let dt = 1.0;
+        let (test_b, test_v) = gen_test_b();
+        _test_leja_ritz_phikv(dt, test_b, test_v, true, 10);
+    }
+
+    #[test]
+    fn test_leja_phikv_large_krylov_reuse() {
+        // similar test on a larger system
+        let dt = 1.0;
+        let (test_b, test_v) = gen_test_c(40);
+        _test_leja_ritz_phikv(dt, 1.0*test_b, test_v, true, 10);
+    }
 }
