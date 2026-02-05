@@ -942,7 +942,7 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
             match self.spec_method.as_str() {
                 "arnoldi" => {
                     let (a, b, c, ritz_re, ritz_im, q, h) = spectrum_arnoldi_iom(
-                        a_lo, v_ext.as_ref(), dt, self.spec_iters, 2, false);
+                        a_lo, v_ext.as_ref(), dt, self.spec_iters, 4, false);
                     println!("Arnoldi Spectrum params: a={}, b={}, c={}", a, b, c);
                     // apply shift and scale to the ritz values
                     // splice complex conj ritz values into the leja sequence
@@ -1393,8 +1393,8 @@ mod test_matexp_leja {
     fn test_leja_phikv_large() {
         // similar test on a larger system
         let dt = 1.0;
-        let (test_b, test_v) = gen_test_c(40);
-        _test_leja_ritz_phikv(dt, 1.0*test_b, test_v, false, 10);
+        let (test_b, test_v) = gen_test_c(80);
+        _test_leja_ritz_phikv(dt, 1.0*test_b, test_v, false, 20);
     }
 
     #[test]
@@ -1408,7 +1408,7 @@ mod test_matexp_leja {
     fn test_leja_phikv_large_krylov_reuse() {
         // similar test on a larger system
         let dt = 1.0;
-        let (test_b, test_v) = gen_test_c(40);
-        _test_leja_ritz_phikv(dt, 1.0*test_b, test_v, true, 10);
+        let (test_b, test_v) = gen_test_c(80);
+        _test_leja_ritz_phikv(dt, 1.0*test_b, test_v, true, 20);
     }
 }
