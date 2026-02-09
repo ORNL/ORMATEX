@@ -312,7 +312,7 @@ if __name__ == "__main__":
             ode_sys, y0, t0, dt, nsteps, method,
             max_krylov_dim=200, iom=2,
             leja_c=args.leja_c, leja_tol=1e-12,
-            phikv_method="leja", krylov_reuse=True)
+            phikv_method="leja", krylov_reuse=True, tol=1e-15, spec_iter=22)
     t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()

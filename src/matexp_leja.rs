@@ -402,6 +402,7 @@ pub struct LejaPhiEval {
     spec_norm: f64,
     spec_norm_tol: f64,
     spec_iters: usize,
+    p_iters: usize,
     spec_method: String,
     arnld_q: Option<Mat<f64>>,
     arnld_h: Option<Mat<f64>>,
@@ -448,6 +449,7 @@ impl LejaPhiEval {
             spec_norm: -1.0,
             spec_norm_tol: spec_norm_tol,
             spec_iters: spec_iters,
+            p_iters: 1,
             spec_method: spec_method.to_string(),
             arnld_q: None,
             arnld_h: None,
@@ -494,6 +496,7 @@ impl LejaPhiEval {
             spec_norm: -1.0,
             spec_norm_tol: spec_norm_tol,
             spec_iters: spec_iters,
+            p_iters: 1,
             spec_method: spec_method.to_string(),
             arnld_q: None,
             arnld_h: None,
@@ -560,7 +563,7 @@ impl LejaPhiEval {
             Ok((n_r, xr, dr)) => {
                 pm.copy_from(xr);
                 vm = dr;
-                r = n_r;
+                r = n_r-2;
             }
             _ => {}
         }
@@ -612,7 +615,8 @@ impl LejaPhiEval {
         u: MatRef<f64>,
         shift: f64,
         scale: f64,
-        ) -> (bool, usize)
+        m: usize
+        ) -> (bool, usize, Mat<f64>)
     {
         let clock = std::time::Instant::now();
         let mut iter: usize = 0;
@@ -631,7 +635,7 @@ impl LejaPhiEval {
         let mut coeff = 1.0;
         pm.copy_from(coeff * u);
 
-        for j in 1..self.m {
+        for j in 1..m {
             if converged {
                 break;
             }
@@ -648,7 +652,7 @@ impl LejaPhiEval {
 
         }
         println!("TS time (s): {}", clock.elapsed().as_secs_f64());
-        (converged, iter)
+        (converged, iter, vm)
     }
 
     /// Compute the augmenting first term in the krylov-leja sequence
@@ -684,12 +688,19 @@ impl LejaPhiEval {
                 dr[(0, 0)] = c64::new(1.0, 0.0);
                 let gamma = c64::new(self.scale, 0.0);
 
+                // keep aux old delta dr
+                // let mut dr_old = dr.to_owned();
+
                 // compute the first n_r polynomial terms
+                // TODO: check this first term in the krylov polynomial
                 let mut xi = faer::Scale(coeffs[0]) * dr.as_ref();
-                for r in 1..=n_r {
+                for r in 1..n_r-1 {
                     // println!("{r}, krylov pre lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[r-1], leja_x_sc_im[r-1], coeffs[r]);
                     let z = c64::new(leja_x_sc_re[r-1], leja_x_sc_im[r-1]);
+                    // let z = c64::new(ritz_re[r-1], ritz_im[r-1]);
+                    // dr_old = dr.to_owned();
                     dr = (cmplx_h.as_ref()*dr.as_ref() - faer::Scale(z)*dr.as_ref()) / faer::Scale(gamma);
+                    // dr = (cmplx_h.as_ref()*dr.as_ref() - faer::Scale(z)*dr.as_ref());
                     xi += faer::Scale(coeffs[r]) * dr.as_ref();
                 }
                 // convert to reals
@@ -743,7 +754,8 @@ impl LejaPhiEval {
         if self.n_leja_real >= self.m {
             // use taylor series if leja points are all near 0
             if self.scale.abs() < 1.0e-20 {
-                return self.taylor_expmv(pm, ext_a_lo, dt, u, shift, scale)
+                let (conv, iter, _) =  self.taylor_expmv(pm, ext_a_lo, dt, u, shift, scale, self.m);
+                return (conv, iter)
             }
             else {
                 return self.real_leja_expmv(
@@ -758,6 +770,9 @@ impl LejaPhiEval {
         let mut av = u.to_owned();
         let mut aq = u.to_owned();
 
+        // compute first p terms evaluated at z=0
+        // let (_, _, dp) = self.taylor_expmv(pm.as_mut(), ext_a_lo, dt, u, shift, scale, self.p_iters);
+
         let par = faer::get_global_parallelism();
         let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
 
@@ -769,15 +784,23 @@ impl LejaPhiEval {
             Ok((n_r, xr, dr)) => {
                 pm.copy_from(xr);
                 vm = dr;
-                r = n_r;
+                // TODO: check
+                // r = n_r;
+                r = n_r-2;
             }
             _ => {}
         }
+        // TODO: first lp in this sequence may NOT be real, then
+        // iteration here fails
+        // Only suceeds if the last ritz value is _Real_.
+        //
+        // number of leading zeros + n ritz values
+        let rp: usize = r;
         // extract next m>r leja points in the sequence
-        let n_leja_real = self.leja_x.slice(r, r+10).n_leja_real();
+        let n_leja_real = self.leja_x.slice(rp, rp+10).n_leja_real();
 
         // compute leja polynomial terms for leading real points
-        for i in 1+r..=n_leja_real+r {
+        for i in 1+rp..=n_leja_real+rp {
             if converged {
                 break;
             }
@@ -799,7 +822,7 @@ impl LejaPhiEval {
 
         // compute remaining leja polynomial terms suported at
         // conjugate complex points.
-        for i in (n_leja_real+1+r..self.m).step_by(2) {
+        for i in (n_leja_real+1+rp..self.m).step_by(2) {
             if converged {
                 break;
             }
@@ -890,6 +913,12 @@ impl LejaPhiEval {
         // construct the full leja sequence by splicing
         let first_lp = leja_x.slice(0, splice_idx);
         let last_lp = leja_x.slice(splice_idx, leja_x.n_leja());
+        // p number of (shifted) zeros for taylor series. Note: z = shift + scale*xi
+        let zero_lp = LejaPoints::new(
+            vec![-shift/scale; self.p_iters], vec![0.0; self.p_iters]);
+        let n_splice = splice_lp.n_leja();
+        let dup_lp = LejaPoints::new(
+            vec![splice_lp.leja_re[n_splice-1]], vec![-splice_lp.leja_im[n_splice-1]]);
         // splice into final sequence
         let leja_x_ext = first_lp.concat(vec![&splice_lp, &last_lp]);
         self.leja_x = leja_x_ext;
@@ -981,7 +1010,7 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
                         self.ritz_im = Some(ritz_im.clone());
                         let (lp_ritz, _, _) = LejaPoints::new(ritz_re, ritz_im)
                             .normalize(a, b, c)
-                            // .reorder_conj_pairs()
+                            .reorder_conj_pairs()
                             .rescale(a, b, c);
                         self.update_leja_splice(a, b, c, SPLICE_IDX, lp_ritz);
                     } else {
@@ -1242,7 +1271,7 @@ mod test_matexp_leja {
         let leja_phikv_eval = LejaPhiEval::new(lp, 20, 0.0, 1.0, 1e-8, 1e-8, 20, "none", true);
         let mut expmv_tay_pm = faer::Mat::zeros(test_a.nrows(), 1);
         leja_phikv_eval.taylor_expmv(expmv_tay_pm.as_mut(),
-            &test_a, 1.0, test_v.as_ref(), 0.0, 1.0);
+            &test_a, 1.0, test_v.as_ref(), 0.0, 1.0, 20);
         println!("{:?}", expmv_tay_dense.as_ref());
         println!("{:?}", expmv_tay_pm.as_ref());
 
@@ -1266,7 +1295,7 @@ mod test_matexp_leja {
         let lp_clp = LejaPoints::new_from_lib("leja_circle").slice(0, 100);
         assert!(lp_re.n_leja() == lp_clp.n_leja());
         assert!(lp_re.n_leja_real() == lp_re.n_leja());
-        assert!(lp_clp.n_leja_real() == 2);
+        assert!(lp_clp.n_leja_real() == 4);
         let lp = lp_clp;
 
         // Generate a test 3x3 matricies
@@ -1427,7 +1456,9 @@ mod test_matexp_leja {
         // similar test on a larger system
         let dt = 1.0;
         let (test_b, test_v) = gen_test_c(80);
-        _test_leja_ritz_phikv(dt, 1.0*test_b, test_v, false, 20);
+        _test_leja_ritz_phikv(dt, 2.0*test_b, test_v, false, 20);
+        let (test_b, test_v) = gen_test_c(40);
+        _test_leja_ritz_phikv(dt, 2.0*test_b, test_v, false, 10);
     }
 
     #[test]
@@ -1442,6 +1473,8 @@ mod test_matexp_leja {
         // similar test on a larger system
         let dt = 1.0;
         let (test_b, test_v) = gen_test_c(80);
-        _test_leja_ritz_phikv(dt, 1.0*test_b, test_v, true, 20);
+        _test_leja_ritz_phikv(dt, 2.0*test_b, test_v, true, 20);
+        let (test_b, test_v) = gen_test_c(40);
+        _test_leja_ritz_phikv(dt, 2.0*test_b, test_v, true, 10);
     }
 }
