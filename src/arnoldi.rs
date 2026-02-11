@@ -111,7 +111,7 @@ pub fn arnoldi_lop<T>(
     a_lo_scale: T,
     b: MatRef<T>,
     n: usize,
-    iom: usize
+    iom: usize,
 ) -> (Mat<T>, Mat<T>, usize)
     where
     T: RealField + Float,
@@ -135,9 +135,103 @@ pub fn arnoldi_lop<T>(
     }
 
     (
-        qs.get(0..b.nrows(), 0..breakdown_n).to_owned(),
-        hs.get(0..breakdown_n, 0..breakdown_n).to_owned(),
-        breakdown_n
+    qs.get(0..b.nrows(), 0..breakdown_n).to_owned(),
+    hs.get(0..breakdown_n, 0..breakdown_n).to_owned(),
+    breakdown_n
+    )
+}
+
+
+fn arnoldi_inner_lop_ext<T>(
+    a_lo: &dyn LinOp<T>,
+    a_lo_scale: T,
+    k: usize,
+    n: usize,
+    iom: usize,
+    hs: MatMut<T>,
+    mut qs: MatMut<T>
+) -> bool
+    where
+    T: RealField + Float,
+{
+    // dummy
+    let mut _dummy_podstack: [u8;1] = [0u8;1];
+
+    // final iter check
+    let not_final_it: bool = k+1 < n;
+
+    // incomplete orth depth
+    let iom_depth = cmp::max(k as i32 - iom as i32 , 0) as usize;
+
+    // breakdown tol
+    let breakdown_tol = T::from(1e-12).unwrap();
+
+    // Krylov vector
+    let q_col: ColRef<T> = qs.rb_mut().col(k);
+
+    // let mut qv: Mat<T> = a_lo * q_col;
+    let mut qv: Mat<T> = faer::Mat::zeros(q_col.nrows(), 1);
+    a_lo.apply(qv.as_mut(),
+               q_col.as_mat().as_ref(),
+               faer::get_global_parallelism(),
+               MemStack::new(&mut MemBuffer::new(StackReq::empty())));
+    qv = qv * faer::Scale(a_lo_scale);
+
+    // let mut h = Vec::with_capacity(k + 2);
+    // let mut h = vec![T::from(0.0).unwrap(); k+2];
+    let mut h = hs.col_mut(k);
+    for i in iom_depth..=k {
+        let qci: ColRef<T> = qs.rb_mut().col(i);
+        let ht = qv.col(0).transpose() * qci;
+        h[i] = ht;
+        qv = qv - (qci.as_mat() * faer::Scale(ht));
+    }
+
+    let norm_v = qv.norm_l2();
+    h[k+1] = norm_v;
+
+    // check for happy breakdown
+    let breakdown_flag: bool = norm_v < breakdown_tol;
+
+    // if norm_v is zero this is a div by 0 err
+    qv = qv * faer::Scale(T::from(1.).unwrap()/norm_v);
+    qs.col_mut(k+1).copy_from(qv.col(0));
+
+    return breakdown_flag
+}
+
+pub fn arnoldi_lop_ext<T>(
+    a_lo: &dyn LinOp<T>,
+    a_lo_scale: T,
+    b: MatRef<T>,
+    n: usize,
+    iom: usize,
+) -> (Mat<T>, Mat<T>, usize)
+    where
+    T: RealField + Float,
+{
+    let m = std::cmp::min(n, b.nrows());
+    let mut hs = faer::Mat::zeros(m+1, m);
+    let mut qs = faer::Mat::zeros(b.nrows(), m+1);
+    let norm_b = b.norm_l2();
+    let q0 = b * faer::Scale(T::from(1.0).unwrap() / norm_b);
+    qs.col_mut(0).copy_from(q0.col(0));
+
+    let mut breakdown_n = 0;
+
+    for k in 0..m {
+        let breakdown_flag = arnoldi_inner_lop_ext(
+            a_lo, a_lo_scale, k, m, iom, hs.as_mut(), qs.as_mut());
+        breakdown_n += 1;
+        if breakdown_flag == true {
+            break
+        }
+    }
+
+    (
+    qs.get(0..b.nrows(), 0..breakdown_n+1).to_owned(),
+    hs.get(0..breakdown_n+1, 0..breakdown_n).to_owned(),
+    breakdown_n
     )
 }
 

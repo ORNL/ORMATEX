@@ -301,6 +301,12 @@ fn integrate_wrapper_rs<'py>(
                 lp, std::cmp::min(m, 800), 0.0, 1.0, tol, spec_tol, spec_iter, "arnoldi", krylov_reuse);
             select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
         },
+        "taylor" => {
+            let lp = matexp_leja::LejaPoints::new(vec![0.0; m], vec![0.0; m]);
+            let matexp_m = matexp_leja::LejaPhiEval::new(
+                lp, std::cmp::min(m, 800), 0.0, 0.0, tol, spec_tol, spec_iter, "arnoldi", krylov_reuse);
+            select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
+        },
         // krylov is default
         _ => {
             let matexp_m = matexp_krylov::KrylovExpm::new(expmv, m, Some(iom));
