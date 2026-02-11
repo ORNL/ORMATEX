@@ -1,4 +1,3 @@
-use faer::complex::Complex64;
 /*
  * Copyright© 2025 UT-Battelle, LLC
  *
@@ -19,7 +18,7 @@ use faer::complex::Complex64;
 use faer::reborrow::*;
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
-use faer::complex::ComplexFloat;
+use faer::complex::{ComplexFloat, Complex64};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 
 use std::cmp::{max};
