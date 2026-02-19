@@ -415,7 +415,7 @@ if __name__ == "__main__":
             ode_sys, y0, t0, dt, nsteps, method,
             max_krylov_dim=200, iom=2, pfd_method=pfd_method,
             leja_c=args.leja_c, dd_method=args.dd_method,
-            logging=True, phikv_method="krylov",
+            logging=True, phikv_method="taylor",
             )
     t_res, y_res = res.t_res, res.y_res
 
