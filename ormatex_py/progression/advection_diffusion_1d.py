@@ -313,15 +313,16 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-ic", help="one of [square, zero, gauss]", type=str, default="gauss")
-    parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
+    parser.add_argument("-mr", help="mesh refinement", type=int, default=7)
     parser.add_argument("-tau", help="supg stabilization constant. 0 for no supg stab.", type=float, default=0.0)
-    parser.add_argument("-nu", help="physical species bulk diffusion coefficient. 0 for no diffusion.", type=float, default=1.0e-12)
+    parser.add_argument("-nu", help="physical species bulk diffusion coefficient. 0 for no diffusion.", type=float, default=1.0e-16)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-pfd_method", help="partial frac decomp method", type=str, default="CN")
     parser.add_argument("-nsteps", help="number of steps", type=int, default=10)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
-    parser.add_argument("-tf", help="final time", type=float, default=1.6)
+    # parser.add_argument("-tf", help="final time", type=float, default=1.6)
+    parser.add_argument("-dt", help="time step size", type=float, default=0.01)
     parser.add_argument("-leja_c", help="leja scale", type=float, default=10.0)
     parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
     parser.add_argument("-nonautonomous", help="run nonautonomous system with external forcing", action="store_true", default=False)
@@ -335,6 +336,7 @@ if __name__ == "__main__":
     # mesh refinement
     nrefs = args.mr
     mesh = mesh0.refined(nrefs)
+    nelements = mesh.nelements
 
     print(mesh)
     periodic = args.per
@@ -404,13 +406,17 @@ if __name__ == "__main__":
     # integrate the system
     t0 = 0.
     nsteps = args.nsteps
-    dt = args.tf / nsteps
+    # dt = args.tf / nsteps
+    dt = args.dt
+    tf = dt * nsteps
     method = args.method
     pfd_method = args.pfd_method
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=800, iom=2, pfd_method=pfd_method,
-            leja_c=args.leja_c, dd_method=args.dd_method)
+            max_krylov_dim=200, iom=2, pfd_method=pfd_method,
+            leja_c=args.leja_c, dd_method=args.dd_method,
+            logging=True, phikv_method="krylov",
+            )
     t_res, y_res = res.t_res, res.y_res
 
     # compute expected solution
@@ -422,7 +428,7 @@ if __name__ == "__main__":
     # sorted x
     si = xs.argsort()
     sx = xs[si]
-    mesh_spacing = (sx[1] - sx[0])
+    mesh_spacing = float(1.0 / nelements)
     cfl = dt * vel / mesh_spacing
     plt.figure()
     for i in range(nsteps+1):
@@ -437,7 +443,7 @@ if __name__ == "__main__":
     plt.ylabel('u')
     plt.xlabel('x')
     plt.title("Method=%s, $C$=%0.2e, $v_{adv.}$=%0.2e \n $tau$=%0.2e, $\Delta$ t=%0.2e, $\Delta$ x=%0.2e" % (method, cfl, vel, args.tau, dt, mesh_spacing))
-    plt.savefig('adv_diff_1d_%s_%s_%s.png' % (method, str(args.mr), str(args.ic)))
+    plt.savefig('adv_diff_1d_%s_%s_%s_%s.png' % (method, str(args.mr), str(args.ic), str(tf)))
     plt.close()
 
     # Print results summary to table
@@ -448,3 +454,5 @@ if __name__ == "__main__":
     l1 = np.linalg.norm(err * ode_sys.Ml, 1)
     linf = np.linalg.norm(err, np.inf)
     print("mesh_spacing: %0.4e, CFL=%0.4f, L1=%0.4e, L2=%0.4e, Linf=%0.4e" % (mesh_spacing, cfl, l1, l2, linf))
+
+    # plot eigs
