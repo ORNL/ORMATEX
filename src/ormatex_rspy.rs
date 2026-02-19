@@ -33,6 +33,7 @@ use pyo3::{pymethods, pymodule, Python};
 use pyo3::types::{PyList, PyDict};
 use numpy::{IntoPyArray, PyArray1, PyArray2,
             PyReadonlyArray1, PyReadonlyArray2};
+use flexi_logger::{LoggerHandle};
 
 use faer::prelude::*;
 use faer_ext::*;
@@ -46,6 +47,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ode_sys::*;
+use crate::ode_utils::init_logger;
 use crate::ode_bdf;
 use crate::ode_rk;
 use crate::ode_epirk;
@@ -279,9 +281,18 @@ fn integrate_wrapper_rs<'py>(
     let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol_fdt"), 1e-8);
     let osteps: usize = get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
     // jacobian spectrum analysis settings
+    let leja_c_: f64 = get_val_or_default(py, &kd_hash, String::from("leja_c"), -1.0);
     let spec_tol: f64 = get_val_or_default(py, &kd_hash, String::from("spec_tol"), 1.0e-8);
     let spec_iter: usize = get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
     let krylov_reuse: bool = get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), true);
+    let logging: bool = get_val_or_default(py, &kd_hash, String::from("logging"), false);
+    let _logger: Option<LoggerHandle> = if logging {Some(init_logger())} else { None };
+
+    let leja_c: Option<f64> = if leja_c_ >= 0.0 {
+        Some(leja_c_)
+    } else {
+        None
+    };
 
     let y0_mat = y0.into_faer();
 

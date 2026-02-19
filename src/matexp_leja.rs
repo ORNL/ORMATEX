@@ -363,21 +363,33 @@ pub fn dd_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: usize, 
     let z = xi_shift - faer::Scale(mu) * eye.as_ref();
 
     // scaling factor (in powers of 2)
-    let s_scale = z.norm_l1();
-    let s = max((s_scale.ln() / (3.0 as f64).ln()).ceil() as i32, 1);
+    // let s_scale = z.norm_l1();
+    // let s = max((s_scale.ln() / (3.0 as f64).ln()).ceil() as i32, 1);
+
+    // (1/2^s) * s_scale <= 2.0
+    // s_scale / 2.0 = 2^s
+    // ln(s_scale) - ln(2.0) = s * ln(2)
+    // (ln(s_scale) - ln(2.0)) / ln(2) = s
+    let s_scale = z.norm_max();
+    let s = max(( ( s_scale.ln() - (2.0 as f64).ln() ) / (2.0 as f64).ln() ).ceil() as i32, 1);
     let hs = 1.0 / (2.0 as f64).powi(s);
+
+    // println!("number of squarings. old: {s_old}, new: {s}");
 
     // compute expm(Z)
     let mut f_out = phik_taylor((hs*h*z).as_ref(), 0.0, 1.0, p, k);
+    // let mut f_out_col0 = f_out.col(0).to_owned();
 
     // squaring
     for _i in 0..s {
         f_out = f_out.as_ref() * f_out.as_ref();
+        // f_out_col0 = f_out.as_ref() * f_out_col0.as_ref();
     }
 
     // reshift and extract first col
     // faer::Scale( matexp_pade::phi_scaler(h * mu, k) ) * f_out.col(0)
     faer::Scale( (h * mu).exp() ) * f_out.col(0)
+    // faer::Scale( (h * mu).exp() ) * f_out_col0
 }
 
 /// Used for phi function evaluation at the leja points
@@ -407,6 +419,10 @@ pub struct LejaPhiEval {
     arnld_h: Option<Mat<f64>>,
     ritz_re: Option<Vec<f64>>,
     ritz_im: Option<Vec<f64>>,
+    /// Leja a parameter override
+    // leja_a: Option<f64>,
+    /// Leja c parameter override
+    leja_c: Option<f64>,
 }
 
 
@@ -432,7 +448,8 @@ impl LejaPhiEval {
         spec_norm_tol: f64,
         spec_iters: usize,
         spec_method: &str,
-        krylov_reuse: bool) -> Self
+        krylov_reuse: bool,
+        ) -> Self
     {
         Self {
             m: m,
@@ -454,6 +471,7 @@ impl LejaPhiEval {
             arnld_h: None,
             ritz_re: None,
             ritz_im: None,
+            leja_c: None,
         }
     }
 
@@ -478,7 +496,8 @@ impl LejaPhiEval {
         spec_norm_tol: f64,
         spec_iters: usize,
         spec_method: &str,
-        krylov_reuse: bool) -> Self
+        krylov_reuse: bool,
+        ) -> Self
     {
         let (lp, shift, scale) = leja_x.rescale(a, b, c);
         Self {
@@ -501,6 +520,7 @@ impl LejaPhiEval {
             arnld_h: None,
             ritz_re: None,
             ritz_im: None,
+            leja_c: None,
         }
     }
 
@@ -537,6 +557,7 @@ impl LejaPhiEval {
         coeffs: ColRef<c64>,
         ) -> (bool, usize)
     {
+        log::info!("=== ReLPM, shift: {:0.6e}, scale: {:0.6e}", self.shift, self.scale);
         let clock = std::time::Instant::now();
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
@@ -579,13 +600,13 @@ impl LejaPhiEval {
                 );
             vm = (dt * av.as_ref() - leja_x_sc[i-1]*vm) / scale;
             // leja polynomial update
-            // pm.copy_from( pm.as_ref() + coeffs[i].re * vm.as_ref() );
             pm += coeffs[i].re * vm.as_ref();
 
             // check error estimate
             err_est = (coeffs[i].re * vm.norm_l2()).abs();
             converged = err_est < self.tol * norm_u;
             iter += 1;
+            log::info!("real, {i}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}", leja_x_sc[i-1], 0.0, coeffs[i], err_est);
             if err_est > self.abort_tol {
                 println!("Hit abort tol: {err_est:0.2e}. Consider a smaller time step size.");
                 break;
@@ -618,6 +639,7 @@ impl LejaPhiEval {
         m: usize
         ) -> (bool, usize, Mat<f64>)
     {
+        log::info!("=== TS, shift: {:0.6e}, scale: {:0.6e}", self.shift, self.scale);
         let clock = std::time::Instant::now();
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
@@ -649,7 +671,7 @@ impl LejaPhiEval {
             err_est = (coeff * vm.norm_l2()).abs();
             converged = err_est < self.tol * norm_u;
             iter += 1;
-
+            log::info!("tayl, {j}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}", 0.0, 0.0, coeff, err_est);
         }
         println!("TS time (s): {}", clock.elapsed().as_secs_f64());
         (converged, iter, vm)
@@ -693,6 +715,7 @@ impl LejaPhiEval {
                 let mut xi = faer::Scale(coeffs[0]) * dr.as_ref();
                 for r in 1..=n_r {
                     // println!("{r}, krylov pre lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[r-1], leja_x_sc_im[r-1], coeffs[r]);
+                    log::info!("kryl, {r}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}", leja_x_sc_re[r-1], leja_x_sc_im[r-1], coeffs[r], 0.);
                     let z = c64::new(leja_x_sc_re[r-1], leja_x_sc_im[r-1]);
                     // let z = c64::new(ritz_re[r-1], ritz_im[r-1]);
                     dr = (cmplx_h.as_ref()*dr.as_ref() - faer::Scale(z)*dr.as_ref()) / faer::Scale(gamma);
@@ -739,6 +762,7 @@ impl LejaPhiEval {
         coeffs: ColRef<c64>,
         ) -> (bool, usize)
     {
+        log::info!("=== CLaPM, shift: {:0.6e}, scale: {:0.6e}", self.shift, self.scale);
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
         let mut err_est = 2. * norm_u;
@@ -808,13 +832,13 @@ impl LejaPhiEval {
                 );
             vm = (dt * av.as_ref() - leja_x_sc_re[i-1]*vm) / scale;
             // leja polynomial update
-            // pm.copy_from( pm.as_ref() + coeffs[i].re * vm.as_ref() );
             pm += coeffs[i].re * vm.as_ref();
 
             // check error estimate
             err_est = (coeffs[i].re * vm.norm_l2()).abs();
             converged = err_est < self.tol * norm_u;
             iter += 1;
+            log::info!("real, {i}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}", leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i], err_est);
         }
 
         // compute remaining leja polynomial terms suported at
@@ -844,6 +868,8 @@ impl LejaPhiEval {
             let err_est = (vm.norm_l2() * coeffs[i+1].re).abs();
             converged = err_est < self.tol * norm_u;
             iter += 2;
+            log::info!("cclp, {}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}", i, leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i], err_est);
+            log::info!("cclp, {}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}", i+1, leja_x_sc_re[i], leja_x_sc_im[i], coeffs[i+1], err_est);
             if err_est > self.abort_tol {
                 println!("Hit abort tol: {err_est:0.2e}. Consider a smaller time step size.");
                 break;
@@ -994,8 +1020,11 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
 
             match self.spec_method.as_str() {
                 "arnoldi" => {
-                    let (a, b, c, ritz_re, ritz_im, q, h) = spectrum_arnoldi_iom(
+                    let (_a, _b, _c, ritz_re, ritz_im, q, h) = spectrum_arnoldi_iom(
                         a_lo, v_ext.as_ref(), dt, self.spec_iters, 4, false);
+                    // safty factor
+                    let sf = 1.1;
+                    let (a, b, c) = (sf*_a, _b, sf*_c);
                     println!("Arnoldi Spectrum params: a={}, b={}, c={}", a, b, c);
                     // apply shift and scale to the ritz values
                     // splice complex conj ritz values into the leja sequence

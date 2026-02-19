@@ -57,7 +57,7 @@ fn arnoldi_inner_lop<T>(
     let iom_depth = cmp::max(k as i32 - iom as i32 , 0) as usize;
 
     // breakdown tol
-    let breakdown_tol = T::from(1e-12).unwrap();
+    let breakdown_tol = T::from(1e-14).unwrap();
 
     // Krylov vector
     let q_col: ColRef<T> = qs.rb_mut().col(k);

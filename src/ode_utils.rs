@@ -15,7 +15,23 @@
  */
 /// Useful tools for testing ODE integration methods
 use faer::prelude::*;
+use flexi_logger::{FileSpec, LoggerHandle, Logger, WriteMode};
 
+
+/// Initialize the logger
+pub fn init_logger() -> LoggerHandle
+{
+    let logger = Logger::try_with_str("info").unwrap()
+        .log_to_file(
+            FileSpec::default()
+            .basename("ormatex_rs")
+            .suppress_timestamp()
+            .suffix("log"))
+        .write_mode(WriteMode::BufferAndFlush)
+        .start().unwrap();
+    log::info!("ORMATEX Log");
+    logger
+}
 
 /// define Lotka-Volterra system for testing ONLY
 pub fn lv_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
