@@ -46,7 +46,7 @@ To use the rust-based ORMATEX integrators from a python interface, build the pyt
 .. code::
 
     pip install maturin
-    maturin develop --release
+    maturin develop --release --features python
 
 Ensure to use the ``--release`` flag for an optimized build.  Forgetting this flag will build in debug mode and will result in significantly degraded performance.
 

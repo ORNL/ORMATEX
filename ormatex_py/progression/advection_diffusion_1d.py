@@ -318,12 +318,16 @@ if __name__ == "__main__":
     parser.add_argument("-nu", help="physical species bulk diffusion coefficient. 0 for no diffusion.", type=float, default=1.0e-16)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-phikv_method", help="time step method", type=str, default="taylor")
+    parser.add_argument("-spec_method", help="time step method", type=str, default="arnoldi")
     parser.add_argument("-pfd_method", help="partial frac decomp method", type=str, default="CN")
     parser.add_argument("-nsteps", help="number of steps", type=int, default=10)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     # parser.add_argument("-tf", help="final time", type=float, default=1.6)
     parser.add_argument("-dt", help="time step size", type=float, default=0.01)
+    parser.add_argument("-leja_a", help="leja scale", type=float, default=-1.0)
     parser.add_argument("-leja_c", help="leja scale", type=float, default=10.0)
+    parser.add_argument("-krylov_reuse", help="recycle krylov in leja", action='store_true', default=False)
     parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
     parser.add_argument("-nonautonomous", help="run nonautonomous system with external forcing", action="store_true", default=False)
     args = parser.parse_args()
@@ -389,11 +393,24 @@ if __name__ == "__main__":
         g_prof_exact = lambda t, x: g_prof(x - t*vel)
     else:
         # gaussian profile
+        gauss_scale = 1.0  # init gaussian height
         wc, ww = 0.3, 0.05
-        g_prof = lambda x: np.exp(-(dist(x, wc) / (2*ww))**2.0)
-        y0_profile = g_prof(xs)
+        var = ww ** 2.0
+        g_prof = lambda x: gauss_scale * np.exp(-(dist(x, wc) / (2*ww))**2.0)
+        def g_prof_exact(t, x):
+            out = np.zeros(x.shape)
+            dwidth = 1.0  # mesh domain width
+            shifts = np.array([-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0]) * dwidth
+            # shifts = np.array([0.0]) * dwidth
+            ns = len(shifts)
+            for s in shifts:
+                out += np.exp(-(s + torus_distance(x-t*vel, wc))**2.0 / (4*var+4*nu*t))
+            norm_const = np.sqrt(4*var) / (np.sqrt((4*var+4*nu*t)))
+            out *= norm_const
+            out *= gauss_scale
+            return out
+        y0_profile = g_prof_exact(0.0, xs)
         y0 = jnp.asarray(y0_profile)
-        g_prof_exact = lambda t, x: g_prof(x - t*vel)
 
     # modification for Dirichlet boundary conditions
     if sem.dirichlet_bd is not None:
@@ -413,9 +430,10 @@ if __name__ == "__main__":
     pfd_method = args.pfd_method
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=200, iom=2, pfd_method=pfd_method,
-            leja_c=args.leja_c, dd_method=args.dd_method,
-            logging=True, phikv_method="taylor",
+            max_krylov_dim=300, iom=2, pfd_method=pfd_method,
+            leja_c=args.leja_c, leja_a=args.leja_a, dd_method=args.dd_method,
+            logging=True, phikv_method=args.phikv_method, krylov_reuse=args.krylov_reuse,
+            spec_method=args.spec_method, spec_iter=30, tol=1e-13,
             )
     t_res, y_res = res.t_res, res.y_res
 
@@ -456,3 +474,5 @@ if __name__ == "__main__":
     print("mesh_spacing: %0.4e, CFL=%0.4f, L1=%0.4e, L2=%0.4e, Linf=%0.4e" % (mesh_spacing, cfl, l1, l2, linf))
 
     # plot eigs
+
+    # parse and plot ormatex leja point log
