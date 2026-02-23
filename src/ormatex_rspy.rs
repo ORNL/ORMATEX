@@ -47,7 +47,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ode_sys::*;
-use crate::ode_utils::init_logger;
+use crate::logger::init_logger;
 use crate::ode_bdf;
 use crate::ode_rk;
 use crate::ode_epirk;
@@ -288,6 +288,7 @@ fn integrate_wrapper_rs<'py>(
     let spec_iter: usize = get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
     let spec_method: String = get_val_or_default(py, &kd_hash, String::from("spec_method"), String::from("arnoldi"));
     let krylov_reuse: bool = get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), true);
+    // optional logging settings
     let logging: bool = get_val_or_default(py, &kd_hash, String::from("logging"), false);
     let _logger: Option<LoggerHandle> = if logging {Some(init_logger())} else { None };
 
@@ -307,7 +308,7 @@ fn integrate_wrapper_rs<'py>(
             let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, m+2);
             let matexp_m = match spec_method.as_str() {
                 "none" => {
-                    // freeze spectrum parameters
+                    // user specified spectrum parameters
                     matexp_leja::LejaPhiEval::new_from_abc(
                         lp, std::cmp::min(m, 800), leja_a, leja_b, leja_c, tol,
                         spec_tol, spec_iter, "none", false)

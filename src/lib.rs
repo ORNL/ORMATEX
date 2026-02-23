@@ -10,6 +10,7 @@ pub mod matexp_cauchy;
 pub mod matexp_krylov;
 pub mod matexp_leja;
 pub mod mat_utils;
+pub mod logger;
 
 // for testing only
 pub mod ode_utils;

@@ -10,7 +10,7 @@ use ormatex::matexp_krylov;
 use ormatex::matexp_leja;
 use ormatex::test_common::*;
 use ormatex::matexp_pade;
-use ormatex::ode_utils::init_logger;
+use ormatex::logger::init_logger;
 
 // optional deps for plotting
 #[cfg(feature="plot")]
