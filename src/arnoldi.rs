@@ -51,9 +51,6 @@ fn arnoldi_inner_lop<T>(
     where
     T: RealField + Float,
 {
-    // dummy
-    let mut _dummy_podstack: [u8;1] = [0u8;1];
-
     // final iter check
     let not_final_it: bool = k+1 < n;
 
@@ -61,7 +58,7 @@ fn arnoldi_inner_lop<T>(
     let iom_depth = cmp::max(k as i32 - iom as i32 , 0) as usize;
 
     // breakdown tol
-    let breakdown_tol = T::from(1e-14).unwrap();
+    let breakdown_tol = T::from(1e-18).unwrap();
 
     // Krylov vector
     let q_col: ColRef<T> = qs.rb_mut().col(k);

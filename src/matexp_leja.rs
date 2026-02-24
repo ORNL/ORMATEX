@@ -982,6 +982,7 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
                     let sf = 1.1;
                     let (a, b, c) = (sf*_a, _b, sf*_c);
                     println!("Arnoldi Spectrum params: a={}, b={}, c={}", a, b, c);
+                    log::info!("Arnoldi n_ritz={}, a={}, b={}, c={}", ritz_re.len(), a, b, c);
                     // apply shift and scale to the ritz values
                     // splice complex conj ritz values into the leja sequence
                     if self.krylov_reuse == true {
@@ -1394,7 +1395,6 @@ mod test_matexp_leja {
         // compute the spectrum parameters with arnoldi
         // and update the phi evaluator in one step
         let iom = 4;
-        leja_phikv_eval.apply_prepare(&test_b, dt, test_v.as_ref());
 
         // print the ritz values
         let (_a, _b, _c, ritz_re, ritz_im, q, h) = spectrum_arnoldi_iom(
@@ -1406,10 +1406,11 @@ mod test_matexp_leja {
 
         // compute phi_0(dt*A)*b0
         let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
-        let phi0mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, dt, &test_vb);
+        leja_phikv_eval.apply_prepare(&ext_b_lo, 1.0, test_vb[0].as_ref());
+        let phi0mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi0mv_pade_dense = matexp(test_b.as_ref(), 1.0) * test_v.as_ref();
+        let phi0mv_pade_dense = matexp(test_b.as_ref(), dt) * test_v.as_ref();
         println!("leja_ritz phi0mv: {:?}", &phi0mv_leja_pm);
         println!("pade phi0mv: {:?}", &phi0mv_pade_dense);
         mat_mat_approx_eq(
@@ -1423,11 +1424,11 @@ mod test_matexp_leja {
 
         // compute phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk
         let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
-        leja_phikv_eval.apply_prepare(&ext_b_lo, dt, test_vb[0].as_ref());
-        let phi1mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, dt, &test_vb);
+        leja_phikv_eval.apply_prepare(&ext_b_lo, 1.0, test_vb[0].as_ref());
+        let phi1mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi1mv_pade_dense = phi(test_b.as_ref(), 1) * test_v.as_ref();
+        let phi1mv_pade_dense = phi((dt*test_b).as_ref(), 1) * test_v.as_ref();
         println!("leja_ritz phi1mv: {:?}", &phi1mv_leja_pm);
         println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
         mat_mat_approx_eq(
@@ -1444,11 +1445,11 @@ mod test_matexp_leja {
     #[test]
     fn test_leja_phikv_large_krylov_noreuse() {
         // similar test on a larger system
-        let dt = 1.0;
+        let dt = 1.2;
         //let (test_b, test_v) = gen_test_c(80);
         //_test_leja_ritz_phikv(dt, 2.0*test_b, test_v, false, 20);
         let (test_b, test_v) = gen_test_c(40);
-        _test_leja_ritz_phikv(dt, 2.0*test_b, test_v, false, 10);
+        _test_leja_ritz_phikv(dt, 1.8*test_b, test_v, false, 10);
     }
 
     #[test]
@@ -1461,10 +1462,10 @@ mod test_matexp_leja {
     #[test]
     fn test_leja_phikv_large_krylov_reuse() {
         // similar test on a larger system
-        let dt = 1.0;
+        let dt = 1.2;
         //let (test_b, test_v) = gen_test_c(80);
         //_test_leja_ritz_phikv(dt, 2.0*test_b, test_v, true, 20);
         let (test_b, test_v) = gen_test_c(40);
-        _test_leja_ritz_phikv(dt, 2.0*test_b, test_v, true, 10);
+        _test_leja_ritz_phikv(dt, 1.8*test_b, test_v, true, 10);
     }
 }
