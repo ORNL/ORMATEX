@@ -8,8 +8,9 @@ use ormatex::ode_rk;
 use ormatex::ode_epirk;
 use ormatex::matexp_krylov;
 use ormatex::matexp_leja;
-use ormatex::ode_test_common::*;
+use ormatex::test_common::*;
 use ormatex::matexp_pade;
+use ormatex::logger::init_logger;
 
 // optional deps for plotting
 #[cfg(feature="plot")]
@@ -37,6 +38,7 @@ pub fn main() {
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
     // let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
 
+    let _logger = init_logger();
     let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 60);
     let mut matexp_m = matexp_leja::LejaPhiEval::new(lp, 20, 0.0, 1.0, 1e-12, 1e-8, 20, "arnoldi", true);
 

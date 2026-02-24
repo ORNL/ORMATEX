@@ -1,3 +1,4 @@
+use faer::complex::ComplexFloat;
 /*
  * Copyright© 2025 UT-Battelle, LLC
  *
@@ -16,6 +17,7 @@
 /// matrix exponential eval methods for dense faer Mats
 use faer::prelude::*;
 use faer::linalg::solvers::{Solve, DenseSolveCore};
+use statrs::function::factorial;
 use crate::matexp_traits::{DensePhikvEvaluator};
 use libm::frexp;
 
@@ -57,6 +59,24 @@ pub fn matexp(a: MatRef<f64>, dt: f64) -> Mat<f64>
         r = r.as_ref() * r.as_ref();
     }
     r
+}
+
+/// Computes phi_k(Z) for scalar real or complex Z
+///
+/// phi_0 = exp(Z)
+/// phi_1 = Z^-1 (phi_0 - I)
+/// phi_2 = Z^-1 (phi_1 - (1/2!) * I)
+/// phi_k = Z^-1 (phi_(k-1) - (1/k!) * I)
+pub fn phi_scaler<T: ComplexFloat>(z: T, k: usize) -> T
+{
+    let mut phi_z = z.exp();
+    if k == 0 {
+        return phi_z
+    }
+    for i in 1..=k {
+        phi_z = (phi_z - T::from(1.0 / factorial::factorial(i as u64)).unwrap() ) / z;
+    }
+    phi_z
 }
 
 /// Computes phi_k(Z)

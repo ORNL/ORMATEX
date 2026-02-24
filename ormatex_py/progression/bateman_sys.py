@@ -178,9 +178,14 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
     keymap = ["c_0", "c_1", "c_2"]
     decay_lib_sp = {
         'c_0':  ('c_1', 1.0e-1),
-        'c_1':  ('c_2', 1.0e1),
+        'c_1':  ('c_2', 1.0e0),
         'c_2':  ('none', 1.0e-3),
     }
+    # decay_lib_sp = {
+    #     'c_0':  ('c_1', 1.0),
+    #     'c_1':  ('c_2', 1.0e2),
+    #     'c_2':  ('none', 1.0e-2),
+    # }
     bmat = gen_bateman_matrix(keymap, decay_lib_sp)
     n0 = 1.0
     t0 = 0.0
@@ -193,7 +198,9 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
     y0 = jnp.array([n0, 0.0, 0.0])
     nsteps = int((tf - t0) / dt)
     res = integrate_wrapper.integrate(
-            test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=12, pfd_method=pfd_method)
+            test_ode_sys, y0, t0, dt, nsteps, method,
+            max_krylov_dim=100, iom=12, pfd_method=pfd_method,
+            phikv_method="taylor", tol=1e-15)
     t_res, y_res = res.t_res, res.y_res
     t_res = np.asarray(t_res)
     y_res = np.asarray(y_res)
@@ -225,28 +232,33 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
 
 
 def run_sweep():
-    methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense",
-               "exprb2_dense", "exprb2_pfd_rs", "exp_pfd_rs",
-               "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
-    dts = [1., 2., 5., 10., 25., 50.]
-    tf = 100.
+    # methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense",
+    #            "exprb2_dense", "exprb2_pfd_rs", "exp_pfd_rs",
+    #            "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
+    # methods = ["epi2_leja_im", "epi2", "epi3"
+    #            "implicit_euler", "implicit_esdirk3"]
+    methods = ["epi2_rs", "epi2", "implicit_esdirk3"]
+    # dts = [1., 2., 5., 10., 25., 50.]
+    # dts = [0.1, 1., 2., 5., 10.]
+    dts = [0.01, 0.02, 0.05, 0.1]
+    tf = 5.0
     nspecies = 3
     mae_dict = {}
     for method in methods:
         err_arr = np.zeros((len(dts), nspecies+1))
         for j, dt in enumerate(dts):
             t_res, y_res, t, y_true = \
-                    analytic_bateman_s3(method, dt=dt, tf=tf, do_plot=False)
+                    analytic_bateman_s3(method, dt=dt, tf=tf, do_plot=True)
             diff = y_res - y_true
             err_arr[j, 0] = dt
             # loop over species at last time
             for s in range(diff.shape[1]):
                 rel_diff = np.abs(diff[-1, s]) / y_true[-1, s]
                 err_arr[j, s+1] = rel_diff + 1e-18
-        mae_dict[method] = err_arr
-        print("=== Method: %s" % method)
-        print("dt, err_s0, err_s1, err_s2")
-        print(err_arr)
+            mae_dict[method] = err_arr
+            print("=== Method: %s" % method)
+            print("dt, err_s0, err_s1, err_s2")
+            print(err_arr)
 
     # error vs time step size for each method
     plt.figure()
@@ -263,9 +275,9 @@ def run_sweep():
     plt.legend()
     plt.tight_layout()
     plt.savefig("bateman_ex_1_converg.png")
-    for method in methods:
-        for dt in [10., 25.]:
-            analytic_bateman_s3(method, dt=dt, tf=500., do_plot=True)
+    # for method in methods:
+    #     for dt in [10., 25.]:
+    #         analytic_bateman_s3(method, dt=dt, tf=500., do_plot=True)
 
 
 class TestBatemanSysJac(OdeSplitSys):

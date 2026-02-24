@@ -103,7 +103,7 @@ impl KrylovExpm {
         (phi_k_1, phi_k_2, phi_k_3)
     }
 
-    /// Similar to apply_phi_linop_3, this method evaluates linear combinations
+    /// This method evaluates linear combinations
     /// of phi functions using only a single matexp call, thus reducing the
     /// number of calls to arnoldi.
     ///
@@ -150,8 +150,8 @@ impl LinOpPhikvEvaluator for KrylovExpm {
 mod test_matexp_krylov {
     use assert_approx_eq::assert_approx_eq;
     use crate::mat_utils::mat_mat_approx_eq;
-    use crate::matexp_pade::{matexp, phi};
-    use crate::ode_test_common::{gen_test_a, gen_test_b};
+    use crate::matexp_pade::{matexp, phi_ext};
+    use crate::test_common::{gen_test_a, gen_test_b};
 
     // bring everything from above (parent) module into scope
     use super::*;
@@ -172,15 +172,29 @@ mod test_matexp_krylov {
         let test_vb = vec![test_v.as_ref(),];
 
         // compute phi_0(dt*A)*b0
-        let dt = 1.0;
+        let dt = 0.3;
         let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
-        let phi0mv_krylov_pm: Mat<f64> = krylov_phikv_eval.apply_phi_k_v(&ext_b_lo, dt, &test_vb);
+        let phi0mv_krylov_pm: Mat<f64> = krylov_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi0mv_pade_dense = matexp(test_b.as_ref(), 1.0) * test_v.as_ref();
+        let phi0mv_pade_dense = matexp(test_b.as_ref(), dt) * test_v.as_ref();
         println!("krylov phi0mv: {:?}", &phi0mv_krylov_pm);
         println!("pade phi0mv: {:?}", &phi0mv_pade_dense);
         mat_mat_approx_eq(
             phi0mv_krylov_pm.as_ref(), phi0mv_pade_dense.as_ref(), 1e-8);
+
+
+        // compute phi_1(dt*A)*b0
+        let zeros = Mat::zeros(test_v.nrows(), test_v.ncols());
+        let test_vb = vec![zeros.as_ref(), test_v.as_ref(),];
+        let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
+        let phi1mv_krylov_pm: Mat<f64> = krylov_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
+
+        // Ensure results are consistent with pade methods.
+        let phi1mv_pade_dense = phi_ext((dt*test_b).as_ref(), 1) * test_v.as_ref();
+        println!("krylov phi1mv: {:?}", &phi1mv_krylov_pm);
+        println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
+        mat_mat_approx_eq(
+            phi1mv_krylov_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);
     }
 }

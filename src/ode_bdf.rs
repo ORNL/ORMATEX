@@ -210,7 +210,7 @@ impl <'a> IntegrateSys<'a> for BdfIntegrator<'a>
 
 #[cfg(test)]
 mod test_bdf {
-    use crate::ode_test_common::*;
+    use crate::test_common::*;
 
     // bring everything from above (parent) module into scope
     use super::*;

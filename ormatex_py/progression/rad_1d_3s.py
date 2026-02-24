@@ -32,7 +32,7 @@ from ormatex_py.ode_utils import stack_u, flatten_u
 from ormatex_py.matexp_leja import plot_leja_conjugate_ellipse_error
 
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
-from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
+from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM, torus_distance
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix, analytic_bateman_single_parent
 from ormatex_py import integrate_wrapper
 
@@ -217,21 +217,29 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     wc, ww = 0.4, 0.05
     var = ww ** 2.0
     g_prof0 = lambda x: 0.0*x + 1e-16
-    fix_scale = True
     gauss_scale = 1.0
-    if fix_scale:
-        gauss_scale = (1./ np.sqrt(1.*(var/2))) ** -1.0
     if periodic:
-        g_prof1 = lambda x: \
-            (
-            np.exp(-((1.0-((x - wc) % 1))**2.0 / (2*var))) + \
-            np.exp(-((((x - wc) % 1)**2.0) / (2*var)))
-            ) * (1./ np.sqrt(1.*(var/2))) * gauss_scale
-        g_prof_exact = lambda t, x: \
-            (
-            np.exp(-((1.0-((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) ) + \
-            np.exp(-((((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) )
-            ) * (1./np.sqrt(1.*(var/2+nu*t))) * gauss_scale
+        # g_prof1 = lambda x: \
+        #     (
+        #     np.exp(-((1.0-((x - wc) % 1))**2.0 / (2*var))) + \
+        #     np.exp(-((((x - wc) % 1)**2.0) / (2*var)))
+        #     ) * (1./ np.sqrt(1.*(var/2))) * gauss_scale
+        # g_prof_exact = lambda t, x: \
+        #     (
+        #     np.exp(-((1.0-((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) ) + \
+        #     np.exp(-((((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) )
+        #     ) * (1./np.sqrt(1.*(var/2+nu*t))) * gauss_scale
+        def g_prof_exact(t, x):
+            out = np.zeros(x.shape)
+            shifts = np.array([-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0]) * dwidth
+            ns = len(shifts)
+            for s in shifts:
+                out += np.exp(-(s + torus_distance(x-t*vel, wc))**2.0 / (4*var+4*nu*t))
+            norm_const = np.sqrt(4*var) / (np.sqrt((4*var+4*nu*t)))
+            out *= norm_const
+            out *= gauss_scale
+            return out
+        g_prof1 = lambda x: g_prof_exact(0.0, x)
     else:
         g_prof1 = lambda x: np.exp(-((x-wc)**2/(2*var))) * (1./ np.sqrt(1.*(var/2))) * gauss_scale
         g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))**2.0 / (2*var+4*nu*t))) \
@@ -265,8 +273,9 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=120, iom=2, phikv_method="leja",
-            spec_splice=True, osteps=500, **kwargs)
+            max_krylov_dim=320, iom=2, phikv_method="leja",
+            tol=1e-12, spec_iter=22, spec_method="arnoldi",
+            krylov_reuse=True, osteps=500, **kwargs)
     t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
