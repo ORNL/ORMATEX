@@ -19,7 +19,8 @@ use crate::ode_sys::*;
 use crate::ode_utils::{lv_sys_rhs, lv_sys_jac, bateman_sys_rhs};
 use faer::matrix_free::LinOp;
 use std::marker::PhantomData;
-use rand::Rng;
+use rand::{Rng, SeedableRng, RngCore};
+use rand::rngs::StdRng;
 
 /// System with quadratic rhs for testing
 pub struct TestQuadSys <'a> {
@@ -167,7 +168,7 @@ pub fn gen_test_b() -> (Mat<f64>, Mat<f64>)
 /// Larger test matrix for matexp routines
 pub fn gen_test_c(n: usize) -> (Mat<f64>, Mat<f64>)
 {
-    let mut rng = rand::thread_rng();
+    let mut rng = StdRng::seed_from_u64(42);
     let lambda_scale = 1.0;
     let vs = 10.0;
     let mut test_m = faer::Mat::zeros(n, n);
