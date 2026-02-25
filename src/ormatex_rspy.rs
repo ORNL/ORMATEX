@@ -181,9 +181,7 @@ impl OdeSys<'_> for PySysWrapped {
             // convert np result to faer mat
             let frhs_x_arr_bound = frhs_x_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
             let inner: PyReadonlyArray1<f64> = frhs_x_arr_bound.extract().unwrap();
-            let slice_view = inner.as_slice().unwrap();
-            let frhs_x_mat = faer::col::ColRef::from_slice(slice_view).as_mat().to_owned();
-            frhs_x_mat
+            inner.into_faer().as_mat().to_owned()
         })
     }
 
