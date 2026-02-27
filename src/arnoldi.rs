@@ -185,7 +185,7 @@ pub fn arnoldi_lop_ext<T>(
     for k in 0..m {
         let breakdown_flag = arnoldi_inner_lop(
             a_lo, a_lo_scale, k, m, iom, hs.as_mut(), qs.as_mut(),
-            MemStack::new(&mut mem_buf), false);
+            MemStack::new(&mut mem_buf), true);
         breakdown_n += 1;
         if breakdown_flag == true {
             break
