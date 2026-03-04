@@ -11,9 +11,7 @@ use ormatex::matexp_pade;
 
 // optional deps for plotting
 #[cfg(feature="plot")]
-use plotlars::{ScatterPlot, LinePlot, Plot, Rgb};
-#[cfg(feature="plot")]
-use polars::prelude::*;
+use kuva::prelude::*;
 
 
 pub fn main() {
@@ -74,22 +72,34 @@ pub fn main() {
 fn plot_time_series(t: Vec<f64>, c0: Vec<f64>, c1: Vec<f64>, c2: Vec<f64>)
     -> Result<(), Box<dyn std::error::Error>>
 {
-    // create polars dataframe from vecs
-    let df = df! [
-        "t" => t,
-        "y0" => c0,
-        "y1" => c1,
-        "y2" => c2,
-    ]?;
-
-    // plot the dataframe contents
-    let plot = LinePlot::builder()
-        .data(&df)
-        .x("t")
-        .y("y0")
-        .additional_lines(vec!["y1", "y2"])
-        .build();
-    plot.write_image("ex_sys_2.png", 1200, 800, 2.0)?;
+    // create plots
+    let plots = vec![
+        Plot::Line(LinePlot::new()
+            // iter() yeilds &T and into_iter yeilds T
+            .with_data(t.clone().into_iter().zip(c0.clone().into_iter()))
+            .with_color("steelblue")
+            .with_legend("c0")
+        ),
+        Plot::Line(LinePlot::new()
+            .with_data(t.clone().into_iter().zip(c1.clone().into_iter()))
+            .with_color("crimson")
+            .with_legend("c1")
+        ),
+        Plot::Line(LinePlot::new()
+            .with_data(t.clone().into_iter().zip(c2.clone().into_iter()))
+            .with_color("seagreen")
+            .with_legend("c2")
+        ),
+    ];
+    let layout = Layout::auto_from_plots(&plots)
+        .with_log_y()
+        .with_log_x()
+        .with_x_axis_min(0.1)
+        .with_y_axis_min(1.0e-8)
+        .with_x_label("x")
+        .with_y_label("c");
+    let svg = render_to_svg(plots, layout);
+    std::fs::write("ex_2.svg", svg)?;
 
     Ok(())
 }

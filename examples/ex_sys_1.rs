@@ -14,9 +14,7 @@ use ormatex::logger::init_logger;
 
 // optional deps for plotting
 #[cfg(feature="plot")]
-use plotlars::{ScatterPlot, LinePlot, Plot, Rgb};
-#[cfg(feature="plot")]
-use polars::prelude::*;
+use kuva::prelude::*;
 
 
 pub fn main() {
@@ -78,21 +76,25 @@ pub fn main() {
 fn plot_time_series(t: Vec<f64>, y0: Vec<f64>, y1: Vec<f64>)
     -> Result<(), Box<dyn std::error::Error>>
 {
-    // create polars dataframe from vecs
-    let df = df! [
-        "t" => t,
-        "y0" => y0,
-        "y1" => y1,
-    ]?;
-
-    // plot the dataframe contents
-    let plot = LinePlot::builder()
-        .data(&df)
-        .x("t")
-        .y("y0")
-        .additional_lines(vec!["y1"])
-        .build();
-    plot.write_image("ex_sys_1.png", 1200, 800, 2.0)?;
+    // create plots
+    let plots = vec![
+        Plot::Line(LinePlot::new()
+            // iter() yeilds &T and into_iter yeilds T
+            .with_data(t.clone().into_iter().zip(y0.clone().into_iter()))
+            .with_color("steelblue")
+            .with_legend("y0")
+        ),
+        Plot::Line(LinePlot::new()
+            .with_data(t.clone().into_iter().zip(y1.clone().into_iter()))
+            .with_color("crimson")
+            .with_legend("y1")
+        ),
+    ];
+    let layout = Layout::auto_from_plots(&plots)
+        .with_x_label("x")
+        .with_y_label("y");
+    let svg = render_to_svg(plots, layout);
+    std::fs::write("ex_1.svg", svg)?;
 
     Ok(())
 }

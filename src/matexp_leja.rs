@@ -1159,7 +1159,7 @@ pub fn spectrum_arnoldi_iom(
     -> (f64, f64, f64, Vec<f64>, Vec<f64>, Mat<f64>, Mat<f64>)
 {
     // run arnoldi
-    let (q, h_, _bdwn) = arnoldi_lop_ext(ext_a_lo, 1.0, v0, n+1, iom);
+    let (q, h_, _bdwn) = arnoldi_lop_ext(ext_a_lo, 1.0, v0, n, iom);
 
     // extend h by one column to make square (n+1, n+1 matrix)
     let mut h = h_.to_owned();

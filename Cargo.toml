@@ -10,7 +10,8 @@ crate-type = ["cdylib", "rlib"]
 path = 'src/lib.rs'
 
 [features]
-plot = ["dep:plotlars", "dep:polars"]
+default = ["plot"]
+plot = ["dep:kuva"]
 python = ["dep:pyo3", "dep:numpy", "dep:ndarray", "dep:faer-ext"]
 
 [dependencies]
@@ -33,8 +34,7 @@ faer-traits = "0.23.0"
 faer_gmres = "0.4.1"
 
 # optional deps
-plotlars = {version="0.11.5", optional=true, features=["export-default"]}
-polars = {version="0.52", optional=true}
+kuva = {version="0.1", optional=true}
 
 # python binding deps
 pyo3 = {version="=0.26", features = ["extension-module"], optional=true}
