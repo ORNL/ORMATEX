@@ -278,9 +278,10 @@ impl <'a> LinOp<f64> for DynRefExtendedLinOp<'a>   {
             rhs_ncols: usize,
             parallelism: Par,
         ) -> StackReq {
-        let _ = parallelism;
-        let _ = rhs_ncols;
-        StackReq::empty()
+        // let _ = parallelism;
+        // let _ = rhs_ncols;
+        // StackReq::empty()
+        self.inner_lop.apply_scratch(rhs_ncols, parallelism)
     }
 
     /// Number of rows in the linop

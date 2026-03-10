@@ -17,6 +17,7 @@ python = ["dep:pyo3", "dep:numpy", "dep:ndarray", "dep:faer-ext"]
 thiserror = "1.0"
 assert_approx_eq = "1.1.0"
 num-traits = "0.2.18"
+num-complex = "0.4"
 reborrow = "0.5.5"
 rayon = "*"
 libm = "0.2.8"

@@ -20,12 +20,15 @@ use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use faer::complex::{ComplexFloat, Complex64};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
+use faer_traits::ComplexField;
+// use num_complex;
+// use num_traits::Float;
+// use num_traits::real::Real;
 
 use std::cmp::{max, min};
 use statrs::function::{factorial};
 use csv;
 
-use crate::matexp_pade;
 use crate::ode_sys::{DynRefExtendedLinOp};
 use crate::matexp_traits::{LinOpPhikvEvaluator};
 use crate::arnoldi::{arnoldi_lop, arnoldi_lop_ext};
@@ -605,10 +608,10 @@ impl LejaPhiEval {
     /// * `shift` - location on the real axis about which the
     ///    taylor expansion is conducted.
     /// * `scale` - unused
-    fn taylor_expmv<T: LinOp<f64>>(
+    fn taylor_expmv(
         &self,
         mut pm: MatMut<f64>,
-        ext_a_lo: &T,
+        ext_a_lo: &dyn LinOp<f64>,
         dt: f64,
         u: MatRef<f64>,
         shift: f64,
@@ -620,8 +623,8 @@ impl LejaPhiEval {
         let clock = std::time::Instant::now();
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
-        let mut err_est = 2. * norm_u;
-        let mut converged: bool = err_est == 0.;
+        let mut err_est = 2.0 * norm_u;
+        let mut converged: bool = err_est == 0.0;
 
         let mut av = u.to_owned();
         let mut vm = u.to_owned();
@@ -761,7 +764,6 @@ impl LejaPhiEval {
         pm.copy_from( coeffs[0].re * u );
         let mut vm = u.to_owned();
         let mut av = u.to_owned();
-        let mut aq = u.to_owned();
 
         let par = faer::get_global_parallelism();
         let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
@@ -819,11 +821,11 @@ impl LejaPhiEval {
             let qm = (dt * av.as_ref() - leja_x_sc_re[i-1]*vm.as_ref()) / scale;
             pm += coeffs[i].re * qm.as_ref();
 
-            ext_a_lo.apply(aq.as_mut(), qm.as_ref(),
+            ext_a_lo.apply(av.as_mut(), qm.as_ref(),
                 par,
                 MemStack::new(&mut mem_buf)
                 );
-            vm = (dt * aq.as_ref() - leja_x_sc_re[i-1]*qm.as_ref()) / scale
+            vm = (dt * av.as_ref() - leja_x_sc_re[i-1]*qm.as_ref()) / scale
                 + ((leja_x_sc_im[i-1]/scale).powi(2)) * vm.as_ref();
             pm += coeffs[i+1].re * vm.as_ref();
 
@@ -873,6 +875,39 @@ impl LejaPhiEval {
 
         // extract the first n elements
         expmv.get(0..n, 0..1).to_owned()
+    }
+
+    /// Log optional performance and accuracy metrics of the polynomial interpolation.
+    /// NOTE: Very expensive to run. Only intended for debugging or diagnostic mode.
+    fn leja_performance_detail(&self, ext_a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>)
+    {
+        // compute the approximation accuracy of leja polynomial interpolation
+        // || exp(dt*Lambda)*v - p_m_leja(Lambda, dt, v) ||
+        // with increasing approximation order m
+        // where Lambda is a digonal matrix of eigs(J) where J is
+        // the system jacobian.  Lambda is estimated via Krylov Shur since
+        // J is provided as a LinOp.
+        //
+        // compute Lambda
+        let (ext_v, n) = ext_a_lo.get_v(vb);
+        let (_, _, _, lambda_re, lambda_im, _ev) =
+            spectrum_krylov_schur(ext_a_lo, ext_v.as_ref(), 1.0, 100, 1e-8, false);
+        // compute exp(dt*lambda_i)*v_i
+        let expected: Vec<c64> = lambda_re.iter().zip(lambda_im.iter()).map(
+            |(x_re, x_im)| c64::new(*x_re, *x_im).exp()).collect();
+        // compute p_m_leja(dt*Lambda)*v
+        // create diagonal matrix Lambda
+        let lambda = faer::Mat::from_fn(lambda_re.len(), lambda_re.len(),
+            |i, j| {
+                if i == j {
+                   c64::new(lambda_re[i], lambda_im[i])
+                }
+                else {
+                   c64::new(0.0, 0.0)
+                }
+            }
+            );
+
     }
 
     /// Set the krylov reuse flag
@@ -1204,6 +1239,24 @@ mod test_matexp_leja {
     use super::*;
 
     #[test]
+    fn test_dd_taylor() {
+        // test the divided differences
+        let lp = LejaPoints::new_from_lib("leja_circle").slice(0, 100);
+        let a = -1.0;
+        let b = 0.0;
+        let c = 0.5;
+        let (lp_sc, shift, scale) = lp.rescale(a, b, c);
+
+        // compute the leja polynomial coeffs
+        let coeffs = dd_taylor(&lp_sc, shift, scale, 1.0, 16, 0);
+
+        println!("dd_0: {}", coeffs[0]);
+        println!("dd_1: {}", coeffs[1]);
+        println!("dd_2: {}", coeffs[2]);
+        println!("dd_3: {}", coeffs[3]);
+    }
+
+    #[test]
     fn test_spectrum_params() {
         // test the ability of arnoldi procedure to produce
         // correct spectrum parameters with a matrix with known
@@ -1467,5 +1520,55 @@ mod test_matexp_leja {
         //_test_leja_ritz_phikv(dt, 2.0*test_b, test_v, true, 20);
         let (test_b, test_v) = gen_test_c(40);
         _test_leja_ritz_phikv(dt, 1.8*test_b, test_v, true, 10);
+    }
+
+    #[test]
+    fn test_leja_phikv_sincos() {
+        // check exp(dt*A)*v for system with pure imaginary eigenvalues
+        // A = [[0, -1], [1, 0]]
+        // with initial conditions v0=[1, 0]
+        // where the analytic soution is
+        // v_(t) = [-cos(t), sin(t)]
+        let dt = 1.0;
+        let tf: f64 = 1.*dt;
+        let lambda_a = 0.0;
+        let lambda_b = 1.0;
+        let test_a = faer::mat![
+            [lambda_a, lambda_b],
+            [-lambda_b, lambda_a]
+            ];
+        // Generate a test vector
+        let test_v = faer::mat![
+            [-1.0],
+            [0.0],
+            ];
+
+        // load leja points
+        let lp = LejaPoints::new_from_lib("leja_circle").slice(0, 100);
+        // setup the phi evaluator
+        let krylov_reuse = false;
+        let max_arnoldi_iters = 30;
+        let leja_a = -1.0e-18;
+        let leja_b = 0.0;
+        let leja_c = 1.0;
+        let max_order = 100;
+        let leja_tol = 1.0e-18;
+        let mut leja_phikv_eval = LejaPhiEval::new_from_abc(
+            lp, max_order, leja_a, leja_b, leja_c, leja_tol, 1e-10, max_arnoldi_iters,
+            "none", krylov_reuse);
+
+        // generate vb vector: vb = [b0, b1, ... bk]
+        let test_vb = vec![test_v.as_ref(),];
+        // compute phi_0(dt*A)*v0
+        let ext_a_lo = DynRefExtendedLinOp::new(dt, &test_a, &test_vb);
+        leja_phikv_eval.apply_prepare(&ext_a_lo, 1.0, test_vb[0].as_ref());
+        let phi0_v0: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_a_lo, 1.0, &test_vb);
+
+        println!("dt: {:}", dt);
+        println!("Leja phi0(dt*A)*v0: {:?}", phi0_v0);
+
+        // compare to analytic result
+        assert_approx_eq!(phi0_v0[(0, 0)], -f64::cos(tf), 1e-8);
+        assert_approx_eq!(phi0_v0[(1, 0)], f64::sin(tf), 1e-8);
     }
 }
