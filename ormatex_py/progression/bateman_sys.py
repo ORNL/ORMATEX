@@ -22,10 +22,15 @@ decay_lib_0 = {
     'c_2':  ('none', 0.03),
 }
 
+# decay_lib_test = {
+#     'c_0':  ('none', 1.0e-3),
+#     'c_1':  ('c_0', 1.0e1),
+#     'c_2':  ('c_1', 1.0e-1),
+# }
 decay_lib_test = {
-    'c_0':  ('none', 1.0e-3),
-    'c_1':  ('c_0', 1.0e1),
-    'c_2':  ('c_1', 1.0e-1),
+    'c_0':  ('c_1', 1.0e-1),
+    'c_1':  ('c_2', 1.0e1),
+    'c_2':  ('none', 1.0e-2),
 }
 
 # dict of decay constants
@@ -325,17 +330,27 @@ if __name__ == "__main__":
     # test simple exp integrator
     test_ode_sys = TestBatemanSysJac(keymap, decay_lib_test)
     t = 0.0
-    y0 = jnp.array([0.001, 0.1, 1.0])
+    y0 = jnp.array([1.0, 0.0, 0.0])
 
     # step system forward
+    kwargs = {"leja_tol": 1e-12}
     t0 = 0.0
-    tf = 1000.0
-    dt = 10.0
+    tf = 40.0
+    dt = 1.0
     nsteps = int((tf - t0) / dt)
-    res = integrate_wrapper.integrate(test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=12)
+    res = integrate_wrapper.integrate(
+            test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=280, iom=12,
+            phikv_method="leja",
+            tol=1e-10, spec_iter=28, spec_method="arnoldi",
+            krylov_reuse=False, osteps=1, **kwargs
+            )
     t_res, y_res = res.t_res, res.y_res
 
-    t_res = np.asarray(t_res)
+    t = np.arange(t0, tf+dt, dt)
+    # analytic result
+    y_true = analytic_bateman_single_parent(t, bmat, 1.0)
+
+    t_res = np.asarray(t_res).flatten()
     y_res = np.asarray(y_res)
     for i in range(nsteps):
         print("%0.4e, %0.4e, %0.4e, %0.4e" % (t_res[i], y_res[i][0], y_res[i][1],y_res[i][2]))
@@ -343,15 +358,18 @@ if __name__ == "__main__":
     plt.figure()
     plt.xscale('log')
     plt.yscale('log')
-    plt.ylim((1e-14, 10.0))
-    plt.plot(t_res, y_res[:, 0], label="c_0")
-    plt.plot(t_res, y_res[:, 1], label="c_1")
-    plt.plot(t_res, y_res[:, 2], label="c_2")
+    plt.ylim((1e-4, 10.0))
+    plt.plot(t_res, y_res[:, 0], label="c_0", lw=4)
+    plt.plot(t_res, y_res[:, 1], label="c_1", lw=4)
+    plt.plot(t_res, y_res[:, 2], label="c_2", lw=4)
+    plt.plot(t, y_true[:, 0], ls='--', label="c_0 true")
+    plt.plot(t, y_true[:, 1], ls='--', label="c_1 true")
+    plt.plot(t, y_true[:, 2], ls='--', label="c_2 true")
     plt.legend()
     plt.grid(ls='--')
     plt.ylabel("Species concentration")
     plt.xlabel("Time [s]")
-    plt.savefig("bateman_ex_1_%s.png" % method)
+    plt.savefig("bateman_ex_1_%s.png" % method, dpi=200)
     plt.close()
 
     if args.sweep:

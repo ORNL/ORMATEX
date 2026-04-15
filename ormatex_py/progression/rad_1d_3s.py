@@ -37,10 +37,15 @@ from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute
 from ormatex_py import integrate_wrapper
 
 keymap = ["c_0", "c_1", "c_2"]
+# decay_lib = {
+#     'c_0':  ('c_1', 1.0e-1*10),
+#     'c_1':  ('c_2', 1.0e1*10),
+#     'c_2':  ('none', 1.0e-3*10),
+# }
 decay_lib = {
-    'c_0':  ('c_1', 1.0e-1*10),
-    'c_1':  ('c_2', 1.0e1*10),
-    'c_2':  ('none', 1.0e-3*10),
+    'c_0':  ('c_1', 1.0e-1),
+    'c_1':  ('c_2', 1.0e1),
+    'c_2':  ('none', 1.0e-2),
 }
 
 outdir = "./rad_1d_3s_out/"
@@ -128,7 +133,7 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
 
 def plot_leja_conv_detail(
         ode_sys, y, t, dt, outdir="./",
-        n_leja_list=[4, 8, 12, 24, 36, 50, 76, 100, 126, 150, 176, 200, 240],
+        n_leja_list=[4, 8, 12, 24, 36, 50, 76, 100],
         **kwargs):
     """
     Plots leja polynomial convergence details
@@ -141,20 +146,25 @@ def plot_leja_conv_detail(
     b = 0.0
     c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
     # differnet leja polynomial parameters
-    leja_plist = {r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{pade}$": {"c": c, "leja_n_zeros": 1, "dd_method": "pade"},
-                  r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{ts}$": {"c": c, "leja_n_zeros": 1, "dd_method": "taylor"},
-                  r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{pade}$": {"c": c, "leja_n_zeros": 0, "dd_method": "pade"},
-                  r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{ts}$": {"c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
-                  r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{pade}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "pade"},
-                  r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{ts}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "taylor"},
-                  r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{rc}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "recursive"},
+#     leja_plist = {r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{pade}$": {"c": c, "leja_n_zeros": 1, "dd_method": "pade"},
+#                   r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{ts}$": {"c": c, "leja_n_zeros": 1, "dd_method": "taylor"},
+#                   r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{pade}$": {"c": c, "leja_n_zeros": 0, "dd_method": "pade"},
+#                   r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{ts}$": {"c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
+#                   r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{pade}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "pade"},
+#                   r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{ts}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "taylor"},
+#                   r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{rc}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "recursive"},
+#                   }
+    leja_plist = {
+                  r"$\mathrm{Leja}_{CLaPM}\ dd_{ts}$": {"a": a, "c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
+                  r"$\mathrm{Leja}_{ReLPM}\ dd_{ts}$": {"a": a, "c": 0., "leja_n_zeros": 0, "dd_method": "taylor"},
+                  r"$\mathrm{Taylor}\ dd_{ts}$": {"a": 1e-8, "c": 0., "leja_n_zeros": 0, "dd_method": "taylor"},
                   }
     err_dict = {}
     for key, leja_p in leja_plist.items():
         l1_err_list, l2_err_list = [], []
         for n_leja in n_leja_list:
             i, l1_expmv_err, l2_expmv_err = plot_leja_conjugate_ellipse_error(
-                    a=a, b=b, c=leja_p["c"], eigJ=eigdtJ, leja_n_zeros=leja_p["leja_n_zeros"],
+                    a=leja_p["a"], b=b, c=leja_p["c"], eigJ=eigdtJ, leja_n_zeros=leja_p["leja_n_zeros"],
                     v=y, dd_method=leja_p['dd_method'],
                     n_leja=n_leja, leja_tol=1e-30, dirname=outdir)
             l1_err_list.append((i, l1_expmv_err))
@@ -199,6 +209,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
             mesh.boundaries['right'],
             mesh.boundaries['left'],
         )
+    nelements = mesh.nelements
 
     # diffusion coefficient
     vel = 0.5
@@ -273,9 +284,11 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=320, iom=2, phikv_method="leja",
-            tol=1e-12, spec_iter=22, spec_method="arnoldi",
-            krylov_reuse=True, osteps=500, **kwargs)
+            max_krylov_dim=320, iom=2,
+            phikv_method="leja",
+            tol=1e-12, spec_iter=28, spec_method="arnoldi",
+            krylov_reuse=False, osteps=500, **kwargs
+            )
     t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
@@ -342,9 +355,9 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     print()
     si = xs.argsort()
     sx = xs[si]
-    mesh_spacing = (sx[1] - sx[0])
+    mesh_spacing = float(dwidth / nelements)
     cfl = dt * vel / mesh_spacing
-    print("mesh_spacing: %0.4e, CFL=%0.4f" % (mesh_spacing, cfl))
+    print("mesh_spacing: %0.4e, Adv. CFL=%0.4f, nelements: %d, dof: %d" % (mesh_spacing, cfl, nelements, len(sx)))
     return mae_list, mae_rl_list
 
 
@@ -357,7 +370,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-sweep", help="run method sweep", default=False, action='store_true')
-    parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
+    parser.add_argument("-mr", help="mesh refinement", type=int, default=7)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-dt", help="time step size", type=float, default=0.1)
     parser.add_argument("-leja_tol", help="optional leja integrator tolerance", type=float, default=1.0e-15)

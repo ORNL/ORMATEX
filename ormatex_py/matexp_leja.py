@@ -34,7 +34,10 @@ from jax import numpy as jnp
 
 # internal imports
 from ormatex_py.ode_sys import LinOp, AugMatrixLinOp, MatrixLinOp, DiagLinOp
-from ormatex_py.matexp_poly import dd_exp_taylor, newton_poly_div_diff, leja_coeffs_exp, leja_seq_pad_zeros, leja_coeffs_exp_dd, leja_coeffs_dd_phi, leja_coeffs_ts_phi, leja_coeffs_ts_phi_jax, leja_seq_reordering, leja_coeffs_ts_ss
+from ormatex_py.matexp_poly import dd_exp_taylor, newton_poly_div_diff, leja_coeffs_exp, \
+                                   leja_seq_pad_zeros, leja_coeffs_exp_dd, \
+                                   leja_coeffs_dd_phi, leja_coeffs_ts_phi, \
+                                   leja_coeffs_ts_phi_jax, leja_seq_reordering, leja_coeffs_ts_ss
 dd_method_dict = {
         "taylor": dd_exp_taylor,
         "pade": leja_coeffs_exp,
@@ -957,6 +960,7 @@ def plot_leja_conjugate_ellipse_error(a=0., b=0., c=4., eigJ=[], dt=1., leja_n_z
     from matplotlib import colors
     np.set_printoptions(precision=4)
     # generate the leja sequence
+    print("*** Leja plot a,b,c: ", a, b, c)
     lp, n_leja_real, scale, shift = gen_leja_conjugate(n=n_leja, a=a, b=b, c=c)
 
     # prepend leja sequence with zeros
@@ -985,9 +989,12 @@ def plot_leja_conjugate_ellipse_error(a=0., b=0., c=4., eigJ=[], dt=1., leja_n_z
     plt.close()
 
     # generate a diagonal matrix and wrap as a linear operator
-    a_plot, b_plot = a-1, b+1
-    xr_grid = jnp.linspace(a_plot, b_plot, 200)
+    # a_plot, b_plot = a-1, b+1
+    # a_plot, b_plot = a-1, b+1
+    a_plot = np.minimum(a, -np.max(np.abs(eigJ.real))) - 1
+    b_plot = 0.0+1.0
     c_plot = np.maximum(c, np.max(np.abs(eigJ.imag))) + 1
+    xr_grid = jnp.linspace(a_plot, b_plot, 200)
     xi_grid = jnp.linspace(-c_plot, c_plot, 200)
     zr_grid, zi_grid = jnp.meshgrid(xr_grid, xi_grid)
     zs_grid = zr_grid.flatten() + 1.j * zi_grid.flatten()

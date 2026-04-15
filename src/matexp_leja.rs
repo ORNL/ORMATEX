@@ -20,10 +20,6 @@ use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use faer::complex::{ComplexFloat, Complex64};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
-use faer_traits::ComplexField;
-// use num_complex;
-// use num_traits::Float;
-// use num_traits::real::Real;
 
 use std::cmp::{max, min};
 use statrs::function::{factorial};
@@ -373,9 +369,11 @@ pub fn dd_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: usize, 
     let mut f_out = phik_taylor((hs*h*z).as_ref(), 0.0, 1.0, p, k);
 
     // squaring
-    for _i in 0..s {
+    for _i in 0..(s-1) as usize {
         f_out = f_out.as_ref() * f_out.as_ref();
     }
+    // final iter is a matvec to extract last col
+    f_out = f_out.as_ref() * f_out.col(0).as_mat();
 
     // reshift and extract first col
     faer::Scale( (h * mu).exp() ) * f_out.col(0)
@@ -790,7 +788,6 @@ impl LejaPhiEval {
             if converged {
                 break;
             }
-            // println!("{i}, clapm real lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i]);
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
                 par,
                 MemStack::new(&mut mem_buf)
@@ -812,8 +809,6 @@ impl LejaPhiEval {
             if converged {
                 break;
             }
-            // println!("{}, clapm conj lp: {:0.8} + {:0.8}i, dd: {:0.6e}", i, leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i]);
-            // println!("{}, clapm conj lp: {:0.8} + {:0.8}i, dd: {:0.6e}", i+1, leja_x_sc_re[i], leja_x_sc_im[i], coeffs[i+1]);
             ext_a_lo.apply(av.as_mut(), vm.as_ref(),
                 par,
                 MemStack::new(&mut mem_buf)
@@ -827,6 +822,7 @@ impl LejaPhiEval {
                 );
             vm = (dt * av.as_ref() - leja_x_sc_re[i-1]*qm.as_ref()) / scale
                 + ((leja_x_sc_im[i-1]/scale).powi(2)) * vm.as_ref();
+
             pm += coeffs[i+1].re * vm.as_ref();
 
             // error est
@@ -1551,8 +1547,12 @@ mod test_matexp_leja {
         let leja_a = -1.0e-18;
         let leja_b = 0.0;
         let leja_c = 1.0;
-        let max_order = 100;
-        let leja_tol = 1.0e-18;
+
+        let leja_a = -1.0e-12;
+        let leja_c = 1.0e-12;
+
+        let max_order = 50;
+        let leja_tol = 1.0e-8;
         let mut leja_phikv_eval = LejaPhiEval::new_from_abc(
             lp, max_order, leja_a, leja_b, leja_c, leja_tol, 1e-10, max_arnoldi_iters,
             "none", krylov_reuse);
