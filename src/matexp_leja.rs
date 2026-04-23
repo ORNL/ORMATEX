@@ -433,23 +433,20 @@ usize) -> Col<c64>
         *zi = *zi - mu;
     }
 
-    // lower triangle of F
+    // lower triangle of F; track max |entry| in the same pass to compute s
     let mut f_mat: Mat<c64> = Mat::zeros(total, total);
+    let mut max_abs: f64 = 0.0;
     for i0 in 0..n {
         for j0 in (i0 + 1)..=n {
-            f_mat[(j0, i0)] = z[i0] - z[j0];
+            let val = z[i0] - z[j0];
+            f_mat[(j0, i0)] = val;
+            let v = val.abs();
+            if v > max_abs { max_abs = v; }
         }
     }
 
     // Compute number of squarings
     // s = max(ceil(max|F_lower| / 3.5), 1)
-    let mut max_abs: f64 = 0.0;
-    for i0 in 0..n {
-        for j0 in (i0 + 1)..=n {
-            let v = f_mat[(j0, i0)].abs();
-            if v > max_abs { max_abs = v; }
-        }
-    }
     let s     = (max_abs / 3.5).ceil().max(1.0) as usize;
     let s_f64 = s as f64;
 
@@ -468,7 +465,9 @@ usize) -> Col<c64>
             let tmp = z[j] * dd[k0 + 1];
             dd[k0] = dd[k0] + tmp;
         }
-        // Second inner loop - divided-difference sweep using F lower triangle
+        // Second inner loop — divided-difference sweep using F lower triangle.
+        // Column j is stored contiguously in faer's column-major layout, so
+        // f_mat[(k0+j+1, j)] accesses stride-1 memory as k0 decrements.
         for k0 in (0..(n - j)).rev() {
             let tmp = f_mat[(k0 + j + 1, j)] * dd[k0 + 1];
             dd[k0] = dd[k0] + tmp;
@@ -477,6 +476,12 @@ usize) -> Col<c64>
         for col in 0..=(n - j) {
             f_mat[(j, j + col)] = dd[col];
         }
+        // Zero column j of the lower triangle in-place — entries are no longer
+        // needed after this outer iteration, so this replaces the separate triu
+        // zeroing pass that previously followed the sweep.
+        for row in (j + 1)..=n {
+            f_mat[(row, j)] = c64::new(0.0, 0.0);
+        }
     }
 
     // overwrite diagonal  F[i,i] = exp(z[i] / s)
@@ -484,27 +489,35 @@ usize) -> Col<c64>
         f_mat[(i, i)] = c64::new(z[i].re / s_f64, z[i].im / s_f64).exp();
     }
 
-    // zero lower triangle  (triu)
-    for i in 1..=n {
-        for j in 0..i {
-            f_mat[(i, j)] = c64::new(0.0, 0.0);
+    // squaring phase — pre-allocate two (1×total) row buffers and ping-pong between
+    // them using faer::linalg::matmul::matmul (Accum::Replace) to avoid a heap
+    // allocation on each of the s-1 squaring iterations.
+    let mut buf_a: Mat<c64> = Mat::from_fn(1, total, |_, j| f_mat[(0, j)]);
+    if s > 1 {
+        let mut buf_b: Mat<c64> = Mat::zeros(1, total);
+        for _ in 0..(s - 1) {
+            faer::linalg::matmul::matmul(
+                buf_b.as_mut(),
+                faer::Accum::Replace,
+                buf_a.as_ref(),
+                f_mat.as_ref(),
+                c64::new(1.0, 0.0),
+                faer::Par::Seq,
+            );
+            std::mem::swap(&mut buf_a, &mut buf_b);
         }
     }
+    let dd_row = buf_a;
 
-    // squaring phase
-    let mut dd_row: Mat<c64> = Mat::from_fn(1, total, |_, j| f_mat[(0, j)]);
-    for _ in 0..(s - 1) {
-        dd_row = dd_row.as_ref() * f_mat.as_ref();
-    }
-
-    // scale by by scale^i
+    // scale by scale^i — accumulate the power lazily to avoid an intermediate Vec
     let exp_mu = mu.exp();
     let scale_c = c64::new(scale, 0.0);
     let mut scale_pow = c64::new(1.0, 0.0);
-    let scale_pows: Vec<c64> = (0..n_leja)
-        .map(|_| { let sp = scale_pow; scale_pow *= scale_c; sp })
-        .collect();
-    Col::from_fn(n_leja, |i| exp_mu * scale_pows[i] * dd_row[(0, l + i)])
+    Col::from_fn(n_leja, |i| {
+        let sp = scale_pow;
+        scale_pow *= scale_c;
+        exp_mu * sp * dd_row[(0, l + i)]
+    })
 }
 
 
@@ -529,6 +542,7 @@ pub struct LejaPhiEval {
     spec_norm_tol: f64,
     spec_iters: usize,
     spec_method: String,
+    dd_method: String,
     arnld_q: Option<Mat<f64>>,
     arnld_h: Option<Mat<f64>>,
     ritz_re: Option<Vec<f64>>,
@@ -549,6 +563,7 @@ impl LejaPhiEval {
     /// * `spec_norm_tol` - tolerance used to trigger recomputation of spectrum parameters
     /// * `spec_iters` - maximum number of arnoldi iterations used in spectrum parameter calc
     /// * `spec_method` - method used to estimate spectrum parameters
+    /// * `dd_method` - method used to compute divided differences
     /// * `krylov_reuse` - reuse krylov subspace for fast interpolation at the ritz values
     ///
     pub fn new(
@@ -560,6 +575,7 @@ impl LejaPhiEval {
         spec_norm_tol: f64,
         spec_iters: usize,
         spec_method: &str,
+        dd_method: &str,
         krylov_reuse: bool,
         ) -> Self
     {
@@ -577,6 +593,7 @@ impl LejaPhiEval {
             spec_norm_tol: spec_norm_tol,
             spec_iters: spec_iters,
             spec_method: spec_method.to_string(),
+            dd_method: dd_method.to_string(),
             arnld_q: None,
             arnld_h: None,
             ritz_re: None,
@@ -595,6 +612,8 @@ impl LejaPhiEval {
     /// * `tol` - leja polynomial approximation tolerance
     /// * `spec_norm_tol` - tolerance used to trigger recomputation of spectrum parameters
     /// * `spec_iters` - maximum number of arnoldi iterations used in spectrum parameter calc
+    /// * `spec_method` - method used to estimate spectrum parameters
+    /// * `dd_method` - method used to compute divided differences
     /// * `krylov_reuse` - reuse krylov subspace for fast interpolation at the ritz values
     ///
     pub fn new_from_abc(
@@ -607,6 +626,7 @@ impl LejaPhiEval {
         spec_norm_tol: f64,
         spec_iters: usize,
         spec_method: &str,
+        dd_method: &str,
         krylov_reuse: bool,
         ) -> Self
     {
@@ -625,6 +645,7 @@ impl LejaPhiEval {
             spec_norm_tol: spec_norm_tol,
             spec_iters: spec_iters,
             spec_method: spec_method.to_string(),
+            dd_method: dd_method.to_string(),
             arnld_q: None,
             arnld_h: None,
             ritz_re: None,
@@ -947,7 +968,7 @@ impl LejaPhiEval {
 
         // compute remaining leja polynomial terms suported at
         // conjugate complex points.
-        for i in (n_leja_real+1+rp..self.m).step_by(2) {
+        for i in (n_leja_real+1+rp..self.m-1).step_by(2) {
             if converged {
                 break;
             }
@@ -1015,10 +1036,21 @@ impl LejaPhiEval {
         let mut expmv: Mat<f64> = faer::Mat::zeros(ext_v.nrows(), ext_v.ncols());
 
         // compute leja poly coeffs by divided difference
-        let p = 30; // dd taylor series poly order
-        let k = 0;  // phi-fn order
-        let coeffs: Col<c64> = dd_phi(
-            &self.leja_x.slice(0, self.m), self.shift, self.scale, 1.0, p, k);
+        let clock = std::time::Instant::now();
+        let coeffs: Col<c64> = if self.dd_method == "dd_phi" {
+            print!("Running dd_phi. ");
+            log::info!("Running dd_phi divided difference calc.");
+            dd_phi(
+                &self.leja_x.slice(0, self.m), self.shift, self.scale, 1.0, 32, 0)
+        }
+        else {
+            print!("Running dd_taylor. ");
+            log::info!("Running dd_taylor divided difference calc.");
+            dd_taylor(
+                &self.leja_x.slice(0, self.m), self.shift, self.scale, 1.0, 16, 0)
+        };
+        log::info!("divided difference walltime (s): {}", clock.elapsed().as_secs_f64());
+        println!("divided difference walltime (s): {}", clock.elapsed().as_secs_f64());
 
         // no substep
         let (_conv, _iters) = self.complex_conj_leja_expmv(
@@ -1475,7 +1507,8 @@ mod test_matexp_leja {
 
         // compute the matrix matexp(dt*A)*v using matfree impl
         let lp = LejaPoints::new(vec![], vec![]);
-        let leja_phikv_eval = LejaPhiEval::new(lp, 20, 0.0, 1.0, 1e-8, 1e-8, 20, "none", true);
+        let leja_phikv_eval = LejaPhiEval::new(
+            lp, 20, 0.0, 1.0, 1e-8, 1e-8, 20, "none", "dd_phi", true);
         let mut expmv_tay_pm = faer::Mat::zeros(test_a.nrows(), 1);
         leja_phikv_eval.taylor_expmv(expmv_tay_pm.as_mut(),
             &test_a, 1.0, test_v.as_ref(), 0.0, 1.0, 20);
@@ -1522,7 +1555,8 @@ mod test_matexp_leja {
             let coeffs = dd_taylor(&lp_sc, shift, scale, 1.0, 16, 0);
 
             // compute the matexp(dt*A)*v product via leja poly approx
-            let leja_phikv_eval = LejaPhiEval::new(lp_sc, 80, shift, scale, 1e-8, 1e-8, 20, "arnoldi", true);
+            let leja_phikv_eval = LejaPhiEval::new(
+                lp_sc, 80, shift, scale, 1e-8, 1e-8, 20, "arnoldi", "dd_taylor", true);
             let mut expmv_leja_pm: Mat<f64> = faer::Mat::zeros(test_m.nrows(), 1);
             let (conv, iter) = leja_phikv_eval.complex_conj_leja_expmv(expmv_leja_pm.as_mut(),
                 &test_m, 1.0, test_v.as_ref(), shift, scale, coeffs.as_ref());
@@ -1554,7 +1588,8 @@ mod test_matexp_leja {
         let test_vb = vec![test_v.as_ref(),];
 
         // setup the phi evaluator
-        let mut leja_phikv_eval = LejaPhiEval::new(lp, 80, 0.0, 1.0, 1e-8, 1e-8, 20, "arnoldi", true);
+        let mut leja_phikv_eval = LejaPhiEval::new(
+            lp, 80, 0.0, 1.0, 1e-8, 1e-8, 20, "arnoldi", "dd_phi", true);
 
         // compute the spectrum parameters with arnoldi with incomplete orthogonalization
         let (a, b, c, _, _, _, _) = spectrum_arnoldi_iom(&test_b.as_ref(), test_v.as_ref(), 1.0, 10, 2, true);
@@ -1600,7 +1635,7 @@ mod test_matexp_leja {
         // setup the phi evaluator
         let mut leja_phikv_eval = LejaPhiEval::new(
             lp, 280, 0.0, 1.0, 1e-15, 1e-10, max_arnoldi_iters,
-            "arnoldi", krylov_reuse);
+            "arnoldi", "dd_phi", krylov_reuse);
 
         // compute the spectrum parameters with arnoldi
         // and update the phi evaluator in one step
@@ -1653,6 +1688,13 @@ mod test_matexp_leja {
     }
 
     #[test]
+    fn test_leja_phikv_small_krylov_reuse() {
+        let dt = 1.0;
+        let (test_b, test_v) = gen_test_b();
+        _test_leja_ritz_phikv(dt, test_b, test_v, true, 10);
+    }
+
+    #[test]
     fn test_leja_phikv_large_krylov_noreuse() {
         // similar test on a larger system
         let dt = 1.2;
@@ -1660,13 +1702,6 @@ mod test_matexp_leja {
         //_test_leja_ritz_phikv(dt, 2.0*test_b, test_v, false, 20);
         let (test_b, test_v) = gen_test_c(40);
         _test_leja_ritz_phikv(dt, 1.8*test_b, test_v, false, 10);
-    }
-
-    #[test]
-    fn test_leja_phikv_small_krylov_reuse() {
-        let dt = 1.0;
-        let (test_b, test_v) = gen_test_b();
-        _test_leja_ritz_phikv(dt, test_b, test_v, true, 10);
     }
 
     #[test]
@@ -1686,7 +1721,7 @@ mod test_matexp_leja {
         // with initial conditions v0=[1, 0]
         // where the analytic soution is
         // v_(t) = [-cos(t), sin(t)]
-        let dt = 1.0;
+        let dt = 1.2;
         let tf: f64 = 1.*dt;
         let lambda_a = 0.0;
         let lambda_b = 1.0;
@@ -1716,7 +1751,7 @@ mod test_matexp_leja {
         let leja_tol = 1.0e-8;
         let mut leja_phikv_eval = LejaPhiEval::new_from_abc(
             lp, max_order, leja_a, leja_b, leja_c, leja_tol, 1e-10, max_arnoldi_iters,
-            "none", krylov_reuse);
+            "none", "dd_phi", krylov_reuse);
 
         // generate vb vector: vb = [b0, b1, ... bk]
         let test_vb = vec![test_v.as_ref(),];

@@ -146,14 +146,6 @@ def plot_leja_conv_detail(
     b = 0.0
     c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
     # differnet leja polynomial parameters
-#     leja_plist = {r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{pade}$": {"c": c, "leja_n_zeros": 1, "dd_method": "pade"},
-#                   r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{ts}$": {"c": c, "leja_n_zeros": 1, "dd_method": "taylor"},
-#                   r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{pade}$": {"c": c, "leja_n_zeros": 0, "dd_method": "pade"},
-#                   r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{ts}$": {"c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
-#                   r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{pade}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "pade"},
-#                   r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{ts}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "taylor"},
-#                   r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{rc}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "recursive"},
-#                   }
     leja_plist = {
                   r"$\mathrm{Leja}_{CLaPM}\ dd_{ts}$": {"a": a, "c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
                   r"$\mathrm{Leja}_{ReLPM}\ dd_{ts}$": {"a": a, "c": 0., "leja_n_zeros": 0, "dd_method": "taylor"},
@@ -284,10 +276,10 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=320, iom=2,
+            max_krylov_dim=300, iom=2,
             phikv_method="leja",
             tol=1e-12, spec_iter=28, spec_method="arnoldi",
-            krylov_reuse=False, osteps=500, **kwargs
+            krylov_reuse=True, osteps=500, **kwargs
             )
     t_res, y_res = res.t_res, res.y_res
 
@@ -382,7 +374,7 @@ if __name__ == "__main__":
     parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
-    parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
+    parser.add_argument("-dd_method", help="divided difference method", type=str, default="dd_phi")
     parser.add_argument("-leja_n_zeros", help="number of zeros prepended to leja sequence", type=int, default=1)
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
     args = parser.parse_args()

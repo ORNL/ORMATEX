@@ -285,6 +285,7 @@ fn integrate_wrapper_rs<'py>(
     let spec_tol: f64 = get_val_or_default(py, &kd_hash, String::from("spec_tol"), 1.0e-8);
     let spec_iter: usize = get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
     let spec_method: String = get_val_or_default(py, &kd_hash, String::from("spec_method"), String::from("arnoldi"));
+    let dd_method: String = get_val_or_default(py, &kd_hash, String::from("dd_method"), String::from("dd_phi"));
     let krylov_reuse: bool = get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), true);
     // optional logging settings
     let logging: bool = get_val_or_default(py, &kd_hash, String::from("logging"), false);
@@ -309,13 +310,13 @@ fn integrate_wrapper_rs<'py>(
                     // user specified spectrum parameters
                     matexp_leja::LejaPhiEval::new_from_abc(
                         lp, std::cmp::min(m, 800), leja_a, leja_b, leja_c, tol,
-                        spec_tol, spec_iter, "none", false)
+                        spec_tol, spec_iter, "none", dd_method.as_str(), false)
                 },
                 _ => {
                     // adaptive specturm parameter updates
                     matexp_leja::LejaPhiEval::new(
                         lp, std::cmp::min(m, 800), 0.0, 1.0, tol,
-                        spec_tol, spec_iter, "arnoldi", krylov_reuse)
+                        spec_tol, spec_iter, "arnoldi", dd_method.as_str(), krylov_reuse)
                 }
             };
             select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
@@ -324,7 +325,7 @@ fn integrate_wrapper_rs<'py>(
             let lp = matexp_leja::LejaPoints::new(vec![0.0; m], vec![0.0; m]);
             let matexp_m = matexp_leja::LejaPhiEval::new(
                 lp, std::cmp::min(m, 800), 0.0, 0.0, tol,
-                spec_tol, spec_iter, "none", false);
+                spec_tol, spec_iter, "none", dd_method.as_str(), false);
             select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
         },
         // krylov is default
