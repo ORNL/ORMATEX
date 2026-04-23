@@ -1768,16 +1768,10 @@ mod test_matexp_leja {
         assert_approx_eq!(phi0_v0[(1, 0)], f64::sin(tf), 1e-8);
     }
 
-
-    #[test]
-    fn test_dd_phi() {
+    fn _test_dd_phi(a: f64, b: f64, c: f64, n: usize) {
         // Verify dd_phi agrees with dd_taylor for phi_0, phi_1, and phi_2
         // using a small set of circle Leja points scaled to a known spectrum.
-
-        let lp = LejaPoints::new_from_lib("leja_circle").slice(0, 100);
-        let a = -1.2;
-        let b = 0.0;
-        let c = 0.58;
+        let lp = LejaPoints::new_from_lib("leja_circle").slice(0, n);
         let (lp_sc, shift, scale) = lp.rescale(a, b, c);
 
         for k in 0..=0_usize {
@@ -1798,9 +1792,26 @@ mod test_matexp_leja {
             println!("dd_phi time: {coeffs_phi_time} (s)");
 
             for i in 0..lp_sc.n_leja() {
-                assert_approx_eq!(coeffs_ts[i].re, coeffs_phi[i].re, 1e-8);
-                assert_approx_eq!(coeffs_ts[i].im, coeffs_phi[i].im, 1e-8);
+                assert_approx_eq!(coeffs_ts[i].re, coeffs_phi[i].re, 1e-10);
+                assert_approx_eq!(coeffs_ts[i].im, coeffs_phi[i].im, 1e-10);
             }
         }
+    }
+
+    #[test]
+    fn test_dd_phi() {
+        // Test dd_phi method for a large ellipse
+        let mut a = -108.2;
+        let mut b = 0.001;
+        let mut c = 10.58;
+        _test_dd_phi(a, b, c, 60);
+        _test_dd_phi(a, b, c, 100);
+
+        // Test dd_phi method for a small ellipse
+        a = -1.2;
+        b = 0.0;
+        c = 0.58;
+        _test_dd_phi(a, b, c, 60);
+        _test_dd_phi(a, b, c, 100);
     }
 }
