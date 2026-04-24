@@ -455,6 +455,10 @@ usize) -> Col<c64>
     let mut running_denom = 1.0_f64;
     for kk in 1..=cap_n {
         running_denom *= kk as f64 * s_f64;
+        // Once running_denom overflows to Inf the true Taylor coefficient
+        // 1/(s^kk * kk!) is negligibly small (< f64::MIN_POSITIVE).
+        // The remaining dd entries stay 0.0 from zero-initialisation.
+        if running_denom.is_infinite() { break; }
         dd[kk] = c64::new(1.0 / running_denom, 0.0);
     }
 
@@ -509,14 +513,25 @@ usize) -> Col<c64>
     }
     let dd_row = buf_a;
 
-    // scale by scale^i — accumulate the power lazily to avoid an intermediate Vec
-    let exp_mu = mu.exp();
-    let scale_c = c64::new(scale, 0.0);
-    let mut scale_pow = c64::new(1.0, 0.0);
+    // scale by scale^i — accumulate the power lazily to avoid an intermediate Vec.
+    // Direct computation: exp_mu * scale^i overflows when scale^i > f64::MAX
+    // (for scale≈152 this occurs at i≈142).  Instead, observe:
+    //   exp(mu) * scale^i = exp(mu.re + i*ln(scale)) * cis(mu.im)
+    // where the real exponent mu.re + i*ln(scale) combines the large-negative
+    // mu.re and the growing i*ln(scale), keeping the intermediate value finite
+    // for all practically useful i.  Only once the combined exponent exceeds
+    // ~710 (≈ ln(f64::MAX)) does overflow occur; at that point the true
+    // Newton coefficient is negligibly small (below machine epsilon of the
+    // interpolation) and we return 0.
+    let log_scale = scale.ln();
+    let cis_mu = c64::new(mu.im.cos(), mu.im.sin()); // exp(i * mu.im), unit modulus
     Col::from_fn(n_leja, |i| {
-        let sp = scale_pow;
-        scale_pow *= scale_c;
-        exp_mu * sp * dd_row[(0, l + i)]
+        let real_factor = (mu.re + i as f64 * log_scale).exp();
+        if real_factor.is_finite() {
+            c64::new(real_factor, 0.0) * cis_mu * dd_row[(0, l + i)]
+        } else {
+            c64::new(0.0, 0.0)
+        }
     })
 }
 
@@ -1768,7 +1783,7 @@ mod test_matexp_leja {
         assert_approx_eq!(phi0_v0[(1, 0)], f64::sin(tf), 1e-8);
     }
 
-    fn _test_dd_phi(a: f64, b: f64, c: f64, n: usize) {
+    fn _test_dd_phi(a: f64, b: f64, c: f64, n: usize, tol: f64) {
         // Verify dd_phi agrees with dd_taylor for phi_0, phi_1, and phi_2
         // using a small set of circle Leja points scaled to a known spectrum.
         let lp = LejaPoints::new_from_lib("leja_circle").slice(0, n);
@@ -1780,38 +1795,49 @@ mod test_matexp_leja {
             let coeffs_ts_time = start.elapsed().as_secs_f64();
             // Paper recommends >= 30 extra Taylor terms; use 30 here.
             let start = Instant::now();
-            let coeffs_phi = dd_phi(&lp_sc, shift, scale, 1.0, 30, k);
+            let coeffs_phi = dd_phi(&lp_sc, shift, scale, 1.0, 32, k);
             let coeffs_phi_time = start.elapsed().as_secs_f64();
             println!("k={k}: dd_taylor[0]={}, dd_phi[0]={}",
                      coeffs_ts[0], coeffs_phi[0]);
-            println!("k={k}: dd_taylor[10]={:0.2e}, dd_phi[10]={:0.2e}",
+            println!("k={k}: dd_taylor[10]={:0.6e}, dd_phi[10]={:0.6e}",
                      coeffs_ts[10], coeffs_phi[10]);
-            println!("k={k}: dd_taylor[20]={:0.2e}, dd_phi[20]={:0.2e}",
+            println!("k={k}: dd_taylor[20]={:0.6e}, dd_phi[20]={:0.6e}",
                      coeffs_ts[20], coeffs_phi[20]);
-            println!("dd_taylor time: {coeffs_ts_time} (s)");
-            println!("dd_phi time: {coeffs_phi_time} (s)");
+            if n > 200 {
+                println!("k={k}: dd_taylor[200]={:0.6e}, dd_phi[200]={:0.6e}",
+                         coeffs_ts[200], coeffs_phi[200]);
+                // check that at large sequence sizes the methods agree to within 20% rel tol
+                assert_approx_eq!((coeffs_phi[200].re - coeffs_ts[200].re).abs() / coeffs_ts[200].re.abs(), 0.0, 0.2);
+            }
+            if n > 250 {
+                println!("k={k}: dd_taylor[250]={:0.6e}, dd_phi[250]={:0.6e}",
+                         coeffs_ts[250], coeffs_phi[250]);
+            }
+            println!("n_leja: {n}, dd_taylor time: {coeffs_ts_time} (s)");
+            println!("n_leja: {n}, dd_phi time: {coeffs_phi_time} (s)");
 
             for i in 0..lp_sc.n_leja() {
-                assert_approx_eq!(coeffs_ts[i].re, coeffs_phi[i].re, 1e-10);
-                assert_approx_eq!(coeffs_ts[i].im, coeffs_phi[i].im, 1e-10);
+                assert_approx_eq!(coeffs_ts[i].re, coeffs_phi[i].re, tol);
+                assert_approx_eq!(coeffs_ts[i].im, coeffs_phi[i].im, tol);
             }
         }
     }
 
     #[test]
     fn test_dd_phi() {
-        // Test dd_phi method for a large ellipse
-        let mut a = -108.2;
+        // Test dd_phi method for a large ellipse.
+        let mut a = -508.2;
         let mut b = 0.001;
-        let mut c = 10.58;
-        _test_dd_phi(a, b, c, 60);
-        _test_dd_phi(a, b, c, 100);
+        let mut c = 50.58;
+        _test_dd_phi(a, b, c, 60,  1e-10);
+        _test_dd_phi(a, b, c, 100, 1e-10);
+        _test_dd_phi(a, b, c, 300, 1e-12);
 
         // Test dd_phi method for a small ellipse
         a = -1.2;
         b = 0.0;
         c = 0.58;
-        _test_dd_phi(a, b, c, 60);
-        _test_dd_phi(a, b, c, 100);
+        _test_dd_phi(a, b, c, 60,  1e-10);
+        _test_dd_phi(a, b, c, 100, 1e-10);
     }
 }
