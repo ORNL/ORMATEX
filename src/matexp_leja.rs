@@ -13,14 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// Leja point exp(A*dt)*v methods
-///
 use faer::reborrow::*;
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use faer::complex::{ComplexFloat, Complex64};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::traits::ComplexField;
+
+use rug::{Complex as RComplex, Float as RFloat};
 
 use std::cmp::{max, min};
 use statrs::function::{factorial};
@@ -447,7 +447,8 @@ usize) -> Col<c64>
 
     // Compute number of squarings
     // s = max(ceil(max|F_lower| / 3.5), 1)
-    let s     = (max_abs / 3.5).ceil().max(1.0) as usize;
+    // let s     = (max_abs / 3.5).ceil().max(1.0) as usize;
+    let s = max(( ( max_abs.ln() - (2.0 as f64).ln() ) / (2.0 as f64).ln() ).ceil() as i32, 1);
     let s_f64 = s as f64;
 
     let mut dd: Vec<c64> = vec![c64::new(0.0, 0.0); cap_n + 1];
@@ -455,10 +456,6 @@ usize) -> Col<c64>
     let mut running_denom = 1.0_f64;
     for kk in 1..=cap_n {
         running_denom *= kk as f64 * s_f64;
-        // Once running_denom overflows to Inf the true Taylor coefficient
-        // 1/(s^kk * kk!) is negligibly small (< f64::MIN_POSITIVE).
-        // The remaining dd entries stay 0.0 from zero-initialisation.
-        if running_denom.is_infinite() { break; }
         dd[kk] = c64::new(1.0 / running_denom, 0.0);
     }
 
@@ -513,27 +510,166 @@ usize) -> Col<c64>
     }
     let dd_row = buf_a;
 
-    // scale by scale^i — accumulate the power lazily to avoid an intermediate Vec.
-    // Direct computation: exp_mu * scale^i overflows when scale^i > f64::MAX
-    // (for scale≈152 this occurs at i≈142).  Instead, observe:
-    //   exp(mu) * scale^i = exp(mu.re + i*ln(scale)) * cis(mu.im)
-    // where the real exponent mu.re + i*ln(scale) combines the large-negative
-    // mu.re and the growing i*ln(scale), keeping the intermediate value finite
-    // for all practically useful i.  Only once the combined exponent exceeds
-    // ~710 (≈ ln(f64::MAX)) does overflow occur; at that point the true
-    // Newton coefficient is negligibly small (below machine epsilon of the
-    // interpolation) and we return 0.
-    let log_scale = scale.ln();
-    let cis_mu = c64::new(mu.im.cos(), mu.im.sin()); // exp(i * mu.im), unit modulus
+    // scale by scale^i — accumulate the power lazily to avoid an intermediate Vec
+    let exp_mu = mu.exp();
+    let scale_c = c64::new(scale, 0.0);
+    let mut scale_pow = c64::new(1.0, 0.0);
     Col::from_fn(n_leja, |i| {
-        let real_factor = (mu.re + i as f64 * log_scale).exp();
-        if real_factor.is_finite() {
-            c64::new(real_factor, 0.0) * cis_mu * dd_row[(0, l + i)]
-        } else {
-            c64::new(0.0, 0.0)
-        }
+        let sp = scale_pow;
+        scale_pow *= scale_c;
+        exp_mu * sp * dd_row[(0, l + i)]
     })
 }
+
+/// High precision version of dd_phi using the rug crate
+///
+/// # Args
+/// * `leja_x` : the leja points
+/// * `shift`  : spectrum shift parameter
+/// * `scale`  : spectrum scale parameter
+/// * `h`      : substep size
+/// * `p`      : taylor series terms (recommend >= 30)
+/// * `k`      : phi-fn order
+///
+pub fn dd_phi_high(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: usize, k:
+usize) -> Col<c64>
+{
+    const HIGH_PREC: u32 = 80;
+    let n_leja = leja_x.n_leja();
+    let l     = k;              // zeros prepended to handle phi_l
+    let total = l + n_leja;     // total interpolation points
+    let n     = total - 1;      // highest index, points are 0..=n
+    let cap_n = n + p;          // Taylor truncation degree  (N in the paper)
+
+    // z = [0*l, h*(shift + scale*leja_x)]
+    let mut z: Vec<c64> = vec![c64::new(0.0, 0.0); total];
+    for i in 0..n_leja {
+        z[l + i] = c64::new(
+            h * (shift + scale * leja_x.leja_re[i]),
+            h *           scale * leja_x.leja_im[i],
+        );
+    }
+    // shift by mean mu
+    let mu: c64 = z.iter().copied()
+                   .fold(c64::new(0.0, 0.0), |acc, x| acc + x)
+                   * c64::new(1.0 / total as f64, 0.0);
+    for zi in z.iter_mut() {
+        *zi = *zi - mu;
+    }
+
+    // lower triangle of F; track max |entry| in the same pass to compute s
+    let mut f_mat: Mat<c64> = Mat::zeros(total, total);
+    let mut max_abs: f64 = 0.0;
+    for i0 in 0..n {
+        for j0 in (i0 + 1)..=n {
+            let val = z[i0] - z[j0];
+            f_mat[(j0, i0)] = val;
+            let v = val.abs();
+            if v > max_abs { max_abs = v; }
+        }
+    }
+
+    // Compute number of squarings
+    // s = max(ceil(max|F_lower| / 3.5), 1)
+    // let s     = (max_abs / 3.5).ceil().max(1.0) as usize;
+    let s = max(( ( max_abs.ln() - (2.0 as f64).ln() ) / (2.0 as f64).ln() ).ceil() as i32, 1);
+    let s_f64 = s as f64;
+
+    let mut dd: Vec<c64> = vec![c64::new(0.0, 0.0); cap_n + 1];
+    dd[0] = c64::new(1.0, 0.0);
+    let mut running_denom = 1.0_f64;
+    for kk in 1..=cap_n {
+        running_denom *= kk as f64 * s_f64;
+        // Once running_denom overflows to Inf the true Taylor coefficient
+        // 1/(s^kk * kk!) is negligibly small (< f64::MIN_POSITIVE).
+        // The remaining dd entries stay 0.0 from zero-initialisation.
+        if running_denom.is_infinite() { break; }
+        dd[kk] = c64::new(1.0 / running_denom, 0.0);
+    }
+
+    // H-factorisation sweep — builds F(0) in the upper triangle
+    for j in (0..=n).rev() {
+        // First inner loop — Taylor remainder sweep
+        for k0 in ((n - j)..cap_n).rev() {
+            let tmp = z[j] * dd[k0 + 1];
+            dd[k0] = dd[k0] + tmp;
+        }
+        // Second inner loop — divided-difference sweep using F lower triangle.
+        // Column j is stored contiguously in faer's column-major layout, so
+        // f_mat[(k0+j+1, j)] accesses stride-1 memory as k0 decrements.
+        for k0 in (0..(n - j)).rev() {
+            let tmp = f_mat[(k0 + j + 1, j)] * dd[k0 + 1];
+            dd[k0] = dd[k0] + tmp;
+        }
+        // Store dd[0..=n-j] into upper-triangle row j of F
+        for col in 0..=(n - j) {
+            f_mat[(j, j + col)] = dd[col];
+        }
+        // Zero column j of the lower triangle in-place — entries are no longer
+        // needed after this outer iteration, so this replaces the separate triu
+        // zeroing pass that previously followed the sweep.
+        for row in (j + 1)..=n {
+            f_mat[(row, j)] = c64::new(0.0, 0.0);
+        }
+    }
+
+    // overwrite diagonal  F[i,i] = exp(z[i] / s)
+    for i in 0..=n {
+        f_mat[(i, i)] = c64::new(z[i].re / s_f64, z[i].im / s_f64).exp();
+    }
+
+    // Squaring phase — maintained in 128-bit precision (via rug::Complex) to prevent
+    // underflow of the Newton divided differences when `scale` is large (the raw divided
+    // differences of exp(z/s) decay as ~(max_abs/s)^i / i!, reaching f64 underflow for
+    // i > ~190 when scale is in the hundreds).
+    //
+    // f_mat is upper-triangular after the H-factorisation sweep, and products of
+    // upper-triangular matrices are still upper-triangular, so only the upper
+    // triangle contributes to the row-vector × matrix product.  We store f_mat in
+    // column-major order (matching faer's layout) so that the inner loop over
+    // `row` accesses stride-1 memory for a fixed column `j`.
+    let f_mat_rug: Vec<RComplex> = (0..total * total).map(|idx| {
+        // column-major: linear index idx = col * total + row
+        let row = idx % total;
+        let col = idx / total;
+        RComplex::with_val(HIGH_PREC, (f_mat[(row, col)].re, f_mat[(row, col)].im))
+    }).collect();
+
+    // Extract the first row of f_mat into a 128-bit row buffer.
+    let mut buf_a: Vec<RComplex> =
+        (0..total).map(|j| RComplex::with_val(HIGH_PREC, (f_mat[(0, j)].re, f_mat[(0, j)].im)))
+        .collect();
+
+    // Perform s-1 row-vector × upper-triangular-matrix squarings in 128-bit precision.
+    for _ in 0..(s - 1) {
+        let mut buf_b: Vec<RComplex> = (0..total)
+            .map(|_| RComplex::with_val(HIGH_PREC, (0.0f64, 0.0f64)))
+            .collect();
+        for j in 0..total {
+            // f_mat is upper-triangular: f_mat[(row, j)] == 0 for row > j
+            for row in 0..=j {
+                let prod = RComplex::with_val(HIGH_PREC, &buf_a[row] * &f_mat_rug[j * total + row]);
+                buf_b[j] += prod;
+            }
+        }
+        buf_a = buf_b;
+    }
+
+    // Final rescaling: output[i] = exp(mu) * scale^i * buf_a[l + i].
+    // All arithmetic stays in 128-bit precision until the final cast to c64.
+    let exp_mu = mu.exp();
+    let exp_mu_rug  = RComplex::with_val(HIGH_PREC, (exp_mu.re, exp_mu.im));
+    let scale_c     = RComplex::with_val(HIGH_PREC, (scale, 0.0f64));
+    let mut scale_pow = RComplex::with_val(HIGH_PREC, (1.0f64, 0.0f64));
+    Col::from_fn(n_leja, |i| {
+        let sp = scale_pow.clone();
+        scale_pow *= &scale_c;
+        let mut res = RComplex::with_val(HIGH_PREC, &exp_mu_rug * &sp);
+        res *= &buf_a[l + i];
+        c64::new(res.real().to_f64(), res.imag().to_f64())
+    })
+}
+
 
 
 /// Used for phi function evaluation at the leja points
@@ -1035,6 +1171,32 @@ impl LejaPhiEval {
         (converged, iter)
     }
 
+    /// compute leja poly coeffs by divided difference
+    fn leja_poly_coeffs(&self, shift: f64, scale: f64, h: f64) -> Col<c64>
+    {
+        let clock = std::time::Instant::now();
+        let coeffs: Col<c64> = if self.dd_method == "dd_phi" {
+            print!("Running dd_phi. ");
+            log::info!("Running dd_phi divided difference calc.");
+            if scale > 10.0 {
+                dd_phi_high(
+                    &self.leja_x.slice(0, self.m), shift, scale, h, 32, 0)
+            } else {
+                dd_phi(
+                    &self.leja_x.slice(0, self.m), shift, scale, h, 32, 0)
+            }
+        }
+        else {
+            print!("Running dd_taylor. ");
+            log::info!("Running dd_taylor divided difference calc.");
+            dd_taylor(
+                &self.leja_x.slice(0, self.m), shift, scale, h, 16, 0)
+        };
+        log::info!("divided difference walltime (s): {}", clock.elapsed().as_secs_f64());
+        println!("divided difference walltime (s): {}", clock.elapsed().as_secs_f64());
+        coeffs
+    }
+
     /// Computes the linear combination: phi_0(dt*A)*v_0 + ... phi_k(dt*A)*v_k
     /// by leja polynomial approximation with optional substepping
     ///
@@ -1050,22 +1212,8 @@ impl LejaPhiEval {
         // allocate storage for result
         let mut expmv: Mat<f64> = faer::Mat::zeros(ext_v.nrows(), ext_v.ncols());
 
-        // compute leja poly coeffs by divided difference
-        let clock = std::time::Instant::now();
-        let coeffs: Col<c64> = if self.dd_method == "dd_phi" {
-            print!("Running dd_phi. ");
-            log::info!("Running dd_phi divided difference calc.");
-            dd_phi(
-                &self.leja_x.slice(0, self.m), self.shift, self.scale, 1.0, 32, 0)
-        }
-        else {
-            print!("Running dd_taylor. ");
-            log::info!("Running dd_taylor divided difference calc.");
-            dd_taylor(
-                &self.leja_x.slice(0, self.m), self.shift, self.scale, 1.0, 16, 0)
-        };
-        log::info!("divided difference walltime (s): {}", clock.elapsed().as_secs_f64());
-        println!("divided difference walltime (s): {}", clock.elapsed().as_secs_f64());
+        // compute newton polynomial coefficients of exp(z_sc) with z_sc = shift + scale*z
+        let coeffs = self.leja_poly_coeffs(self.shift, self.scale, 1.0);
 
         // no substep
         let (_conv, _iters) = self.complex_conj_leja_expmv(
@@ -1783,43 +1931,46 @@ mod test_matexp_leja {
         assert_approx_eq!(phi0_v0[(1, 0)], f64::sin(tf), 1e-8);
     }
 
-    fn _test_dd_phi(a: f64, b: f64, c: f64, n: usize, tol: f64) {
-        // Verify dd_phi agrees with dd_taylor for phi_0, phi_1, and phi_2
+    fn _test_dd_phi(a: f64, b: f64, c: f64, n: usize, tol: f64, high_precision: bool) {
+        // Verify dd_phi_high agrees with dd_taylor
         // using a small set of circle Leja points scaled to a known spectrum.
         let lp = LejaPoints::new_from_lib("leja_circle").slice(0, n);
         let (lp_sc, shift, scale) = lp.rescale(a, b, c);
+        let k = 0;
 
-        for k in 0..=0_usize {
-            let start = Instant::now();
-            let coeffs_ts  = dd_taylor(&lp_sc, shift, scale, 1.0, 16, k);
-            let coeffs_ts_time = start.elapsed().as_secs_f64();
-            // Paper recommends >= 30 extra Taylor terms; use 30 here.
-            let start = Instant::now();
-            let coeffs_phi = dd_phi(&lp_sc, shift, scale, 1.0, 32, k);
-            let coeffs_phi_time = start.elapsed().as_secs_f64();
-            println!("k={k}: dd_taylor[0]={}, dd_phi[0]={}",
-                     coeffs_ts[0], coeffs_phi[0]);
-            println!("k={k}: dd_taylor[10]={:0.6e}, dd_phi[10]={:0.6e}",
-                     coeffs_ts[10], coeffs_phi[10]);
-            println!("k={k}: dd_taylor[20]={:0.6e}, dd_phi[20]={:0.6e}",
-                     coeffs_ts[20], coeffs_phi[20]);
-            if n > 200 {
-                println!("k={k}: dd_taylor[200]={:0.6e}, dd_phi[200]={:0.6e}",
-                         coeffs_ts[200], coeffs_phi[200]);
-                // check that at large sequence sizes the methods agree to within 20% rel tol
-                assert_approx_eq!((coeffs_phi[200].re - coeffs_ts[200].re).abs() / coeffs_ts[200].re.abs(), 0.0, 0.2);
-            }
-            if n > 250 {
-                println!("k={k}: dd_taylor[250]={:0.6e}, dd_phi[250]={:0.6e}",
-                         coeffs_ts[250], coeffs_phi[250]);
-            }
-            println!("n_leja: {n}, dd_taylor time: {coeffs_ts_time} (s)");
-            println!("n_leja: {n}, dd_phi time: {coeffs_phi_time} (s)");
+        let start = Instant::now();
+        let coeffs_ts  = dd_taylor(&lp_sc, shift, scale, 1.0, 16, k);
+        let coeffs_ts_time = start.elapsed().as_secs_f64();
+        // Paper recommends >= 30 extra Taylor terms; use 30 here.
+        let start = Instant::now();
+        let coeffs_phi = if high_precision {
+                dd_phi_high(&lp_sc, shift, scale, 1.0, 32, k)
+            } else {
+                dd_phi(&lp_sc, shift, scale, 1.0, 32, k)
+            };
+        let coeffs_phi_time = start.elapsed().as_secs_f64();
+        println!("k={k}: dd_taylor[0]={}, dd_phi[0]={}",
+                 coeffs_ts[0], coeffs_phi[0]);
+        println!("k={k}: dd_taylor[10]={:0.6e}, dd_phi[10]={:0.6e}",
+                 coeffs_ts[10], coeffs_phi[10]);
+        println!("k={k}: dd_taylor[20]={:0.6e}, dd_phi[20]={:0.6e}",
+                 coeffs_ts[20], coeffs_phi[20]);
+        if n > 200 {
+            println!("k={k}: dd_taylor[200]={:0.6e}, dd_phi[200]={:0.6e}",
+                     coeffs_ts[200], coeffs_phi[200]);
+            // check that at large sequence sizes the methods agree to within 20% rel tol
+            assert_approx_eq!((coeffs_phi[200].re - coeffs_ts[200].re).abs() / coeffs_ts[200].re.abs(), 0.0, 0.2);
+        }
+        if n > 250 {
+            println!("k={k}: dd_taylor[250]={:0.6e}, dd_phi[250]={:0.6e}",
+                     coeffs_ts[250], coeffs_phi[250]);
+        }
+        println!("n_leja: {n}, dd_taylor time: {coeffs_ts_time} (s)");
+        println!("n_leja: {n}, dd_phi time: {coeffs_phi_time} (s). high_precision: {high_precision}");
 
-            for i in 0..lp_sc.n_leja() {
-                assert_approx_eq!(coeffs_ts[i].re, coeffs_phi[i].re, tol);
-                assert_approx_eq!(coeffs_ts[i].im, coeffs_phi[i].im, tol);
-            }
+        for i in 0..lp_sc.n_leja() {
+            assert_approx_eq!(coeffs_ts[i].re, coeffs_phi[i].re, tol);
+            assert_approx_eq!(coeffs_ts[i].im, coeffs_phi[i].im, tol);
         }
     }
 
@@ -1829,15 +1980,18 @@ mod test_matexp_leja {
         let mut a = -508.2;
         let mut b = 0.001;
         let mut c = 50.58;
-        _test_dd_phi(a, b, c, 60,  1e-10);
-        _test_dd_phi(a, b, c, 100, 1e-10);
-        _test_dd_phi(a, b, c, 300, 1e-12);
+        _test_dd_phi(a, b, c, 60,  1e-10, false);
+        _test_dd_phi(a, b, c, 60,  1e-10, true);
+        _test_dd_phi(a, b, c, 100, 1e-10, true);
+        _test_dd_phi(a, b, c, 300, 1e-10, true);
 
         // Test dd_phi method for a small ellipse
         a = -1.2;
         b = 0.0;
         c = 0.58;
-        _test_dd_phi(a, b, c, 60,  1e-10);
-        _test_dd_phi(a, b, c, 100, 1e-10);
+        _test_dd_phi(a, b, c, 60,  1e-10, true);
+        _test_dd_phi(a, b, c, 100, 1e-10, true);
+        _test_dd_phi(a, b, c, 60,  1e-10, false);
+        _test_dd_phi(a, b, c, 100, 1e-10, false);
     }
 }

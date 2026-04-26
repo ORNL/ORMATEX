@@ -27,6 +27,7 @@ statrs = "0.18.0"
 csv = "1.4.0"
 flexi_logger = "0.31"
 log = "0.4"
+rug = {version="1.29"}
 
 # faer lin alg
 faer = {version = "0.23.2", features=["unstable",]}
