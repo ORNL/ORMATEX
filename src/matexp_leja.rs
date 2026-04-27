@@ -19,6 +19,8 @@ use faer::matrix_free::LinOp;
 use faer::complex::{ComplexFloat, Complex64};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::traits::ComplexField;
+use faer::linalg::matmul::triangular::{matmul as tri_matmul, BlockStructure};
+use faer_traits::math_utils::{add, mul, from_f64};
 
 use rug::{Complex as RComplex, Float as RFloat};
 
@@ -334,18 +336,90 @@ pub fn phik_taylor<T: ComplexField>(a: MatRef<T>, shift: f64, scale: f64, p: usi
     shift.exp() * ts_expm
 }
 
+/// Optimized phi_k Taylor series for lower-bidiagonal `a_bi`.
+///
+/// Exploits the structure of `a_bi` (diagonal `d[i]`, constant subdiagonal `s`):
+/// - Accumulation into `ts_expm` touches only the lower-triangular band of `m`.
+/// - The update `m ← a_bi * m` is an in-place bottom-to-top row sweep:
+///       new_m[(r, c)] = d[r] * m[(r, c)] + s * m[(r-1, c)]
+///   processed from row n-1 down to 1, then row 0 separately.
+/// - The bandwidth of `m` grows by 1 each iteration (starting at 2),
+///   so only O(n * iter) entries are touched per step instead of O(n²).
+///
+/// # Args
+/// * `A` : the matrix
+/// * `shift` : spectrum shift parameter. 0.0 for unshifted matexp.
+/// * `scale` : spectrum shift parameter. 1.0 for unscaled matexp.
+/// * `p` : polynomial order
+/// * `k` : phi-fn order
+///
 pub fn phik_taylor_bidiag<T: ComplexField>(a_bi: MatRef<T>, shift: f64, scale: f64, p: usize, k: usize) -> Mat<T>
 {
-    let mut m: Mat<T> = scale * a_bi.as_ref();
-    let mut ts_expm: Mat<T> = faer::Mat::identity(m.nrows(), m.ncols());
+    let n = a_bi.nrows();
+
+    // m = scale * a_bi  — only write the lower-bidiagonal entries, rest stay zero.
+    let mut m: Mat<T> = faer::Mat::zeros(n, n);
+    {
+        let scale_t = from_f64::<T>(scale);
+        for i in 0..n {
+            let diag_val = a_bi[(i, i)].clone();
+            m[(i, i)] = mul(&scale_t, &diag_val);
+            if i + 1 < n {
+                let sub_val = a_bi[(i + 1, i)].clone();
+                m[(i + 1, i)] = mul(&scale_t, &sub_val);
+            }
+        }
+    }
+
+    // ts_expm = I / k!
+    let mut ts_expm: Mat<T> = faer::Mat::identity(n, n);
     let mut fact = factorial::factorial(k as u64);
     ts_expm = ts_expm / fact;
+
+    // `bandwidth` = number of active diagonals in `m` (diag + subdiags).
+    // Starts at 2 (= diagonal + 1 subdiagonal from scale*a_bi).
+    let mut bandwidth: usize = 2_usize.min(n);
+
     for i in 0..p {
         fact *= (k + i + 1) as f64;
-        ts_expm += m.as_ref() / fact;
-        m = a_bi.as_ref() * m.as_ref();
+        let inv_fact_t = from_f64::<T>(1.0 / fact);
+
+        // ts_expm += m / fact  — band-aware: m[(row,col)] ≠ 0 only for col ≤ row < col+bandwidth.
+        for col in 0..n {
+            let row_max = (col + bandwidth).min(n);
+            for row in col..row_max {
+                let elem = mul(&inv_fact_t, &m[(row, col)].clone());
+                let old  = ts_expm[(row, col)].clone();
+                ts_expm[(row, col)] = add(&old, &elem);
+            }
+        }
+
+        // m ← a_bi * m  in-place via bottom-to-top row sweep.
+        // new_m[(r,c)] = d[r]*m[(r,c)] + s[r]*m[(r-1,c)]
+        // New bandwidth = bandwidth + 1 (capped at n).
+        let new_bw = (bandwidth + 1).min(n);
+        for row in (1..n).rev() {
+            let d_row = a_bi[(row, row)].clone();
+            let s_row = a_bi[(row, row - 1)].clone();
+            // Non-zero cols for new m at this row span row.saturating_sub(new_bw-1)..=row.
+            let col_start = row.saturating_sub(new_bw - 1);
+            for col in col_start..=row {
+                let v_rc   = m[(row, col)].clone();
+                // m[(row-1, col)] is zero when col == row (upper triangle), safe to read.
+                let v_prev = m[(row - 1, col)].clone();
+                m[(row, col)] = add(&mul(&d_row, &v_rc), &mul(&s_row, &v_prev));
+            }
+        }
+        // Row 0: no subdiagonal contribution.
+        {
+            let d0  = a_bi[(0, 0)].clone();
+            let v00 = m[(0, 0)].clone();
+            m[(0, 0)] = mul(&d0, &v00);
+        }
+        bandwidth = new_bw;
     }
-    shift.exp() * ts_expm
+
+    faer::Scale(from_f64::<T>(shift.exp())) * ts_expm
 }
 
 
@@ -383,26 +457,55 @@ pub fn dd_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: usize, 
     let s = max(( ( s_scale.ln() - (2.0 as f64).ln() ) / (2.0 as f64).ln() ).ceil() as i32, 1);
     let hs = 1.0 / (2.0 as f64).powi(s);
 
-    // compute expm(Z)
-    let mut f_out = phik_taylor((hs*h*z).as_ref(), 0.0, 1.0, p, k);
+    // compute phi_k(hs*h*Z) — exploits lower-triangular structure of hs*h*z
+    let mut f_out = phik_taylor_bidiag((hs*h*z).as_ref(), 0.0, 1.0, p, k);
+
+    // f_out is lower-triangular (result of phik_taylor_bidiag on a lower-triangular input).
+    // Use triangular matmul for squaring and matvec to avoid touching the zero upper triangle.
+    let alpha = c64::new(1.0, 0.0);
 
     // squaring
     let total_mvs = (1usize << s) as usize;  // 2^s
     if total_mvs <= n_leja {
-        // Cheaper: 2^s matvecs instead of (s-1) matmuls
-        // Requires keeping f_out as the fixed base matrix.
+        // Cheaper: 2^s triangular matvecs instead of (s-1) matmuls.
+        // v is n×1 (Rectangular); f_out is lower-triangular.
         let mut v: Mat<c64> = f_out.col(0).as_mat().to_owned();
+        let mut tmp_v: Mat<c64> = faer::Mat::zeros(n_leja, 1);
         for _ in 1..total_mvs {
-            v = f_out.as_ref() * v.as_ref();
+            tri_matmul(
+                tmp_v.as_mut(), BlockStructure::Rectangular,
+                faer::Accum::Replace,
+                f_out.as_ref(), BlockStructure::TriangularLower,
+                v.as_ref(),    BlockStructure::Rectangular,
+                alpha, faer::Par::Seq,
+            );
+            std::mem::swap(&mut v, &mut tmp_v);
         }
         faer::Scale((h * mu).exp()) * v.col(0)
     } else {
-        // Standard squaring path
+        // Standard squaring path with triangular matmul.
+        let mut tmp_sq: Mat<c64> = faer::Mat::zeros(n_leja, n_leja);
         for _ in 0..(s - 1) as usize {
-            f_out = f_out.as_ref() * f_out.as_ref();
+            tri_matmul(
+                tmp_sq.as_mut(), BlockStructure::TriangularLower,
+                faer::Accum::Replace,
+                f_out.as_ref(), BlockStructure::TriangularLower,
+                f_out.as_ref(), BlockStructure::TriangularLower,
+                alpha, faer::Par::Seq,
+            );
+            std::mem::swap(&mut f_out, &mut tmp_sq);
         }
-        f_out = f_out.as_ref() * f_out.col(0).as_mat();
-        faer::Scale((h * mu).exp()) * f_out.col(0)
+        // Final step: only need first column of f_out².
+        let mut col0: Mat<c64> = f_out.col(0).as_mat().to_owned();
+        let mut tmp_v: Mat<c64> = faer::Mat::zeros(n_leja, 1);
+        tri_matmul(
+            tmp_v.as_mut(), BlockStructure::Rectangular,
+            faer::Accum::Replace,
+            f_out.as_ref(), BlockStructure::TriangularLower,
+            col0.as_ref(),  BlockStructure::Rectangular,
+            alpha, faer::Par::Seq,
+        );
+        faer::Scale((h * mu).exp()) * tmp_v.col(0)
     }
 }
 
@@ -1228,7 +1331,7 @@ impl LejaPhiEval {
         // the leja points
         let lp = self.leja_x.slice(0, self.m);
 
-        if self.max_substeps == 20 {
+        if self.max_substeps == 0 {
             // compute newton polynomial coefficients of exp(z_sc) with z_sc = shift + scale*z
             let coeffs = self.leja_poly_coeffs(&lp, self.shift, self.scale, 1.0);
 
@@ -1241,13 +1344,14 @@ impl LejaPhiEval {
         } else {
             // substep the solution y_n+1 = exp(\tau_n * dt * A)*y_n
             // where \tau is the substep size
-            let tau = 0.25;
+            let tau = 1.0 / self.max_substeps as f64;
+            let dt_tau = dt * tau;
             let coeffs = self.leja_poly_coeffs(&lp, tau * self.shift / 2., tau * self.scale, 1.0);
-            for i in (0..4) {
+            for i in 0..self.max_substeps {
                 println!("substep: {i} / 4");
 
                 let (_conv, _iters) = self.complex_conj_leja_expmv(
-                    w.as_mut(), ext_a_lo, dt * tau, w_t.as_ref(),
+                    w.as_mut(), ext_a_lo, dt_tau, w_t.as_ref(),
                     self.shift * tau / 2., self.scale * tau, coeffs.as_ref());
 
                 println!("sub converged: {}, leja iters: {}, shift: {}, scale: {}",
@@ -1303,6 +1407,11 @@ impl LejaPhiEval {
     /// Set the max leja polynomial degree
     pub fn set_m(&mut self, m: usize) {
         self.m = m;
+    }
+
+    /// Set the max number of substeps
+    pub fn set_max_substeps(&mut self, max_substeps: usize) {
+        self.max_substeps = max_substeps;
     }
 
     /// Set the shift and scale parameters and adjust leja sequence
@@ -1687,9 +1796,6 @@ mod test_matexp_leja {
         let min_b_re = b_eigs_re.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
         let max_b_re = b_eigs_re.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
         let max_b_im = b_eigs_im.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
-        // assert_approx_eq!(a, min_b_re);
-        // assert_approx_eq!(b, max_b_re);
-        // assert_approx_eq!(c, max_b_im);
     }
 
     #[test]
@@ -1824,7 +1930,7 @@ mod test_matexp_leja {
             phi1mv_leja_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);
     }
 
-    fn _test_leja_ritz_phikv(dt: f64, test_b: Mat<f64>, test_v: Mat<f64>, krylov_reuse: bool, max_arnoldi_iters: usize) {
+    fn _test_leja_ritz_phikv(dt: f64, test_b: Mat<f64>, test_v: Mat<f64>, krylov_reuse: bool, max_arnoldi_iters: usize, max_substeps: usize) {
         // load leja points
         let lp = LejaPoints::new_from_lib("leja_circle").slice(0, 300);
 
@@ -1851,6 +1957,7 @@ mod test_matexp_leja {
         // compute phi_0(dt*A)*b0
         let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
         leja_phikv_eval.apply_prepare(&ext_b_lo, 1.0, test_vb[0].as_ref());
+        leja_phikv_eval.set_max_substeps(max_substeps);
         let phi0mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
@@ -1869,6 +1976,7 @@ mod test_matexp_leja {
         // compute phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk
         let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
         leja_phikv_eval.apply_prepare(&ext_b_lo, 1.0, test_vb[0].as_ref());
+        leja_phikv_eval.set_max_substeps(max_substeps);
         let phi1mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
@@ -1883,14 +1991,14 @@ mod test_matexp_leja {
     fn test_leja_phikv_small_krylov_noreuse() {
         let dt = 1.0;
         let (test_b, test_v) = gen_test_b();
-        _test_leja_ritz_phikv(dt, test_b, test_v, false, 10);
+        _test_leja_ritz_phikv(dt, test_b, test_v, false, 10, 0);
     }
 
     #[test]
     fn test_leja_phikv_small_krylov_reuse() {
         let dt = 1.0;
         let (test_b, test_v) = gen_test_b();
-        _test_leja_ritz_phikv(dt, test_b, test_v, true, 10);
+        _test_leja_ritz_phikv(dt, test_b, test_v, true, 10, 0);
     }
 
     #[test]
@@ -1900,7 +2008,7 @@ mod test_matexp_leja {
         //let (test_b, test_v) = gen_test_c(80);
         //_test_leja_ritz_phikv(dt, 2.0*test_b, test_v, false, 20);
         let (test_b, test_v) = gen_test_c(40);
-        _test_leja_ritz_phikv(dt, 1.8*test_b, test_v, false, 10);
+        _test_leja_ritz_phikv(dt, 1.8*test_b, test_v, false, 10, 0);
     }
 
     #[test]
@@ -1910,11 +2018,18 @@ mod test_matexp_leja {
         //let (test_b, test_v) = gen_test_c(80);
         //_test_leja_ritz_phikv(dt, 2.0*test_b, test_v, true, 20);
         let (test_b, test_v) = gen_test_c(40);
-        _test_leja_ritz_phikv(dt, 1.8*test_b, test_v, true, 10);
+        _test_leja_ritz_phikv(dt, 1.8*test_b, test_v, true, 10, 0);
     }
 
     #[test]
-    fn test_leja_phikv_sincos() {
+    fn test_leja_phikv_large_krylov_reuse_substep() {
+        // similar test on a larger system
+        let dt = 1.2;
+        let (test_b, test_v) = gen_test_c(40);
+        _test_leja_ritz_phikv(dt, 1.8*test_b, test_v, true, 10, 4);
+    }
+
+    fn _test_leja_phikv_sincos(max_substeps: usize) {
         // check exp(dt*A)*v for system with pure imaginary eigenvalues
         // A = [[0, -1], [1, 0]]
         // with initial conditions v0=[1, 0]
@@ -1950,7 +2065,9 @@ mod test_matexp_leja {
         let leja_tol = 1.0e-8;
         let mut leja_phikv_eval = LejaPhiEval::new_from_abc(
             lp, max_order, leja_a, leja_b, leja_c, leja_tol, 1e-10, max_arnoldi_iters,
-            "none", "dd_phi", krylov_reuse);
+            "none", "dd_taylor", krylov_reuse);
+        leja_phikv_eval.set_max_substeps(max_substeps);
+        assert_eq!(leja_phikv_eval.max_substeps, max_substeps);
 
         // generate vb vector: vb = [b0, b1, ... bk]
         let test_vb = vec![test_v.as_ref(),];
@@ -1965,6 +2082,18 @@ mod test_matexp_leja {
         // compare to analytic result
         assert_approx_eq!(phi0_v0[(0, 0)], -f64::cos(tf), 1e-8);
         assert_approx_eq!(phi0_v0[(1, 0)], f64::sin(tf), 1e-8);
+    }
+
+    #[test]
+    fn test_leja_phikv_sincos() {
+        // Test leja evaluator with no substepping
+        _test_leja_phikv_sincos(0);
+    }
+
+    #[test]
+    fn test_leja_phikv_sincos_substep() {
+        // Test leja evaluator with substeps
+        _test_leja_phikv_sincos(4);
     }
 
     fn _test_dd_phi(a: f64, b: f64, c: f64, h: f64, n: usize, tol: f64, high_precision: bool) {
@@ -2016,6 +2145,7 @@ mod test_matexp_leja {
         let mut a = -508.2;
         let mut b = 0.001;
         let mut c = 50.58;
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, false);
         _test_dd_phi(a, b, c, 1.0, 60,  1e-10, false);
         _test_dd_phi(a, b, c, 1.0, 60,  1e-10, true);
         _test_dd_phi(a, b, c, 1.0, 100, 1e-10, true);
