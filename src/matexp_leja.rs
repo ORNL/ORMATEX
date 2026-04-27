@@ -334,6 +334,20 @@ pub fn phik_taylor<T: ComplexField>(a: MatRef<T>, shift: f64, scale: f64, p: usi
     shift.exp() * ts_expm
 }
 
+pub fn phik_taylor_bidiag<T: ComplexField>(a_bi: MatRef<T>, shift: f64, scale: f64, p: usize, k: usize) -> Mat<T>
+{
+    let mut m: Mat<T> = scale * a_bi.as_ref();
+    let mut ts_expm: Mat<T> = faer::Mat::identity(m.nrows(), m.ncols());
+    let mut fact = factorial::factorial(k as u64);
+    ts_expm = ts_expm / fact;
+    for i in 0..p {
+        fact *= (k + i + 1) as f64;
+        ts_expm += m.as_ref() / fact;
+        m = a_bi.as_ref() * m.as_ref();
+    }
+    shift.exp() * ts_expm
+}
+
 
 /// Compute leja divided differences using taylor series method
 ///
@@ -447,8 +461,8 @@ usize) -> Col<c64>
 
     // Compute number of squarings
     // s = max(ceil(max|F_lower| / 3.5), 1)
-    // let s     = (max_abs / 3.5).ceil().max(1.0) as usize;
-    let s = max(( ( max_abs.ln() - (2.0 as f64).ln() ) / (2.0 as f64).ln() ).ceil() as i32, 1);
+    let s     = (max_abs / 3.5).ceil().max(1.0) as usize;
+    // let s = max(( ( max_abs.ln() - (2.0 as f64).ln() ) / (2.0 as f64).ln() ).ceil() as i32, 1);
     let s_f64 = s as f64;
 
     let mut dd: Vec<c64> = vec![c64::new(0.0, 0.0); cap_n + 1];
@@ -571,8 +585,8 @@ usize) -> Col<c64>
 
     // Compute number of squarings
     // s = max(ceil(max|F_lower| / 3.5), 1)
-    // let s     = (max_abs / 3.5).ceil().max(1.0) as usize;
-    let s = max(( ( max_abs.ln() - (2.0 as f64).ln() ) / (2.0 as f64).ln() ).ceil() as i32, 1);
+    let s     = (max_abs / 3.5).ceil().max(1.0) as usize;
+    // let s = max(( ( max_abs.ln() - (2.0 as f64).ln() ) / (2.0 as f64).ln() ).ceil() as i32, 1);
     let s_f64 = s as f64;
 
     let mut dd: Vec<c64> = vec![c64::new(0.0, 0.0); cap_n + 1];
@@ -837,7 +851,7 @@ impl LejaPhiEval {
         coeffs: ColRef<c64>,
         ) -> (bool, usize)
     {
-        log::info!("=== ReLPM, shift: {:0.6e}, scale: {:0.6e}", self.shift, self.scale);
+        log::info!("=== ReLPM, shift: {:0.6e}, scale: {:0.6e}", shift, scale);
         let clock = std::time::Instant::now();
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
@@ -856,8 +870,9 @@ impl LejaPhiEval {
         let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
 
         // Augment leja sequence with krylov subspace polynomial if available
-        let krylov_res = self.krylov_poly_expmv(
-            leja_x_sc.as_ref(), _leja_x_sc_im.as_ref(), coeffs, norm_u);
+        let krylov_res = self.krylov_poly_expmv(dt,
+            leja_x_sc.as_ref(), _leja_x_sc_im.as_ref(),
+            coeffs, norm_u, shift, scale);
         let mut r: usize = 0;  // number of ritz values
         match krylov_res {
             Ok((n_r, xr, dr)) => {
@@ -919,7 +934,7 @@ impl LejaPhiEval {
         m: usize
         ) -> (bool, usize, Mat<f64>)
     {
-        log::info!("=== TS, shift: {:0.6e}, scale: {:0.6e}", self.shift, self.scale);
+        log::info!("=== TS, shift: {:0.6e}, scale: {:0.6e}", shift, scale);
         let clock = std::time::Instant::now();
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
@@ -971,10 +986,13 @@ impl LejaPhiEval {
     ///
     fn krylov_poly_expmv(
         &self,
+        dt: f64,
         leja_x_sc_re: ColRef<f64>,
         leja_x_sc_im: ColRef<f64>,
         coeffs: ColRef<c64>,
-        norm_u: f64
+        norm_u: f64,
+        _shift: f64,
+        scale: f64
         )
         -> Result<(usize, Mat<f64>, Mat<f64>), ()>
     {
@@ -988,7 +1006,7 @@ impl LejaPhiEval {
                     h.nrows(), h.ncols(), |i, j| { c64::new(h[(i, j)], 0.0) } );
                 let mut dr: Mat<c64> = Mat::zeros(h.nrows(), 1);
                 dr[(0, 0)] = c64::new(1.0, 0.0);
-                let gamma = c64::new(self.scale, 0.0);
+                let gamma = c64::new(scale, 0.0);
 
                 // compute the first n_r polynomial terms
                 let mut xi = faer::Scale(coeffs[0]) * dr.as_ref();
@@ -1037,7 +1055,7 @@ impl LejaPhiEval {
         coeffs: ColRef<c64>,
         ) -> (bool, usize)
     {
-        log::info!("=== CLaPM, shift: {:0.6e}, scale: {:0.6e}", self.shift, self.scale);
+        log::info!("=== CLaPM, shift: {:0.6e}, scale: {:0.6e}", shift, scale);
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
         let mut err_est = 2. * norm_u;
@@ -1049,7 +1067,7 @@ impl LejaPhiEval {
         // use the real leja point method if leja points are on the real line
         if self.leja_x.n_leja_real() >= self.m {
             // use taylor series if leja points are all near 0
-            if self.scale.abs() < 1.0e-20 {
+            if scale.abs() < 1.0e-20 {
                 let (conv, iter, _) =  self.taylor_expmv(pm, ext_a_lo, dt, u, shift, scale, self.m);
                 return (conv, iter)
             }
@@ -1071,8 +1089,9 @@ impl LejaPhiEval {
         let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
 
         // Augment leja sequence with krylov subspace polynomial if available
-        let krylov_res = self.krylov_poly_expmv(
-            leja_x_sc_re.as_ref(), leja_x_sc_im.as_ref(), coeffs, norm_u);
+        let krylov_res = self.krylov_poly_expmv(dt,
+            leja_x_sc_re.as_ref(), leja_x_sc_im.as_ref(),
+            coeffs, norm_u, shift, scale);
         let mut r: usize = 0;  // number of ritz values
         match krylov_res {
             Ok((n_r, xr, dr)) => {
@@ -1172,25 +1191,19 @@ impl LejaPhiEval {
     }
 
     /// compute leja poly coeffs by divided difference
-    fn leja_poly_coeffs(&self, shift: f64, scale: f64, h: f64) -> Col<c64>
+    fn leja_poly_coeffs(&self, lp: &LejaPoints, shift: f64, scale: f64, h: f64) -> Col<c64>
     {
         let clock = std::time::Instant::now();
         let coeffs: Col<c64> = if self.dd_method == "dd_phi" {
             print!("Running dd_phi. ");
             log::info!("Running dd_phi divided difference calc.");
-            if scale > 10.0 {
-                dd_phi_high(
-                    &self.leja_x.slice(0, self.m), shift, scale, h, 32, 0)
-            } else {
-                dd_phi(
-                    &self.leja_x.slice(0, self.m), shift, scale, h, 32, 0)
-            }
+            if scale > 10.0 { dd_phi_high(lp, shift, scale, h, 32, 0) }
+                else { dd_phi(lp, shift, scale, h, 32, 0) }
         }
         else {
             print!("Running dd_taylor. ");
             log::info!("Running dd_taylor divided difference calc.");
-            dd_taylor(
-                &self.leja_x.slice(0, self.m), shift, scale, h, 16, 0)
+            dd_taylor(lp, shift, scale, h, 16, 0)
         };
         log::info!("divided difference walltime (s): {}", clock.elapsed().as_secs_f64());
         println!("divided difference walltime (s): {}", clock.elapsed().as_secs_f64());
@@ -1207,23 +1220,46 @@ impl LejaPhiEval {
     pub fn leja_expmv_substep(&self, ext_a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64>
     {
         // setup the extended rhs vector
-        let (ext_v, n) = ext_a_lo.get_v(vb);
+        let (mut w_t, n) = ext_a_lo.get_v(vb);
 
         // allocate storage for result
-        let mut expmv: Mat<f64> = faer::Mat::zeros(ext_v.nrows(), ext_v.ncols());
+        let mut w: Mat<f64> = faer::Mat::zeros(w_t.nrows(), w_t.ncols());
 
-        // compute newton polynomial coefficients of exp(z_sc) with z_sc = shift + scale*z
-        let coeffs = self.leja_poly_coeffs(self.shift, self.scale, 1.0);
+        // the leja points
+        let lp = self.leja_x.slice(0, self.m);
 
-        // no substep
-        let (_conv, _iters) = self.complex_conj_leja_expmv(
-            expmv.as_mut(), ext_a_lo, dt, ext_v.as_ref(), self.shift, self.scale,
-            coeffs.as_ref());
-        println!("converged: {}, leja iters: {}, shift: {}, scale: {}",
-            _conv, _iters, self.shift, self.scale);
+        if self.max_substeps == 20 {
+            // compute newton polynomial coefficients of exp(z_sc) with z_sc = shift + scale*z
+            let coeffs = self.leja_poly_coeffs(&lp, self.shift, self.scale, 1.0);
+
+            // no substep
+            let (_conv, _iters) = self.complex_conj_leja_expmv(
+                w.as_mut(), ext_a_lo, dt, w_t.as_ref(), self.shift, self.scale,
+                coeffs.as_ref());
+            println!("converged: {}, leja iters: {}, shift: {}, scale: {}",
+                _conv, _iters, self.shift, self.scale);
+        } else {
+            // substep the solution y_n+1 = exp(\tau_n * dt * A)*y_n
+            // where \tau is the substep size
+            let tau = 0.25;
+            let coeffs = self.leja_poly_coeffs(&lp, tau * self.shift / 2., tau * self.scale, 1.0);
+            for i in (0..4) {
+                println!("substep: {i} / 4");
+
+                let (_conv, _iters) = self.complex_conj_leja_expmv(
+                    w.as_mut(), ext_a_lo, dt * tau, w_t.as_ref(),
+                    self.shift * tau / 2., self.scale * tau, coeffs.as_ref());
+
+                println!("sub converged: {}, leja iters: {}, shift: {}, scale: {}",
+                    _conv, _iters, tau * self.shift / 2., tau * self.scale);
+
+                // update current solution vector
+                w_t = w.cloned();
+            }
+        }
 
         // extract the first n elements
-        expmv.get(0..n, 0..1).to_owned()
+        w.get(0..n, 0..1).to_owned()
     }
 
     /// Log optional performance and accuracy metrics of the polynomial interpolation.
@@ -1931,7 +1967,7 @@ mod test_matexp_leja {
         assert_approx_eq!(phi0_v0[(1, 0)], f64::sin(tf), 1e-8);
     }
 
-    fn _test_dd_phi(a: f64, b: f64, c: f64, n: usize, tol: f64, high_precision: bool) {
+    fn _test_dd_phi(a: f64, b: f64, c: f64, h: f64, n: usize, tol: f64, high_precision: bool) {
         // Verify dd_phi_high agrees with dd_taylor
         // using a small set of circle Leja points scaled to a known spectrum.
         let lp = LejaPoints::new_from_lib("leja_circle").slice(0, n);
@@ -1944,9 +1980,9 @@ mod test_matexp_leja {
         // Paper recommends >= 30 extra Taylor terms; use 30 here.
         let start = Instant::now();
         let coeffs_phi = if high_precision {
-                dd_phi_high(&lp_sc, shift, scale, 1.0, 32, k)
+                dd_phi_high(&lp_sc, shift, scale, h, 32, k)
             } else {
-                dd_phi(&lp_sc, shift, scale, 1.0, 32, k)
+                dd_phi(&lp_sc, shift, scale, h, 32, k)
             };
         let coeffs_phi_time = start.elapsed().as_secs_f64();
         println!("k={k}: dd_taylor[0]={}, dd_phi[0]={}",
@@ -1980,18 +2016,22 @@ mod test_matexp_leja {
         let mut a = -508.2;
         let mut b = 0.001;
         let mut c = 50.58;
-        _test_dd_phi(a, b, c, 60,  1e-10, false);
-        _test_dd_phi(a, b, c, 60,  1e-10, true);
-        _test_dd_phi(a, b, c, 100, 1e-10, true);
-        _test_dd_phi(a, b, c, 300, 1e-10, true);
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, false);
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, true);
+        _test_dd_phi(a, b, c, 1.0, 100, 1e-10, true);
+        _test_dd_phi(a, b, c, 1.0, 300, 1e-10, true);
 
         // Test dd_phi method for a small ellipse
         a = -1.2;
         b = 0.0;
         c = 0.58;
-        _test_dd_phi(a, b, c, 60,  1e-10, true);
-        _test_dd_phi(a, b, c, 100, 1e-10, true);
-        _test_dd_phi(a, b, c, 60,  1e-10, false);
-        _test_dd_phi(a, b, c, 100, 1e-10, false);
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, true);
+        _test_dd_phi(a, b, c, 1.0, 100, 1e-10, true);
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, false);
+        _test_dd_phi(a, b, c, 1.0, 100, 1e-10, false);
+
+        // with 0.25 substep size
+        // _test_dd_phi(a, b, c, 0.25, 100, 1e-10, true);
+        // _test_dd_phi(a, b, c, 0.25, 100, 1e-10, false);
     }
 }
