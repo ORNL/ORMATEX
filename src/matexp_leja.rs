@@ -1270,8 +1270,10 @@ impl LejaPhiEval {
                 println!("sub converged: {}, leja iters: {}, shift: {}, scale: {}",
                     _conv, _iters, shift_tau, scale_tau);
 
-                // update current solution vector
-                w_t = w.cloned();
+                // update current solution substep vector
+                if i < self.max_substeps - 1 {
+                    w_t = w.cloned();
+                }
             }
         }
 
