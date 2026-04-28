@@ -1016,6 +1016,7 @@ impl LejaPhiEval {
                 for r in 1..=n_r {
                     log::info!("kryl, {r}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}", rho_re[r-1], rho_im[r-1], coeffs[r], 0.);
                     let z = c64::new(rho_re[r-1], rho_im[r-1]);
+                    // TODO: use the leja point locations directly as they should match the ritz values
                     dr = (cmplx_h.as_ref()*dr.as_ref() - faer::Scale(z)*dr.as_ref()) / faer::Scale(gamma);
                     xi += faer::Scale(coeffs[r]) * dr.as_ref();
                 }
@@ -1065,6 +1066,7 @@ impl LejaPhiEval {
         log::info!("=== CLaPM, shift: {:0.6e}, scale: {:0.6e}", shift, scale);
         let mut iter: usize = 0;
         let norm_u: f64 = u.norm_l2();
+        // let norm_u_tau: f64 = (faer::Scale(tau) * u).norm_l2();
         let mut err_est = 2. * norm_u;
         let mut converged: bool = err_est == 0.;
 

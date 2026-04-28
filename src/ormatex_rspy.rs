@@ -275,6 +275,7 @@ fn integrate_wrapper_rs<'py>(
     let max_krylov_dim: usize = get_val_or_default(py, &kd_hash, String::from("max_krylov_dim"), 100);
     let m: usize = get_val_or_default(py, &kd_hash, String::from("m"), max_krylov_dim);
     let iom: usize = get_val_or_default(py, &kd_hash, String::from("iom"), 2);
+    let max_substeps: usize = get_val_or_default(py, &kd_hash, String::from("max_substeps"), 0);
     let tol: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
     let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol_fdt"), 1e-8);
     let osteps: usize = get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
@@ -305,7 +306,7 @@ fn integrate_wrapper_rs<'py>(
     let solver = match phikv_method.as_str() {
         "leja" => {
             let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, m+2);
-            let matexp_m = match spec_method.as_str() {
+            let mut matexp_m = match spec_method.as_str() {
                 "none" => {
                     // user specified spectrum parameters
                     matexp_leja::LejaPhiEval::new_from_abc(
@@ -319,18 +320,19 @@ fn integrate_wrapper_rs<'py>(
                         spec_tol, spec_iter, "arnoldi", dd_method.as_str(), krylov_reuse)
                 }
             };
+            matexp_m.set_max_substeps(max_substeps);
             select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
         },
         "taylor" => {
             let lp = matexp_leja::LejaPoints::new(vec![0.0; m], vec![0.0; m]);
-            let matexp_m = matexp_leja::LejaPhiEval::new(
+            let mut matexp_m = matexp_leja::LejaPhiEval::new(
                 lp, std::cmp::min(m, 800), 0.0, 0.0, tol,
                 spec_tol, spec_iter, "none", dd_method.as_str(), false);
             select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
         },
         // krylov is default
         _ => {
-            let matexp_m = matexp_krylov::KrylovExpm::new(expmv, m, Some(iom));
+            let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, m, Some(iom));
             select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
         },
     };
