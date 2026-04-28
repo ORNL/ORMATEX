@@ -1261,7 +1261,7 @@ impl LejaPhiEval {
             let coeffs = self.leja_poly_coeffs(&lp, shift_tau, scale_tau, 1.0);
             let mut h_state: Option<Col<f64>> = None;
             for i in 0..self.max_substeps {
-                println!("substep: {i} / {}", self.max_substeps);
+                println!("substep: {} / {}", i+1, self.max_substeps);
 
                 let (_conv, _iters, xi_out) = self.complex_conj_leja_expmv(
                     w.as_mut(), ext_a_lo, h_tau, w_t.as_ref(),

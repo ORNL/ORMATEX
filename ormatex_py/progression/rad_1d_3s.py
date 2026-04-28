@@ -217,7 +217,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     xs = np.asarray(sem.basis.doflocs.flatten())
 
     # initial profiles for each species
-    wc, ww = 0.4, 0.05
+    wc, ww = 0.5, 0.05
     var = ww ** 2.0
     g_prof0 = lambda x: 0.0*x + 1e-16
     gauss_scale = 1.0
@@ -276,10 +276,10 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=300, iom=2,
+            max_krylov_dim=200, iom=2,
             phikv_method="leja",
             tol=1e-12, spec_iter=28, spec_method="arnoldi",
-            krylov_reuse=True, osteps=500, **kwargs
+            krylov_reuse=False, osteps=500, **kwargs
             )
     t_res, y_res = res.t_res, res.y_res
 
@@ -370,7 +370,7 @@ if __name__ == "__main__":
     parser.add_argument("-leja_c", help="optional max complex part of the J*dt spectrum", type=float, default=1.0)
     parser.add_argument("-leja_substep", help="optional to enable substepping the leja integrator", action='store_true', default=False)
     parser.add_argument("-leja_plot", help="additional leja polynomial convergence plots", default=False, action='store_true')
-    parser.add_argument("-nu", help="diffusion coeff", type=float, default=1e-10)
+    parser.add_argument("-nu", help="diffusion coeff", type=float, default=1e-8)
     parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
