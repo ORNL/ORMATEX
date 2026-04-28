@@ -276,7 +276,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=200, iom=2,
+            max_krylov_dim=300, iom=2,
             phikv_method="leja",
             tol=1e-12, spec_iter=28, spec_method="arnoldi",
             krylov_reuse=False, osteps=500, **kwargs
@@ -374,7 +374,8 @@ if __name__ == "__main__":
     parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
-    parser.add_argument("-dd_method", help="divided difference method", type=str, default="dd_phi")
+    parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
+    parser.add_argument("-max_substeps", help="divided difference method", type=int, default=0)
     parser.add_argument("-leja_n_zeros", help="number of zeros prepended to leja sequence", type=int, default=1)
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
     args = parser.parse_args()
@@ -396,7 +397,9 @@ if __name__ == "__main__":
                                    tf=args.tf, pfd_method=pfd_method, nu=args.nu,
                                    leja_a=args.leja_a, leja_c=args.leja_c,
                                    leja_substep=args.leja_substep, leja_tol=args.leja_tol,
-                                   leja_n_zeros=args.leja_n_zeros, leja_plot=args.leja_plot)
+                                   leja_n_zeros=args.leja_n_zeros, leja_plot=args.leja_plot,
+                                   dd_method=args.dd_method, max_substeps=args.max_substeps
+                                   )
                 mae_sweep[method_str].append(([dt] + mae))
                 mae_rl_sweep[method_str].append(([dt] + mae_rl))
             print("=== Method: %s" % method_str)
@@ -434,5 +437,7 @@ if __name__ == "__main__":
         main(args.dt, args.method, args.per, args.mr, args.p,
              tf=args.tf, jac_plot=True, nu=args.nu,
              leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep,
-             leja_tol=args.leja_tol, dd_method=args.dd_method, leja_n_zeros=args.leja_n_zeros,
-             leja_plot=args.leja_plot)
+             leja_tol=args.leja_tol, leja_n_zeros=args.leja_n_zeros,
+             leja_plot=args.leja_plot,
+             dd_method=args.dd_method, max_substeps=args.max_substeps
+             )
