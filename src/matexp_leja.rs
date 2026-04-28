@@ -1090,8 +1090,8 @@ impl LejaPhiEval {
     fn krylov_poly_expmv(
         &self,
         dt: f64,
-        leja_x_sc_re: ColRef<f64>,
-        leja_x_sc_im: ColRef<f64>,
+        rho_re: ColRef<f64>,
+        rho_im: ColRef<f64>,
         coeffs: ColRef<c64>,
         norm_u: f64,
         _shift: f64,
@@ -1106,7 +1106,7 @@ impl LejaPhiEval {
 
                 // convert to complex for interpolation at the (complex-conj) ritz values
                 let cmplx_h: Mat<c64> = faer::Mat::from_fn(
-                    h.nrows(), h.ncols(), |i, j| { c64::new(h[(i, j)], 0.0) } );
+                    h.nrows(), h.ncols(), |i, j| { dt*c64::new(h[(i, j)], 0.0) } );
                 let mut dr: Mat<c64> = Mat::zeros(h.nrows(), 1);
                 dr[(0, 0)] = c64::new(1.0, 0.0);
                 let gamma = c64::new(scale, 0.0);
@@ -1114,10 +1114,10 @@ impl LejaPhiEval {
                 // compute the first n_r polynomial terms
                 let mut xi = faer::Scale(coeffs[0]) * dr.as_ref();
                 for r in 1..=n_r {
-                    // println!("{r}, krylov pre lp: {:0.8} + {:0.8}i, dd: {:0.6e}", leja_x_sc_re[r-1], leja_x_sc_im[r-1], coeffs[r]);
-                    log::info!("kryl, {r}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}", leja_x_sc_re[r-1], leja_x_sc_im[r-1], coeffs[r], 0.);
-                    let z = c64::new(leja_x_sc_re[r-1], leja_x_sc_im[r-1]);
-                    // let z = c64::new(ritz_re[r-1], ritz_im[r-1]);
+                    // println!("{r}, krylov pre lp: {:0.8} + {:0.8}i, dd: {:0.6e}", rho_re[r-1], leja_x_sc_im[r-1], coeffs[r]);
+                    log::info!("kryl, {r}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}", rho_re[r-1], rho_im[r-1], coeffs[r], 0.);
+                    // let z = c64::new(rho_re[r-1], rho_im[r-1]);
+                    let z = c64::new(dt * ritz_re[r-1], dt * ritz_im[r-1]);
                     dr = (cmplx_h.as_ref()*dr.as_ref() - faer::Scale(z)*dr.as_ref()) / faer::Scale(gamma);
                     xi += faer::Scale(coeffs[r]) * dr.as_ref();
                 }
@@ -1346,16 +1346,20 @@ impl LejaPhiEval {
             // where \tau is the substep size
             let tau = 1.0 / self.max_substeps as f64;
             let dt_tau = dt * tau;
-            let coeffs = self.leja_poly_coeffs(&lp, tau * self.shift / 2., tau * self.scale, 1.0);
+            let shift_tau = self.shift * tau;
+            let scale_tau = self.scale * tau;
+            // use the leja points scaled down by tau to evaluate the divided differences
+            // for the smaller spectrum of tau*dt*A  compared to the full step dt*A
+            let coeffs = self.leja_poly_coeffs(&lp, shift_tau, scale_tau, 1.0);
             for i in 0..self.max_substeps {
-                println!("substep: {i} / 4");
+                println!("substep: {i} / {}", self.max_substeps);
 
                 let (_conv, _iters) = self.complex_conj_leja_expmv(
                     w.as_mut(), ext_a_lo, dt_tau, w_t.as_ref(),
-                    self.shift * tau / 2., self.scale * tau, coeffs.as_ref());
+                    shift_tau, scale_tau, coeffs.as_ref());
 
                 println!("sub converged: {}, leja iters: {}, shift: {}, scale: {}",
-                    _conv, _iters, tau * self.shift / 2., tau * self.scale);
+                    _conv, _iters, shift_tau, scale_tau);
 
                 // update current solution vector
                 w_t = w.cloned();
@@ -2085,7 +2089,7 @@ mod test_matexp_leja {
     }
 
     #[test]
-    fn test_leja_phikv_sincos() {
+    fn test_leja_phikv_sincos_nosubstep() {
         // Test leja evaluator with no substepping
         _test_leja_phikv_sincos(0);
     }
