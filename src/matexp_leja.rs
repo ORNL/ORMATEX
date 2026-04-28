@@ -22,7 +22,6 @@ use faer::traits::ComplexField;
 use faer::linalg::matmul::triangular::{matmul as tri_matmul, BlockStructure};
 use faer_traits::math_utils::{add, mul, from_f64};
 
-
 use std::cmp::{max, min};
 use statrs::function::{factorial};
 use csv;
