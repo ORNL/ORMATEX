@@ -509,7 +509,7 @@ pub fn dd_taylor(leja_x: &LejaPoints, shift: f64, scale: f64, h: f64, p: usize, 
 
 
 /// Compute leja divided differences for phi_k using the dd_phi method
-/// of Zivcovich (2019), with the C++ Tempus scaling improvement.
+/// of Zivcovich (2019)
 ///
 /// The z interpolation points are kept normalized (O(1) magnitude) and the
 /// combined step factor `hs = h * scale` is baked into the Taylor-series seeds
@@ -542,8 +542,7 @@ usize) -> Col<c64>
     let hs = h * scale;
 
     // z = [0*l, shift/scale + leja_x]  (normalized: O(1) magnitude)
-    // The factor hs is NOT baked into z; instead it is baked into the Taylor
-    // seeds below, following the C++ Tempus getDividedDiffsPhi approach.
+    // The factor hs is NOT baked into z
     let scaled_shift = if scale.abs() > f64::EPSILON { shift / scale } else { 0.0 };
     let mut z: Vec<c64> = vec![c64::new(0.0, 0.0); total];
     for i in 0..n_leja {
@@ -585,7 +584,7 @@ usize) -> Col<c64>
 
     // Seed dd[kk] = hs^kk / (kk! * s^kk).
     // Baking hs into the seeds compensates for the normalized z-points and
-    // prevents underflow when hs is large (matching C++ Tempus approach).
+    // prevents underflow when hs is large.
     // Underflow guard: once running_fraction reaches 0 the remaining terms
     // are negligible and stay at the zero-initialised value.
     let mut dd: Vec<c64> = vec![c64::new(0.0, 0.0); cap_n + 1];
