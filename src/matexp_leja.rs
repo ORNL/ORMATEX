@@ -978,6 +978,7 @@ impl LejaPhiEval {
                 let n_r = ritz_re.len();
 
                 // convert to complex for interpolation at the (complex-conj) ritz values
+                // Note: The hessenberg matrix h built from the scaled linop dt*A
                 let cmplx_h: Mat<c64> = faer::Mat::from_fn(
                     h.nrows(), h.ncols(), |i, j| { tau*c64::new(h[(i, j)], 0.0) } );
                 let mut dr: Mat<c64> = Mat::zeros(h.nrows(), 1);
@@ -1015,8 +1016,8 @@ impl LejaPhiEval {
     /// #Args
     /// * `pm` - the output vector holding the polynomial approximation of
     ///    the matrix exponential-vector product.
-    /// * `ext_a_lo` - the linear operator A
-    /// * `tau` - the stepsize
+    /// * `ext_a_lo` - the linear operator A prescaled by dt
+    /// * `tau` - the substep stepsize
     /// * `u` - the rhs vector
     /// * `shift` - the leja point sequence shift
     /// * `scale` - the leja point sequence scale
@@ -1190,7 +1191,7 @@ impl LejaPhiEval {
     ///
     /// #Args
     /// * `ext_a_lo` - the linear operator A
-    /// * `h` - the stepsize
+    /// * `h` - the stepsize, typically h=1.0 if linop A has dt pre-multiplied into it
     /// * `vb` - a k-len sequence of rhs vectors corrosponding to each phi-function: phi_k
     pub fn leja_expmv_substep(&self, ext_a_lo: &DynRefExtendedLinOp, h: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64>
     {
@@ -1215,8 +1216,8 @@ impl LejaPhiEval {
             println!("converged: {}, leja iters: {}, shift: {}, scale: {}",
                 _conv, _iters, self.shift, self.scale);
         } else {
-            // substep the solution y_n+1 = exp(\tau_n * h * A)*y_n
-            // where \tau is the substep size
+            // Substep the solution y_n+1 = exp(tau * h * A)*y_n
+            // where tau is the substep size
             let tau = 1.0 / self.max_substeps as f64;
             let h_tau = h * tau;
             let shift_tau = self.shift * tau;
