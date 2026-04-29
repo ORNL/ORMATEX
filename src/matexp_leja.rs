@@ -2029,12 +2029,8 @@ mod test_matexp_leja {
         _test_leja_phikv_sincos(4);
     }
 
-    fn _test_dd_phi(a: f64, b: f64, c: f64, h: f64, n: usize, tol: f64, _high_precision: bool) {
+    fn _test_dd_phi(a: f64, b: f64, c: f64, h: f64, n: usize, tol: f64) {
         // Verify dd_phi agrees with dd_taylor
-        // using a small set of circle Leja points scaled to a known spectrum.
-        // The `_high_precision` flag is retained for call-site compatibility but
-        // is no longer needed: dd_phi now handles large scale without extended
-        // precision (hs baked into seeds).
         let lp = LejaPoints::new_from_lib("leja_circle").slice(0, n);
         let (lp_sc, shift, scale) = lp.rescale(a, b, c);
         let k = 0;
@@ -2077,23 +2073,19 @@ mod test_matexp_leja {
         let mut a = -508.2;
         let mut b = 0.001;
         let mut c = 50.58;
-        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, false);
-        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, false);
-        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, true);
-        _test_dd_phi(a, b, c, 1.0, 100, 1e-10, true);
-        _test_dd_phi(a, b, c, 1.0, 300, 1e-10, true);
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10);
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10);
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10);
+        _test_dd_phi(a, b, c, 1.0, 100, 1e-10);
+        _test_dd_phi(a, b, c, 1.0, 300, 1e-10);
 
         // Test dd_phi method for a small ellipse
         a = -1.2;
         b = 0.0;
         c = 0.58;
-        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, true);
-        _test_dd_phi(a, b, c, 1.0, 100, 1e-10, true);
-        _test_dd_phi(a, b, c, 1.0, 60,  1e-10, false);
-        _test_dd_phi(a, b, c, 1.0, 100, 1e-10, false);
-
-        // with 0.25 substep size
-        // _test_dd_phi(a, b, c, 0.25, 100, 1e-10, true);
-        // _test_dd_phi(a, b, c, 0.25, 100, 1e-10, false);
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10);
+        _test_dd_phi(a, b, c, 1.0, 100, 1e-10);
+        _test_dd_phi(a, b, c, 1.0, 60,  1e-10);
+        _test_dd_phi(a, b, c, 1.0, 100, 1e-10);
     }
 }
