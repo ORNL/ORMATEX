@@ -16,7 +16,6 @@
 /// Newtons methods for implicit methods
 use faer::prelude::*;
 use crate::ode_sys::*;
-use faer::matrix_free::LinOp;
 use faer_gmres::gmres;
 
 
@@ -36,7 +35,7 @@ pub fn jac_newton_sys <'a> (
     {
     let mut x: Mat<f64> = x0.to_owned();
     let mut a = faer::Mat::zeros(x.nrows(), x.ncols());
-    for i in 0..iters {
+    for _i in 0..iters {
         // eval G(x_k)
         let gfn_x = sys.frhs(t, x.as_ref());
         // let jac_gfn_x = sys.fjac_shifted(t, x.as_ref(), 1.0, None);
@@ -78,7 +77,7 @@ pub fn jac_newton <'a> (
     {
     let mut x = x0.to_owned();
     let mut a = faer::Mat::zeros(x.nrows(), x.ncols());
-    for i in 0..iters {
+    for _i in 0..iters {
         // eval G(x_k)
         let gfn_x = frhs(t, x.as_ref());
         // let jac_gfn_x = jac_gfn(t, x.as_ref());
@@ -100,7 +99,7 @@ pub fn jac_newton <'a> (
 #[cfg(test)]
 mod test_newton {
     use assert_approx_eq::assert_approx_eq;
-    use crate::ode_test_common::*;
+    use crate::test_common::*;
 
     // bring everything from above (parent) module into scope
     use super::*;

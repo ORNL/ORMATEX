@@ -1,6 +1,7 @@
 [build-system]
-requires = ["setuptools >= 64"]
+requires = ["setuptools >= 64", "maturin>=1.0,<2.0"]
 build-backend = "setuptools.build_meta"
+# build-backend = "maturin"
 
 [project]
 name = "ormatex_py"
@@ -17,15 +18,21 @@ keywords = [ "matrix exponential", "time integration", "exponential time integra
 license = "Apache-2.0"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
 ]
-dependencies = ["numpy>=1.8.0", "scipy>=0.12.0",
-	    "jax", "equinox",
-	    "pytest", "mpmath",
-	    ]
+dependencies = [
+    "numpy>=1.8.0",
+    "scipy>=0.12.0",
+    "jax",
+    "equinox",
+    "pytest",
+    "mpmath",
+]
 
 [project.optional-dependencies]
 plot = ["matplotlib"]
 fem = ["scikit-fem"]
+diffrax = ["diffrax", "optimistix", "lineax"]
 
 #[project.scripts]
 #my-script = "my_package.module:function"

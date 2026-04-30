@@ -1,13 +1,20 @@
 /// Lotka voltera example showing use of BDF, RK, and EPIRK time integrators
+/// Run example with plot:
+/// cargo run --example ex_sys_1 --features plot
 use faer::prelude::*;
 use ormatex::ode_sys::*;
 use ormatex::ode_bdf;
 use ormatex::ode_rk;
 use ormatex::ode_epirk;
 use ormatex::matexp_krylov;
-use ormatex::ode_test_common::*;
+use ormatex::matexp_leja;
+use ormatex::test_common::*;
 use ormatex::matexp_pade;
-// use plotters::prelude::*;
+use ormatex::logger::init_logger;
+
+// optional deps for plotting
+#[cfg(feature="plot")]
+use kuva::prelude::*;
 
 
 pub fn main() {
@@ -24,11 +31,17 @@ pub fn main() {
     // setup the integrator
     // let mut sys_solver = ode_bdf::BdfIntegrator::new(0.0, y0.as_ref(), 2);
     // let mut sys_solver = ode_rk::RkIntegrator::new(0.0, y0.as_ref(), 2);
-    let iom = 4;
+    let iom = 2;
     let krylov_dim = 4;
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
-    let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
-    let mut sys_solver = ode_epirk::EpirkIntegrator::<matexp_krylov::KrylovExpm>::new(
+    // let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
+
+    let _logger = init_logger();
+    let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 60);
+    let mut matexp_m = matexp_leja::LejaPhiEval::new(
+        lp, 20, 0.0, 1.0, 1e-12, 1e-8, 20, "arnoldi", "dd_phi", true);
+
+    let mut sys_solver = ode_epirk::EpirkIntegrator::<matexp_leja::LejaPhiEval>::new(
         0.0, y0.as_ref(), "epi3".to_string(), matexp_m);
 
     let mut t_points: Vec<f64> = Vec::new();
@@ -48,7 +61,6 @@ pub fn main() {
 
         sys_solver.accept_step(y_new);
         t += dt;
-
     }
 
     // print the results
@@ -57,50 +69,33 @@ pub fn main() {
         println!("{:?}, {:?}, {:?}", t_points[i], y_pred[i], y_prey[i]);
     }
 
-    // let plot_prefix: String = "ex_sys_".to_owned();
-    // plot_time_series(t_points.clone(), y_prey.clone(), y_pred.clone(), plot_prefix);
+    #[cfg(feature="plot")]
+    plot_time_series(t_points.clone(), y_prey.clone(), y_pred.clone());
 }
 
-// fn plot_time_series(t: Vec<f64>, x: Vec<f64>, y: Vec<f64>, mut prefix: String) -> Result<(), Box<dyn std::error::Error>> {
-//     prefix.push_str("_ex_1.png");
-//     let root = BitMapBackend::new(&prefix, (640, 480)).into_drawing_area();
-//     root.fill(&WHITE)?;
-//     let mut chart = ChartBuilder::on(&root)
-//         .margin(5)
-//         .x_label_area_size(30)
-//         .y_label_area_size(30)
-//         .build_cartesian_2d(-0f64..40f64, -0.1f64..9f64)?;
-// 
-//     chart.configure_mesh()
-//         .y_desc("Population")
-//         .x_desc("Time")
-//         .draw()?;
-// 
-//     chart
-//         .draw_series(LineSeries::new(
-//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-//             t.clone().into_iter().zip(x),
-//             &RED,
-//         ))?
-//         .label("Prey")
-//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
-// 
-//     chart
-//         .draw_series(LineSeries::new(
-//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-//             t.clone().into_iter().zip(y),
-//             &BLUE,
-//         ))?
-//         .label("Pred")
-//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
-// 
-//     chart
-//         .configure_series_labels()
-//         .background_style(&WHITE.mix(0.8))
-//         .border_style(&BLACK)
-//         .draw()?;
-// 
-//     root.present()?;
-// 
-//     Ok(())
-// }
+#[cfg(feature="plot")]
+fn plot_time_series(t: Vec<f64>, y0: Vec<f64>, y1: Vec<f64>)
+    -> Result<(), Box<dyn std::error::Error>>
+{
+    // create plots
+    let plots = vec![
+        Plot::Line(LinePlot::new()
+            // iter() yeilds &T and into_iter yeilds T
+            .with_data(t.clone().into_iter().zip(y0.clone().into_iter()))
+            .with_color("steelblue")
+            .with_legend("y0")
+        ),
+        Plot::Line(LinePlot::new()
+            .with_data(t.clone().into_iter().zip(y1.clone().into_iter()))
+            .with_color("crimson")
+            .with_legend("y1")
+        ),
+    ];
+    let layout = Layout::auto_from_plots(&plots)
+        .with_x_label("x")
+        .with_y_label("y");
+    let svg = render_to_svg(plots, layout);
+    std::fs::write("ex_1.svg", svg)?;
+
+    Ok(())
+}

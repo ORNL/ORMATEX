@@ -22,10 +22,15 @@ decay_lib_0 = {
     'c_2':  ('none', 0.03),
 }
 
+# decay_lib_test = {
+#     'c_0':  ('none', 1.0e-3),
+#     'c_1':  ('c_0', 1.0e1),
+#     'c_2':  ('c_1', 1.0e-1),
+# }
 decay_lib_test = {
-    'c_0':  ('none', 1.0e-3),
-    'c_1':  ('c_0', 1.0e1),
-    'c_2':  ('c_1', 1.0e-1),
+    'c_0':  ('c_1', 1.0e-1),
+    'c_1':  ('c_2', 1.0e1),
+    'c_2':  ('none', 1.0e-2),
 }
 
 # dict of decay constants
@@ -178,9 +183,14 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
     keymap = ["c_0", "c_1", "c_2"]
     decay_lib_sp = {
         'c_0':  ('c_1', 1.0e-1),
-        'c_1':  ('c_2', 1.0e1),
+        'c_1':  ('c_2', 1.0e0),
         'c_2':  ('none', 1.0e-3),
     }
+    # decay_lib_sp = {
+    #     'c_0':  ('c_1', 1.0),
+    #     'c_1':  ('c_2', 1.0e2),
+    #     'c_2':  ('none', 1.0e-2),
+    # }
     bmat = gen_bateman_matrix(keymap, decay_lib_sp)
     n0 = 1.0
     t0 = 0.0
@@ -193,7 +203,9 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
     y0 = jnp.array([n0, 0.0, 0.0])
     nsteps = int((tf - t0) / dt)
     res = integrate_wrapper.integrate(
-            test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=12, pfd_method=pfd_method)
+            test_ode_sys, y0, t0, dt, nsteps, method,
+            max_krylov_dim=100, iom=12, pfd_method=pfd_method,
+            phikv_method="taylor", tol=1e-15)
     t_res, y_res = res.t_res, res.y_res
     t_res = np.asarray(t_res)
     y_res = np.asarray(y_res)
@@ -225,28 +237,33 @@ def analytic_bateman_s3(method="epi2", do_plot=True, dt=10.0, tf=1000., pfd_meth
 
 
 def run_sweep():
-    methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense",
-               "exprb2_dense", "exprb2_pfd_rs", "exp_pfd_rs",
-               "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
-    dts = [1., 2., 5., 10., 25., 50.]
-    tf = 100.
+    # methods = ["epi2", "epi3", "exprb3", "exp2_dense", "exp3_dense",
+    #            "exprb2_dense", "exprb2_pfd_rs", "exp_pfd_rs",
+    #            "implicit_euler", "implicit_esdirk3", "implicit_esdirk4"]
+    # methods = ["epi2_leja_im", "epi2", "epi3"
+    #            "implicit_euler", "implicit_esdirk3"]
+    methods = ["epi2_rs", "epi2", "implicit_esdirk3"]
+    # dts = [1., 2., 5., 10., 25., 50.]
+    # dts = [0.1, 1., 2., 5., 10.]
+    dts = [0.01, 0.02, 0.05, 0.1]
+    tf = 5.0
     nspecies = 3
     mae_dict = {}
     for method in methods:
         err_arr = np.zeros((len(dts), nspecies+1))
         for j, dt in enumerate(dts):
             t_res, y_res, t, y_true = \
-                    analytic_bateman_s3(method, dt=dt, tf=tf, do_plot=False)
+                    analytic_bateman_s3(method, dt=dt, tf=tf, do_plot=True)
             diff = y_res - y_true
             err_arr[j, 0] = dt
             # loop over species at last time
             for s in range(diff.shape[1]):
                 rel_diff = np.abs(diff[-1, s]) / y_true[-1, s]
                 err_arr[j, s+1] = rel_diff + 1e-18
-        mae_dict[method] = err_arr
-        print("=== Method: %s" % method)
-        print("dt, err_s0, err_s1, err_s2")
-        print(err_arr)
+            mae_dict[method] = err_arr
+            print("=== Method: %s" % method)
+            print("dt, err_s0, err_s1, err_s2")
+            print(err_arr)
 
     # error vs time step size for each method
     plt.figure()
@@ -263,9 +280,9 @@ def run_sweep():
     plt.legend()
     plt.tight_layout()
     plt.savefig("bateman_ex_1_converg.png")
-    for method in methods:
-        for dt in [10., 25.]:
-            analytic_bateman_s3(method, dt=dt, tf=500., do_plot=True)
+    # for method in methods:
+    #     for dt in [10., 25.]:
+    #         analytic_bateman_s3(method, dt=dt, tf=500., do_plot=True)
 
 
 class TestBatemanSysJac(OdeSplitSys):
@@ -313,17 +330,27 @@ if __name__ == "__main__":
     # test simple exp integrator
     test_ode_sys = TestBatemanSysJac(keymap, decay_lib_test)
     t = 0.0
-    y0 = jnp.array([0.001, 0.1, 1.0])
+    y0 = jnp.array([1.0, 0.0, 0.0])
 
     # step system forward
+    kwargs = {"leja_tol": 1e-12}
     t0 = 0.0
-    tf = 1000.0
-    dt = 10.0
+    tf = 40.0
+    dt = 1.0
     nsteps = int((tf - t0) / dt)
-    res = integrate_wrapper.integrate(test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=12, iom=12)
+    res = integrate_wrapper.integrate(
+            test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=280, iom=12,
+            phikv_method="leja",
+            tol=1e-10, spec_iter=28, spec_method="arnoldi",
+            krylov_reuse=False, osteps=1, **kwargs
+            )
     t_res, y_res = res.t_res, res.y_res
 
-    t_res = np.asarray(t_res)
+    t = np.arange(t0, tf+dt, dt)
+    # analytic result
+    y_true = analytic_bateman_single_parent(t, bmat, 1.0)
+
+    t_res = np.asarray(t_res).flatten()
     y_res = np.asarray(y_res)
     for i in range(nsteps):
         print("%0.4e, %0.4e, %0.4e, %0.4e" % (t_res[i], y_res[i][0], y_res[i][1],y_res[i][2]))
@@ -331,15 +358,18 @@ if __name__ == "__main__":
     plt.figure()
     plt.xscale('log')
     plt.yscale('log')
-    plt.ylim((1e-14, 10.0))
-    plt.plot(t_res, y_res[:, 0], label="c_0")
-    plt.plot(t_res, y_res[:, 1], label="c_1")
-    plt.plot(t_res, y_res[:, 2], label="c_2")
+    plt.ylim((1e-4, 10.0))
+    plt.plot(t_res, y_res[:, 0], label="c_0", lw=4)
+    plt.plot(t_res, y_res[:, 1], label="c_1", lw=4)
+    plt.plot(t_res, y_res[:, 2], label="c_2", lw=4)
+    plt.plot(t, y_true[:, 0], ls='--', label="c_0 true")
+    plt.plot(t, y_true[:, 1], ls='--', label="c_1 true")
+    plt.plot(t, y_true[:, 2], ls='--', label="c_2 true")
     plt.legend()
     plt.grid(ls='--')
     plt.ylabel("Species concentration")
     plt.xlabel("Time [s]")
-    plt.savefig("bateman_ex_1_%s.png" % method)
+    plt.savefig("bateman_ex_1_%s.png" % method, dpi=200)
     plt.close()
 
     if args.sweep:

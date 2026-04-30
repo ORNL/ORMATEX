@@ -130,7 +130,7 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step<'b>(&mut self, sys: &'b dyn OdeSys<'b>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
        self.step_rk(sys, dt)
     }
 
@@ -145,6 +145,9 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>) {
        self.t = s.t;
        self.y_hist.push_front(s.y);
+       if self.y_hist.len() >= self.order+1 {
+           self.y_hist.pop_back();
+       }
     }
 
     fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType) {
@@ -157,7 +160,7 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
 
 #[cfg(test)]
 mod test_rk {
-    use crate::ode_test_common::*;
+    use crate::test_common::*;
 
     // bring everything from above (parent) module into scope
     use super::*;

@@ -32,11 +32,11 @@ pub struct BdfIntegrator<'a>
     /// Storage for past system solution states
     y_hist: VecDeque<Mat<f64>>,
 
-    /// tolerences and newton iteration limits
-    // lin_tol: f64,
-    // lin_iters: usize,
-    // nlin_tol: f64,
-    // nlin_iters: usize,
+    /// lin solve tolerence
+    tol_lin: f64,
+    tol_nlin: f64,
+    iters_lin: usize,
+    iters_nlin: usize,
 
     /// Use a lifetime
     phantom: PhantomData<&'a ()>
@@ -52,6 +52,10 @@ impl <'a> BdfIntegrator <'a>
             order,
             t: t0,
             y_hist,
+            tol_lin: 1.0e-12,
+            tol_nlin: 1.0e-12,
+            iters_lin: 1000,
+            iters_nlin: 50,
             phantom: Default::default()
         }
     }
@@ -106,7 +110,7 @@ impl <'a> BdfIntegrator <'a>
         // solve nonlinear system for new y
         let y_new = jac_newton(
             t+dt, y0, &gfn, &gfn_jac,
-            1e-6, 1e-8, 100, 1000)?;
+            self.tol_nlin, self.tol_lin, self.iters_nlin, self.iters_lin)?;
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, None))
@@ -127,7 +131,7 @@ impl <'a> BdfIntegrator <'a>
 
         let y_new = jac_newton(
             t+dt, y0, &gfn, &gfn_jac,
-            1e-6, 1e-8, 100, 1000)?;
+            self.tol_nlin, self.tol_lin, self.iters_nlin, self.iters_lin)?;
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, None))
@@ -156,7 +160,7 @@ impl <'a> BdfIntegrator <'a>
         // solve nonlinear system for new y, might fail
         let y_new = jac_newton(
             t+dt, y0, &gfn, &gfn_jac,
-            1e-6, 1e-8, 100, 1000)?;
+            self.tol_nlin, self.tol_lin, self.iters_nlin, self.iters_lin)?;
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, None))
@@ -168,7 +172,7 @@ impl <'a> IntegrateSys<'a> for BdfIntegrator<'a>
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step<'b>(&mut self, sys: &'b dyn OdeSys<'b>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
         match self.order {
             1 => self.step_order_1(sys, dt),
             2 => {
@@ -195,6 +199,9 @@ impl <'a> IntegrateSys<'a> for BdfIntegrator<'a>
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>) {
        self.t = s.t;
        self.y_hist.push_front(s.y);
+       if self.y_hist.len() >= self.order+1 {
+           self.y_hist.pop_back();
+       }
     }
 
     fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType) {
@@ -207,7 +214,7 @@ impl <'a> IntegrateSys<'a> for BdfIntegrator<'a>
 
 #[cfg(test)]
 mod test_bdf {
-    use crate::ode_test_common::*;
+    use crate::test_common::*;
 
     // bring everything from above (parent) module into scope
     use super::*;

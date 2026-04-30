@@ -10,35 +10,40 @@ crate-type = ["cdylib", "rlib"]
 path = 'src/lib.rs'
 
 [features]
-plotters = ["dep:plotters"]
+plot = ["dep:kuva"]
 python = ["dep:pyo3", "dep:numpy", "dep:ndarray", "dep:faer-ext"]
 
 [dependencies]
-plotters = {version="0.3.5", optional=true}
 thiserror = "1.0"
 assert_approx_eq = "1.1.0"
 num-traits = "0.2.18"
+num-complex = "0.4"
 reborrow = "0.5.5"
 rayon = "*"
 libm = "0.2.8"
 rand = "0.8.5"
 rand_distr = "0.4.3"
+statrs = "0.18.0"
+csv = "1.4.0"
+flexi_logger = "0.31"
+log = "0.4"
 
 # faer lin alg
 faer = {version = "0.23.2", features=["unstable",]}
 faer-traits = "0.23.0"
 faer_gmres = "0.4.1"
 
+# optional deps
+kuva = {version="0.1", optional=true}
+
 # python binding deps
 pyo3 = {version="=0.26", features = ["extension-module"], optional=true}
 numpy = {version="0.26", optional=true}
 ndarray = {version=">=0.16", features=["rayon"], optional=true}
-faer-ext = {version=">=0.7.1", features=["ndarray"], optional=true}
+faer-ext = {version=">=0.7.1", features=["ndarray", "numpy"], optional=true}
 
 [tool.maturin]
-module-name = "_ormatex"
-python-source = "ormatex_py"
+module-name = "ormatex"
 profile = "release"
 editable-profile = "release"
 features = ["python"]
-all-features = true

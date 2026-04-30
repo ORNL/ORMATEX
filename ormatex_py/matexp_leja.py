@@ -34,7 +34,10 @@ from jax import numpy as jnp
 
 # internal imports
 from ormatex_py.ode_sys import LinOp, AugMatrixLinOp, MatrixLinOp, DiagLinOp
-from ormatex_py.matexp_poly import dd_exp_taylor, newton_poly_div_diff, leja_coeffs_exp, leja_seq_pad_zeros, leja_coeffs_exp_dd, leja_coeffs_dd_phi, leja_coeffs_ts_phi, leja_coeffs_ts_phi_jax, leja_seq_reordering, leja_coeffs_ts_ss
+from ormatex_py.matexp_poly import dd_exp_taylor, newton_poly_div_diff, leja_coeffs_exp, \
+                                   leja_seq_pad_zeros, leja_coeffs_exp_dd, \
+                                   leja_coeffs_dd_phi, leja_coeffs_ts_phi, \
+                                   leja_coeffs_ts_phi_jax, leja_seq_reordering, leja_coeffs_ts_ss
 dd_method_dict = {
         "taylor": dd_exp_taylor,
         "pade": leja_coeffs_exp,
@@ -42,9 +45,32 @@ dd_method_dict = {
         }
 
 
+def scale_leja_circle(ztc: np.ndarray, a: float=-1.0, b: float=1.0, c: float=1.0):
+    """
+    Rescales leja points generated on the unit circle with radius 1 centered on 0
+    to the leja points for an ellipse contained in
+        [a,b] x [-c,c].
+    """
+    n = len(ztc)
+    shift = (a+b)/2.
+    hax1, hax2 = (b-a)/2., c
+    scale = (hax1 + hax2) / 2
+
+    # normalized half axes to capacity 1
+    h1, h2 = hax1/scale, hax2/scale
+
+    if h1 < 0 or h2 < 0:
+        raise ValueError(f"Interval boundaries result in empty box for the Leja ellipse: [{a},{b}]x[{-c},{c}].")
+    else:
+        zt = h1 * np.real(ztc) + 1j * h2 * np.imag(ztc)
+        n_real = 2
+
+    return zt, n_real, scale, shift
+
+
 def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
     """
-    Generate the conjugate leja points for an ellipse contained in the square
+    Generate the conjugate leja points for an ellipse contained in
         [a,b] x [-c,c].
 
     This is the ellipse with center shift = ((a+b)/2, 0.) and half axes ((b-a)/2, c).
@@ -55,7 +81,7 @@ def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
         b: right boundary of box
         c: upper boundary of symmetric box
     """
-
+    tol = 1e-4
     shift = (a+b)/2.
     hax1, hax2 = (b-a)/2., c
     scale = (hax1 + hax2) / 2
@@ -63,11 +89,8 @@ def gen_leja_conjugate(n: int=64, a: float=-1., b: float=1., c: float=1.):
     # normalized half axes to capacity 1
     h1, h2 = hax1/scale, hax2/scale
 
-    tol = 1e-4
-
     if h1 < 0 or h2 < 0:
         raise ValueError(f"Interval boundaries result in empty box for the Leja ellipse: [{a},{b}]x[{-c},{c}].")
-        assert(False)
     elif h2 <= tol:
         # real points
         n_bigger = 2*(n - 1)
@@ -217,7 +240,6 @@ def power_iter(a_lop: LinOp, b0: jax.Array, iter: int, tol: float=5.0e-2):
         eig_new = (b_k.transpose() @ b_k1) / \
                 (b_k.transpose() @ b_k)
         b_k1_norm = jnp.linalg.norm(b_k1)
-        # eig_new = b_k1_norm / jnp.linalg.norm(b_k)
         b_k = b_k1 / b_k1_norm
         i += 1
         return i, b_k, eig_new, eig_old
@@ -367,7 +389,7 @@ def complex_conj_leja_expmv(a_lo: LinOp, dt: float, u: jax.Array, shift: float, 
         qm = (dt*a_lo.matvec(vm) - jnp.real(leja_x_sc[i-1])*vm) / scale
         # real part of first update (coeff[i] is real in exact arithmetic)
         pm += jnp.real(coeffs[i]) * qm
-        err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(qm), err_est, gamma)
+        # err_est = decay_fun(jnp.abs(jnp.real(coeffs[i])) * jnp.linalg.norm(qm), err_est, gamma)
 
         # compute new matvec (second one of conjugate pair, vm is real)
         vm = (dt*a_lo.matvec(qm) - jnp.real(leja_x_sc[i-1])*qm) / scale \
@@ -669,9 +691,7 @@ def build_a_tilde(a_lo: LinOp, dt: float, vb: list[jax.Array]):
     b = jnp.vstack(vb[:0:-1]).T
 
     # build \tilde A
-    k = np.zeros((p,p))
-    k[0:p-1, 1:] = np.eye(p-1)
-    k = jnp.asarray(k)
+    k = jnp.eye(p, p, k=1)
     a_tilde_lo = AugMatrixLinOp(a_lo, dt, b, k)
 
     unit_vec = np.zeros(p)
@@ -940,6 +960,7 @@ def plot_leja_conjugate_ellipse_error(a=0., b=0., c=4., eigJ=[], dt=1., leja_n_z
     from matplotlib import colors
     np.set_printoptions(precision=4)
     # generate the leja sequence
+    print("*** Leja plot a,b,c: ", a, b, c)
     lp, n_leja_real, scale, shift = gen_leja_conjugate(n=n_leja, a=a, b=b, c=c)
 
     # prepend leja sequence with zeros
@@ -968,9 +989,12 @@ def plot_leja_conjugate_ellipse_error(a=0., b=0., c=4., eigJ=[], dt=1., leja_n_z
     plt.close()
 
     # generate a diagonal matrix and wrap as a linear operator
-    a_plot, b_plot = a-1, b+1
-    xr_grid = jnp.linspace(a_plot, b_plot, 200)
+    # a_plot, b_plot = a-1, b+1
+    # a_plot, b_plot = a-1, b+1
+    a_plot = np.minimum(a, -np.max(np.abs(eigJ.real))) - 1
+    b_plot = 0.0+1.0
     c_plot = np.maximum(c, np.max(np.abs(eigJ.imag))) + 1
+    xr_grid = jnp.linspace(a_plot, b_plot, 200)
     xi_grid = jnp.linspace(-c_plot, c_plot, 200)
     zr_grid, zi_grid = jnp.meshgrid(xr_grid, xi_grid)
     zs_grid = zr_grid.flatten() + 1.j * zi_grid.flatten()
@@ -1061,8 +1085,22 @@ def plot_leja_conjugate_ellipse_error(a=0., b=0., c=4., eigJ=[], dt=1., leja_n_z
     return i, max_spec_err, l2_spec_err
 
 
+def write_leja_csv(n=1000):
+    # write complex conjugate leja points to file
+    lpc = gen_leja_circle(n, conjugate=True)
+    lpc = np.array([lpc.real, lpc.imag]).T
+    np.savetxt("leja_points_circle.txt", lpc, delimiter=", ")
+
+    # write real leja points to file
+    lp_re = gen_leja_fast(a=-2, b=2, n=n)
+    lp_im = np.zeros(len(lp_re))
+    lp = np.array([lp_re, lp_im]).T
+    np.savetxt("leja_points_real.txt", lp, delimiter=", ")
+
+
 if __name__ == "__main__":
     jax.config.update("jax_enable_x64", True)
+    write_leja_csv()
     #_example_fast_leja_points()
     #_example_leja_conjugate_points()
     _example_leja_conjugate_ellipse_error(a=-2.0, c=3.5)

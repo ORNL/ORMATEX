@@ -32,15 +32,20 @@ from ormatex_py.ode_utils import stack_u, flatten_u
 from ormatex_py.matexp_leja import plot_leja_conjugate_ellipse_error
 
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
-from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM
+from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM, torus_distance
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix, analytic_bateman_single_parent
 from ormatex_py import integrate_wrapper
 
 keymap = ["c_0", "c_1", "c_2"]
+# decay_lib = {
+#     'c_0':  ('c_1', 1.0e-1*10),
+#     'c_1':  ('c_2', 1.0e1*10),
+#     'c_2':  ('none', 1.0e-3*10),
+# }
 decay_lib = {
-    'c_0':  ('c_1', 1.0e-1*10),
-    'c_1':  ('c_2', 1.0e1*10),
-    'c_2':  ('none', 1.0e-3*10),
+    'c_0':  ('c_1', 1.0e-1),
+    'c_1':  ('c_2', 1.0e1),
+    'c_2':  ('none', 1.0e-2),
 }
 
 outdir = "./rad_1d_3s_out/"
@@ -54,7 +59,6 @@ class RAD_SEM(OdeSplitSys):
     A: jsp.JAXSparse
     Ml: jax.Array
     xs: jax.Array
-
     dirichlet_bd: np.array
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
@@ -129,7 +133,7 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
 
 def plot_leja_conv_detail(
         ode_sys, y, t, dt, outdir="./",
-        n_leja_list=[4, 8, 12, 24, 36, 50, 76, 100, 126, 150, 176, 200, 240],
+        n_leja_list=[4, 8, 12, 24, 36, 50, 76, 100],
         **kwargs):
     """
     Plots leja polynomial convergence details
@@ -142,20 +146,17 @@ def plot_leja_conv_detail(
     b = 0.0
     c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
     # differnet leja polynomial parameters
-    leja_plist = {r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{pade}$": {"c": c, "leja_n_zeros": 1, "dd_method": "pade"},
-                  r"$\mathrm{Leja}_{CLaPM}\ l_1\ dd_{ts}$": {"c": c, "leja_n_zeros": 1, "dd_method": "taylor"},
-                  r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{pade}$": {"c": c, "leja_n_zeros": 0, "dd_method": "pade"},
-                  r"$\mathrm{Leja}_{CLaPM}\ l_0\ dd_{ts}$": {"c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
-                  r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{pade}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "pade"},
-                  r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{ts}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "taylor"},
-                  r"$\mathrm{Leja}_{ReLPM}\ l_0\ dd_{rc}$": {"c": 0.0, "leja_n_zeros": 0, "dd_method": "recursive"},
+    leja_plist = {
+                  r"$\mathrm{Leja}_{CLaPM}\ dd_{ts}$": {"a": a, "c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
+                  r"$\mathrm{Leja}_{ReLPM}\ dd_{ts}$": {"a": a, "c": 0., "leja_n_zeros": 0, "dd_method": "taylor"},
+                  r"$\mathrm{Taylor}\ dd_{ts}$": {"a": 1e-8, "c": 0., "leja_n_zeros": 0, "dd_method": "taylor"},
                   }
     err_dict = {}
     for key, leja_p in leja_plist.items():
         l1_err_list, l2_err_list = [], []
         for n_leja in n_leja_list:
             i, l1_expmv_err, l2_expmv_err = plot_leja_conjugate_ellipse_error(
-                    a=a, b=b, c=leja_p["c"], eigJ=eigdtJ, leja_n_zeros=leja_p["leja_n_zeros"],
+                    a=leja_p["a"], b=b, c=leja_p["c"], eigJ=eigdtJ, leja_n_zeros=leja_p["leja_n_zeros"],
                     v=y, dd_method=leja_p['dd_method'],
                     n_leja=n_leja, leja_tol=1e-30, dirname=outdir)
             l1_err_list.append((i, l1_expmv_err))
@@ -200,6 +201,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
             mesh.boundaries['right'],
             mesh.boundaries['left'],
         )
+    nelements = mesh.nelements
 
     # diffusion coefficient
     vel = 0.5
@@ -215,24 +217,32 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     xs = np.asarray(sem.basis.doflocs.flatten())
 
     # initial profiles for each species
-    wc, ww = 0.4, 0.05
+    wc, ww = 0.5, 0.05
     var = ww ** 2.0
     g_prof0 = lambda x: 0.0*x + 1e-16
-    fix_scale = True
     gauss_scale = 1.0
-    if fix_scale:
-        gauss_scale = (1./ np.sqrt(1.*(var/2))) ** -1.0
     if periodic:
-        g_prof1 = lambda x: \
-            (
-            np.exp(-((1.0-((x - wc) % 1))**2.0 / (2*var))) + \
-            np.exp(-((((x - wc) % 1)**2.0) / (2*var)))
-            ) * (1./ np.sqrt(1.*(var/2))) * gauss_scale
-        g_prof_exact = lambda t, x: \
-            (
-            np.exp(-((1.0-((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) ) + \
-            np.exp(-((((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) )
-            ) * (1./np.sqrt(1.*(var/2+nu*t))) * gauss_scale
+        # g_prof1 = lambda x: \
+        #     (
+        #     np.exp(-((1.0-((x - wc) % 1))**2.0 / (2*var))) + \
+        #     np.exp(-((((x - wc) % 1)**2.0) / (2*var)))
+        #     ) * (1./ np.sqrt(1.*(var/2))) * gauss_scale
+        # g_prof_exact = lambda t, x: \
+        #     (
+        #     np.exp(-((1.0-((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) ) + \
+        #     np.exp(-((((x - (wc+t*vel)) % 1))**2.0 / (2*var+4*nu*t)) )
+        #     ) * (1./np.sqrt(1.*(var/2+nu*t))) * gauss_scale
+        def g_prof_exact(t, x):
+            out = np.zeros(x.shape)
+            shifts = np.array([-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0]) * dwidth
+            ns = len(shifts)
+            for s in shifts:
+                out += np.exp(-(s + torus_distance(x-t*vel, wc))**2.0 / (4*var+4*nu*t))
+            norm_const = np.sqrt(4*var) / (np.sqrt((4*var+4*nu*t)))
+            out *= norm_const
+            out *= gauss_scale
+            return out
+        g_prof1 = lambda x: g_prof_exact(0.0, x)
     else:
         g_prof1 = lambda x: np.exp(-((x-wc)**2/(2*var))) * (1./ np.sqrt(1.*(var/2))) * gauss_scale
         g_prof_exact = lambda t, x: np.exp(-((x-(wc+t*vel))**2.0 / (2*var+4*nu*t))) \
@@ -265,7 +275,12 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
 
     # integrate the system
     res = integrate_wrapper.integrate(
-            ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=200, iom=10, **kwargs)
+            ode_sys, y0, t0, dt, nsteps, method,
+            max_krylov_dim=300, iom=2,
+            phikv_method="leja",
+            tol=1e-12, spec_iter=28, spec_method="arnoldi",
+            krylov_reuse=False, osteps=500, **kwargs
+            )
     t_res, y_res = res.t_res, res.y_res
 
     si = xs.argsort()
@@ -332,9 +347,9 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     print()
     si = xs.argsort()
     sx = xs[si]
-    mesh_spacing = (sx[1] - sx[0])
+    mesh_spacing = float(dwidth / nelements)
     cfl = dt * vel / mesh_spacing
-    print("mesh_spacing: %0.4e, CFL=%0.4f" % (mesh_spacing, cfl))
+    print("mesh_spacing: %0.4e, Adv. CFL=%0.4f, nelements: %d, dof: %d" % (mesh_spacing, cfl, nelements, len(sx)))
     return mae_list, mae_rl_list
 
 
@@ -347,7 +362,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-sweep", help="run method sweep", default=False, action='store_true')
-    parser.add_argument("-mr", help="mesh refinement", type=int, default=6)
+    parser.add_argument("-mr", help="mesh refinement", type=int, default=7)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-dt", help="time step size", type=float, default=0.1)
     parser.add_argument("-leja_tol", help="optional leja integrator tolerance", type=float, default=1.0e-15)
@@ -355,11 +370,12 @@ if __name__ == "__main__":
     parser.add_argument("-leja_c", help="optional max complex part of the J*dt spectrum", type=float, default=1.0)
     parser.add_argument("-leja_substep", help="optional to enable substepping the leja integrator", action='store_true', default=False)
     parser.add_argument("-leja_plot", help="additional leja polynomial convergence plots", default=False, action='store_true')
-    parser.add_argument("-nu", help="diffusion coeff", type=float, default=1e-10)
+    parser.add_argument("-nu", help="diffusion coeff", type=float, default=1e-8)
     parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
+    parser.add_argument("-max_substeps", help="divided difference method", type=int, default=0)
     parser.add_argument("-leja_n_zeros", help="number of zeros prepended to leja sequence", type=int, default=1)
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
     args = parser.parse_args()
@@ -381,7 +397,9 @@ if __name__ == "__main__":
                                    tf=args.tf, pfd_method=pfd_method, nu=args.nu,
                                    leja_a=args.leja_a, leja_c=args.leja_c,
                                    leja_substep=args.leja_substep, leja_tol=args.leja_tol,
-                                   leja_n_zeros=args.leja_n_zeros, leja_plot=args.leja_plot)
+                                   leja_n_zeros=args.leja_n_zeros, leja_plot=args.leja_plot,
+                                   dd_method=args.dd_method, max_substeps=args.max_substeps
+                                   )
                 mae_sweep[method_str].append(([dt] + mae))
                 mae_rl_sweep[method_str].append(([dt] + mae_rl))
             print("=== Method: %s" % method_str)
@@ -419,5 +437,7 @@ if __name__ == "__main__":
         main(args.dt, args.method, args.per, args.mr, args.p,
              tf=args.tf, jac_plot=True, nu=args.nu,
              leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep,
-             leja_tol=args.leja_tol, dd_method=args.dd_method, leja_n_zeros=args.leja_n_zeros,
-             leja_plot=args.leja_plot)
+             leja_tol=args.leja_tol, leja_n_zeros=args.leja_n_zeros,
+             leja_plot=args.leja_plot,
+             dd_method=args.dd_method, max_substeps=args.max_substeps
+             )

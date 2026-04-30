@@ -18,7 +18,7 @@
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
 use crate::arnoldi::arnoldi_lop;
-use crate::ode_sys::ExtendedLinOp;
+use crate::ode_sys::{DynRefExtendedLinOp};
 use crate::matexp_pade;
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 
@@ -103,7 +103,7 @@ impl KrylovExpm {
         (phi_k_1, phi_k_2, phi_k_3)
     }
 
-    /// Similar to apply_phi_linop_3, this method evaluates linear combinations
+    /// This method evaluates linear combinations
     /// of phi functions using only a single matexp call, thus reducing the
     /// number of calls to arnoldi.
     ///
@@ -119,7 +119,7 @@ impl KrylovExpm {
     /// * `vb` - Vec of rhs, [v] in [phi_0(A*dt) * v_0 + ...]
     pub fn kiops_fixedsteps(
         &self,
-        ext_a_lo: &ExtendedLinOp,
+        ext_a_lo: &DynRefExtendedLinOp,
         dt: f64,
         vb: &Vec<MatRef<f64>>)
         -> Mat<f64>
@@ -136,7 +136,7 @@ impl KrylovExpm {
 }
 
 impl LinOpPhikvEvaluator for KrylovExpm {
-    fn apply_phi_k_v(&self, a_lo: &ExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
+    fn apply_phi_k_v(&self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
         self.kiops_fixedsteps(a_lo, dt, vb)
     }
 
@@ -149,8 +149,52 @@ impl LinOpPhikvEvaluator for KrylovExpm {
 #[cfg(test)]
 mod test_matexp_krylov {
     use assert_approx_eq::assert_approx_eq;
+    use crate::mat_utils::mat_mat_approx_eq;
+    use crate::matexp_pade::{matexp, phi_ext};
+    use crate::test_common::{gen_test_a, gen_test_b};
 
     // bring everything from above (parent) module into scope
     use super::*;
 
+    #[test]
+    fn test_krylov_phikv() {
+        // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
+        // krylov method.
+        let iom = 2;
+        let max_krylov_dim = 100;
+        let expmv = Box::new(matexp_pade::PadeExpm::new(12));
+        let krylov_phikv_eval = KrylovExpm::new(expmv, max_krylov_dim, Some(iom));
+
+        // Generate a test matrix
+        let (test_b, test_v) = gen_test_b();
+
+        // generate vb vector: vb = [b0, b1, ... bk]
+        let test_vb = vec![test_v.as_ref(),];
+
+        // compute phi_0(dt*A)*b0
+        let dt = 0.3;
+        let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
+        let phi0mv_krylov_pm: Mat<f64> = krylov_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
+
+        // Ensure results are consistent with pade methods.
+        let phi0mv_pade_dense = matexp(test_b.as_ref(), dt) * test_v.as_ref();
+        println!("krylov phi0mv: {:?}", &phi0mv_krylov_pm);
+        println!("pade phi0mv: {:?}", &phi0mv_pade_dense);
+        mat_mat_approx_eq(
+            phi0mv_krylov_pm.as_ref(), phi0mv_pade_dense.as_ref(), 1e-8);
+
+
+        // compute phi_1(dt*A)*b0
+        let zeros = Mat::zeros(test_v.nrows(), test_v.ncols());
+        let test_vb = vec![zeros.as_ref(), test_v.as_ref(),];
+        let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
+        let phi1mv_krylov_pm: Mat<f64> = krylov_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
+
+        // Ensure results are consistent with pade methods.
+        let phi1mv_pade_dense = phi_ext((dt*test_b).as_ref(), 1) * test_v.as_ref();
+        println!("krylov phi1mv: {:?}", &phi1mv_krylov_pm);
+        println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
+        mat_mat_approx_eq(
+            phi1mv_krylov_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);
+    }
 }

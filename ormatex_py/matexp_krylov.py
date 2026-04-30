@@ -100,9 +100,7 @@ def kiops_fixedsteps(a_lo: LinOp, dt: float, vb: list[jax.Array], max_krylov_dim
         b = jnp.vstack(vb[:0:-1]).T / norm_vb
 
         # build \tilde A
-        k = np.zeros((p,p))
-        k[0:p-1, 1:] = np.eye(p-1)
-        k = jnp.asarray(k)
+        k = jnp.eye(p, p, k=1)
         a_tilde_lo = AugMatrixLinOp(a_lo, dt, b, k)
 
         unit_vec = np.zeros(p)

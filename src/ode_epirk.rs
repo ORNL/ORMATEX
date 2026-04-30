@@ -16,19 +16,14 @@
 /// Exponential prop-iterative RK class of exponential integrators
 ///
 use faer::prelude::*;
-use num_traits::real::Real;
-use num_traits::Float;
-use crate::matexp_krylov::KrylovExpm;
 use crate::matexp_traits::LinOpPhikvEvaluator;
 use crate::ode_sys::*;
 use faer::matrix_free::LinOp;
-use faer::dyn_stack::PodStack;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
-use std::marker::PhantomData;
 use std::collections::VecDeque;
 
 
-pub struct EpirkIntegrator<'a, T: LinOpPhikvEvaluator>
+pub struct EpirkIntegrator<T: LinOpPhikvEvaluator>
 {
     /// Matrix exponential evaluator
     expm: T,
@@ -48,12 +43,9 @@ pub struct EpirkIntegrator<'a, T: LinOpPhikvEvaluator>
     /// Storage for past system solution states
     y_hist: VecDeque<Mat<f64>>,
     t_hist: VecDeque<f64>,
-
-    /// Use a lifetime
-    phantom: PhantomData<&'a ()>
 }
 
-impl <'a, T> EpirkIntegrator <'a, T>
+impl <T> EpirkIntegrator <T>
 where
     T: LinOpPhikvEvaluator
 {
@@ -77,7 +69,6 @@ where
             tol_fdt: -1.0,
             y_hist,
             t_hist,
-            phantom: Default::default()
         }
     }
 
@@ -134,12 +125,21 @@ where
         (phi2_v, v)
     }
 
+    /// Exponential Propagative Iterative Order 2 method (EPI3)
+    ///
+    /// Gaudreault, Stéphane, and Janusz A. Pudykiewicz.
+    /// An efficient exponential time integration method for the numerical
+    /// solution of the shallow water equations on the sphere.
+    /// Journal of Computational Physics 322 (2016): 827-848.
+    ///
+    /// Tokman, Mayya. Efficient integration of large stiff systems of ODEs
+    /// with exponential propagation iterative (EPI) methods.
+    /// Journal of Computational Physics 213.2 (2006): 748-776.
     /// EPI2
-    fn step_order_2<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_2<'b>(&mut self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
-
 
         // setup jacobian linear operator evaluated at y0
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
@@ -147,12 +147,24 @@ where
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
 
         // correction for nonautonomous case
-        let (phi2_v, _) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+        let v: Mat<f64> = if self.tol_fdt < 0.0 {
+                faer::Mat::zeros(y0.nrows(), 1)
+            } else {
+                self.frhs_fdt(sys, fy0.as_ref(), 1e-8)
+            };
+        let vb2 = dt.powi(2) * v;
 
-        let y_new = y0.as_ref() + phi2_v +
-            self.expm.apply_phi_k(
-                sys_jac_lop.as_ref(),
-                dt, fy0_dt.as_ref(), 1);
+        // build vector of rhs
+        let zero_mat = faer::Mat::zeros(y0.nrows(), 1);
+        let vb = vec![
+            zero_mat.as_ref(),
+            fy0_dt.as_ref(),
+            vb2.as_ref(),
+        ];
+        let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
+        let (v, _n) = &ext_a_lo.get_v(&vb);
+        self.expm.apply_prepare(&ext_a_lo, 1.0, v.as_ref());
+        let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, None))
@@ -160,7 +172,10 @@ where
 
     /// EXPRB32
     /// Exponential Rosenroack order 3 with 2nd order embedded error estimate.
-    fn step_exprb32<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64)
+    /// Ref: Hochbruck, Marlis, Alexander Ostermann, and Julia Schweitzer.
+    /// Exponential Rosenbrock-type methods.
+    /// SIAM Journal on Numerical Analysis 47.1 (2009): 786-803.
+    fn step_exprb32<'b>(&mut self, sys: &'b dyn OdeSys<'b>, dt: f64)
         -> Result<StepResult<f64, Mat<f64>>, StepError>
     {
         // current state
@@ -171,6 +186,7 @@ where
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref());
 
         // correction for nonautonomous case
         let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
@@ -195,11 +211,14 @@ where
         Ok(StepResult::new(t+dt, dt, y_new, Some(y_err)))
     }
 
-    /// EPI3
-    /// From Gaudreault et. al.
+    /// Exponential Propagative Iterative Order 3 method (EPI3)
+    ///
+    /// Gaudreault, Stéphane, and Janusz A. Pudykiewicz.
     /// An efficient exponential time integration method for the numerical
+    /// solution of the shallow water equations on the sphere.
+    /// Journal of Computational Physics 322 (2016): 827-848.
     /// solution of the shallow water equations.
-    fn step_order_3<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    fn step_order_3<'b>(&mut self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
@@ -211,35 +230,41 @@ where
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
 
         // correction for nonautonomous case
-        let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
+        let v: Mat<f64> = if self.tol_fdt < 0.0 {
+                faer::Mat::zeros(y0.nrows(), 1)
+            } else {
+                self.frhs_fdt(sys, fy0.as_ref(), 1e-8)
+            };
 
         let rn_dt = faer::Scale(dt * 2.0 / 3.0) * self.remf(
             sys, tp, yp.as_ref(), fy0.as_ref(), sys_jac_lop.as_ref(), Some(v.as_ref()));
+        let vb2 = rn_dt + dt.powi(2) * v;
 
-        // only need single apply linop using kiops
         // build vector of rhs
         let zero_mat = faer::Mat::zeros(y0.nrows(), 1);
         let vb = vec![
             zero_mat.as_ref(),
             fy0_dt.as_ref(),
-            rn_dt.as_ref(),
+            vb2.as_ref(),
         ];
-        let ext_a_lo = ExtendedLinOp::new(dt, sys_jac_lop, &vb);
-        let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb) + phi2_v;
+        let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
+        let (v, _n) = &ext_a_lo.get_v(&vb);
+        self.expm.apply_prepare(&ext_a_lo, 1.0, v.as_ref());
+        let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result
         Ok(StepResult::new(t+dt, dt, y_new, None))
     }
 }
 
-impl <'a, T> IntegrateSys<'a> for EpirkIntegrator<'a, T>
+impl <'a, T> IntegrateSys<'a> for EpirkIntegrator<T>
 where
     T: LinOpPhikvEvaluator
 {
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step<'b>(&self, sys: &'b dyn OdeSys<'b>,  dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+    fn step<'b>(&mut self, sys: &'b dyn OdeSys<'b>,  dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
         match self.method.as_str() {
             "epi2" | "exprb2" => {
                 self.step_order_2(sys, dt)
@@ -270,10 +295,15 @@ where
        self.t = s.t;
        self.y_hist.push_front(s.y);
        self.t_hist.push_front(s.t);
+       if self.y_hist.len() >= self.order+1 {
+           self.y_hist.pop_back();
+           self.t_hist.pop_back();
+       }
     }
 
     fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType) {
         self.y_hist.clear();
+        self.t_hist.clear();
         self.y_hist.push_front(y0.to_owned());
         self.t_hist.push_front(t0);
         self.t = t0;

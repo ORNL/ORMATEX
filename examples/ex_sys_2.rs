@@ -6,9 +6,12 @@ use ormatex::ode_bdf;
 use ormatex::ode_rk;
 use ormatex::ode_epirk;
 use ormatex::matexp_krylov;
-use ormatex::ode_test_common::*;
+use ormatex::test_common::*;
 use ormatex::matexp_pade;
-// use plotters::prelude::*;
+
+// optional deps for plotting
+#[cfg(feature="plot")]
+use kuva::prelude::*;
 
 
 pub fn main() {
@@ -61,58 +64,42 @@ pub fn main() {
         println!("{:?}, {:?}, {:?}, {:?}", t_points[i], c0[i], c1[i], c2[i]);
     }
 
-    // plot_time_series(t_points.clone(), c0.clone(), c1.clone(), c2.clone());
+    #[cfg(feature="plot")]
+    plot_time_series(t_points.clone(), c0.clone(), c1.clone(), c2.clone());
 }
 
+#[cfg(feature="plot")]
+fn plot_time_series(t: Vec<f64>, c0: Vec<f64>, c1: Vec<f64>, c2: Vec<f64>)
+    -> Result<(), Box<dyn std::error::Error>>
+{
+    // create plots
+    let plots = vec![
+        Plot::Line(LinePlot::new()
+            // iter() yeilds &T and into_iter yeilds T
+            .with_data(t.clone().into_iter().zip(c0.clone().into_iter()))
+            .with_color("steelblue")
+            .with_legend("c0")
+        ),
+        Plot::Line(LinePlot::new()
+            .with_data(t.clone().into_iter().zip(c1.clone().into_iter()))
+            .with_color("crimson")
+            .with_legend("c1")
+        ),
+        Plot::Line(LinePlot::new()
+            .with_data(t.clone().into_iter().zip(c2.clone().into_iter()))
+            .with_color("seagreen")
+            .with_legend("c2")
+        ),
+    ];
+    let layout = Layout::auto_from_plots(&plots)
+        .with_log_y()
+        .with_log_x()
+        .with_x_axis_min(0.1)
+        .with_y_axis_min(1.0e-8)
+        .with_x_label("x")
+        .with_y_label("c");
+    let svg = render_to_svg(plots, layout);
+    std::fs::write("ex_2.svg", svg)?;
 
-// fn plot_time_series(t: Vec<f64>, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), Box<dyn std::error::Error>> {
-//     let root = BitMapBackend::new("ex_bateman.png", (640, 480)).into_drawing_area();
-//     root.fill(&WHITE)?;
-//     let mut chart = ChartBuilder::on(&root)
-//         .margin(5)
-//         .x_label_area_size(30)
-//         .y_label_area_size(30)
-//         .build_cartesian_2d((0f64..10000f64).log_scale(), (1e-9f64..2.0f64).log_scale())?;
-// 
-//     chart.configure_mesh()
-//         .y_desc("Population")
-//         .x_desc("Time")
-//         .draw()?;
-// 
-//     chart
-//         .draw_series(LineSeries::new(
-//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-//             t.clone().into_iter().zip(x),
-//             &RED,
-//         ))?
-//         .label("n0")
-//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
-// 
-//     chart
-//         .draw_series(LineSeries::new(
-//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-//             t.clone().into_iter().zip(y),
-//             &BLUE,
-//         ))?
-//         .label("n1")
-//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
-// 
-//     chart
-//         .draw_series(LineSeries::new(
-//             // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-//             t.clone().into_iter().zip(z),
-//             &GREEN,
-//         ))?
-//         .label("n2")
-//         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
-// 
-//     chart
-//         .configure_series_labels()
-//         .background_style(&WHITE.mix(0.8))
-//         .border_style(&BLACK)
-//         .draw()?;
-// 
-//     root.present()?;
-// 
-//     Ok(())
-// }
+    Ok(())
+}
