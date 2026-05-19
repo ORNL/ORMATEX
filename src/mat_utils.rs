@@ -122,6 +122,12 @@ pub fn dense_to_sprs<T>(a: MatRef<T>) -> SparseColMat<usize, T>
     out
 }
 
+/// computes the factorial
+pub fn ufactorial(num: usize) -> f64 {
+    (1..=num).product::<usize>() as f64
+}
+
+
 /// Linear Operator
 pub trait LinOp<T>
     where

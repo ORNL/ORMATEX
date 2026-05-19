@@ -118,18 +118,24 @@ pub fn arnoldi_lop<T>(
     where
     T: RealField + Float,
 {
+    let mut breakdown_n = 0;
     let m = std::cmp::min(n, b.nrows());
     let mut hs = faer::Mat::zeros(m, m);
     let mut qs = faer::Mat::zeros(b.nrows(), m);
     let norm_b = b.norm_l2();
-    let q0 = b * faer::Scale(T::from(1.0).unwrap() / norm_b);
+
+    // prevent div by 0 if norm_b~0
+    let not_early_bkdwn: bool =  (T::one() / norm_b).is_finite();
+    let q0 = if not_early_bkdwn {
+        b * faer::Scale(T::from(1.0).unwrap() / norm_b)
+    } else {
+        b * faer::Scale(T::from(1.0).unwrap())
+    };
     qs.col_mut(0).copy_from(q0.col(0));
 
     // mem buffer size
     let par = faer::get_global_parallelism();
     let mut mem_buf = MemBuffer::new(a_lo.apply_scratch(b.ncols(), par));
-
-    let mut breakdown_n = 0;
 
     for k in 0..m {
         let breakdown_flag = arnoldi_inner_lop(
@@ -169,14 +175,20 @@ pub fn arnoldi_lop_ext<T>(
     where
     T: RealField + Float,
 {
+    let mut breakdown_n = 0;
     let m = std::cmp::min(n, b.nrows());
     let mut hs = faer::Mat::zeros(m+1, m);
     let mut qs = faer::Mat::zeros(b.nrows(), m+1);
     let norm_b = b.norm_l2();
-    let q0 = b * faer::Scale(T::from(1.0).unwrap() / norm_b);
-    qs.col_mut(0).copy_from(q0.col(0));
 
-    let mut breakdown_n = 0;
+    // prevent div by 0 if norm_b~0
+    let not_early_bkdwn: bool =  (T::one() / norm_b).is_finite();
+    let q0 = if not_early_bkdwn {
+        b * faer::Scale(T::from(1.0).unwrap() / norm_b)
+    } else {
+        b * faer::Scale(T::from(1.0).unwrap())
+    };
+    qs.col_mut(0).copy_from(q0.col(0));
 
     // mem buffer size
     let par = faer::get_global_parallelism();

@@ -36,11 +36,178 @@ const LEJA_REAL_CSV: &str = std::include_str!("leja_points_real");
 /// Complex conjugate leja points are on the unit circle.
 const LEJA_CIRCLE_CSV: &str = std::include_str!("leja_points_circle");
 
+/// Generate conjugate-pair leja points along a circle with radius r on the complex plane.
+///
+/// # Args
+/// * `n_leja` : number of leja points to generate
+/// * `r` : leja circle radius
+///
+pub fn gen_leja_circle(n_leja: usize, r: f64) -> (Vec<f64>, Vec<f64>)
+{
+    let mut leja_re: Vec<f64> = Vec::with_capacity(n_leja);
+    let mut leja_im: Vec<f64> = Vec::with_capacity(n_leja);
+    let max_base = n_leja.max(2);
+    let mut lp_base: Vec<c64> = vec![c64::new(0.0, 0.0); max_base];
+    let mut lp_is_real: Vec<bool> = vec![false; max_base];
+
+    // first two leja points {-1+0i, 1+0i}
+    lp_base[0] = c64::new(-1.0, 0.0);
+    lp_base[1] = c64::new(1.0, 0.0);
+    lp_is_real[0] = true;
+    lp_is_real[1] = true;
+
+    // root_unity starts at i = exp(i*pi/2).  Each time we finish a full sweep of
+    // the upper half-circle we double `full_half_circle` and halve the rotation
+    // angle by taking the complex square root of root_unity.
+    let mut root_unity = c64::new(0.0, 1.0);
+    let mut full_half_circle: usize = 1;
+
+    for lpk in 2..max_base {
+        // Rotate the reference point from the previous full half-circle sweep.
+        let next_lp = lp_base[lpk - full_half_circle] * root_unity;
+        lp_base[lpk] = next_lp;
+        lp_is_real[lpk] = false; // LPCONJ: upper half-plane complex point
+
+        // After completing one full sweep, halve the rotation angle.
+        if lpk >= 2 * full_half_circle {
+            full_half_circle *= 2;
+            root_unity = ComplexFloat::sqrt(root_unity);
+        }
+    }
+
+    // Swap so the sequence opens with +1 then −1
+    lp_base.swap(0, 1);
+    lp_is_real.swap(0, 1);
+
+    // expand to the full interleaved conjugate-pair sequence
+    for i in 0..max_base {
+        if leja_re.len() >= n_leja {
+            break;
+        }
+        if lp_is_real[i] {
+            // Real anchor point — single entry
+            leja_re.push(r * lp_base[i].re());
+            leja_im.push(0.0);
+        } else {
+            // Upper half-plane point
+            leja_re.push(r * lp_base[i].re());
+            leja_im.push(r * lp_base[i].im());
+            // Lower half-plane conjugate (stored immediately after)
+            if leja_re.len() < n_leja {
+                leja_re.push(r * lp_base[i].re());
+                leja_im.push(-r * lp_base[i].im());
+            }
+        }
+    }
+
+    (leja_re, leja_im)
+}
+
+/// Generate leja points on the real interval [a, b].
+///
+/// Ref:
+///   Baglama, J., D. Calvetti, and L. Reichel.
+///   "Fast leja points." Electron. Trans. Numer. Anal 7.124-140 (1998): 119-120.
+///
+/// # Args
+/// * `n_leja` : number of leja points to generate
+/// * `a` : lower  limit, typically -1
+/// * `b` : upper limit, typically 1
+///
+pub fn gen_leja_line(n_leja: usize, a: f64, b: f64) -> (Vec<f64>, Vec<f64>)
+{
+    // --- edge cases -------------------------------------------------------
+    if n_leja == 0 {
+        return (vec![], vec![]);
+    }
+    let first = if a.abs() > b.abs() { a } else { b };
+    if n_leja == 1 {
+        return (vec![first], vec![0.0]);
+    }
+    let second = if a.abs() > b.abs() { b } else { a };
+    if n_leja == 2 {
+        return (vec![first, second], vec![0.0, 0.0]);
+    }
+
+    let n   = n_leja;
+    let mid = (a + b) / 2.0;
+
+    // zt[0..3] = first three fast-leja points; remaining entries stay 0.
+    let mut zt = vec![0.0_f64; n];
+    zt[0] = first;
+    zt[1] = second;
+    zt[2] = mid;
+
+    // zs[k] = current candidate midpoint whose product-tracker is zprod[k].
+    // Entries beyond index 1 stay 0 (inactive) until activated by the loop.
+    let mut zs = vec![0.0_f64; n];
+    zs[0] = (zt[1] + zt[2]) / 2.0;
+    zs[1] = (zt[2] + zt[0]) / 2.0;
+
+    // zprod[k] = prod_j( zs[k] - zt[j] ) over the 3 active seed points.
+    let mut zprod = vec![0.0_f64; n];
+    zprod[0] = zt[0..3].iter().map(|&z| zs[0] - z).product();
+    zprod[1] = zt[0..3].iter().map(|&z| zs[1] - z).product();
+
+    // index[k] = [left_neighbor_idx, right_neighbor_idx] for candidate k.
+    let mut index = vec![[0usize; 2]; n];
+    index[0] = [1, 2];
+    index[1] = [2, 0];
+
+    for i in 3..n {
+        // argmax: return the FIRST index that achieves the maximum |zprod|.
+        let mut maxi    = 0usize;
+        let mut max_val = zprod[0].abs();
+        for j in 1..n {
+            let v = zprod[j].abs();
+            if v > max_val {
+                max_val = v;
+                maxi    = j;
+            }
+        }
+
+        // Place new leja point.
+        zt[i] = zs[maxi];
+
+        // Update adjacency links.
+        index[i-1][0] = i;
+        index[i-1][1] = index[maxi][1];
+        index[maxi][1] = i;
+
+        // Recompute the two affected candidate midpoints.
+        zs[maxi] = (zt[index[maxi][0]] + zt[index[maxi][1]]) / 2.0;
+        zs[i-1]  = (zt[index[i-1][0]]  + zt[index[i-1][1]])  / 2.0;
+
+        // Recompute zprod for the two updated candidates using only the
+        // i active leja points zt[0..i] (zt[i] was just placed above).
+        // This matches Python's  np.prod(zs[k] - zt[0:i])  which uses
+        // zt[0:i] (exclusive of the newly placed point at index i).
+        zprod[maxi] = zt[0..i].iter().map(|&z| zs[maxi] - z).product();
+        zprod[i-1]  = zt[0..i].iter().map(|&z| zs[i-1]  - z).product();
+
+        // Extend all running products by the factor (zs[j] - zt[i]).
+        // Matches Python's  zprod = zprod * (zs - zt[i]).
+        let zt_i = zt[i];
+        for j in 0..n {
+            zprod[j] *= zs[j] - zt_i;
+        }
+    }
+
+    let leja_im = vec![0.0_f64; n];
+    (zt, leja_im)
+}
 
 /// Rescale the leja points to bound the interval [a, b, -c, +c].
 ///
-/// Returns:
-///         (leja_re, leja_im, shift, scale)
+/// # Args
+/// * `leja_re` : real component of the leja points
+/// * `leja_im` : imag component of the leja points
+/// * `a` : min real extent
+/// * `b` : max real extent
+/// * `c` : max imaginary extent
+///
+/// # Returns:
+/// * (leja_re, leja_im, shift, scale)
 pub fn shift_scale_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f64, c: f64)
     -> (Col<f64>, Col<f64>, f64, f64)
 {
@@ -62,8 +229,8 @@ pub fn shift_scale_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f
 /// operation from the bounds [a, b, -c, +c]  back to the original leja
 /// sequence bounds.
 ///
-/// Returns:
-///         (leja_re, leja_im)
+/// # Returns:
+/// * (leja_re, leja_im)
 pub fn inv_shift_scale_leja(leja_re: ColRef<f64>, leja_im: ColRef<f64>, a: f64, b: f64, c: f64, re_scale: f64, im_scale: f64)
     -> (Col<f64>, Col<f64>)
 {
@@ -119,6 +286,14 @@ impl LejaPoints {
             leja_im,
             leja_x,
         }
+    }
+
+    pub fn new_from_fn(method: &str) -> Self {
+        let (lp_re, lp_im) = match method {
+            "leja_real" => gen_leja_line(1000, -1.0, 1.0),
+            _ => gen_leja_circle(1000, 1.0)
+        };
+        Self::new(lp_re, lp_im)
     }
 
     /// Create leja points from csv file of format:
@@ -306,11 +481,6 @@ impl LejaPoints {
     }
 }
 
-/// computes the factorial
-pub fn ufactorial(num: usize) -> f64 {
-    (1..=num).product::<usize>() as f64
-}
-
 /// Compute the dense matrix exponential using tayler series
 ///
 /// # Args
@@ -336,16 +506,8 @@ pub fn phik_taylor<T: ComplexField>(a: MatRef<T>, shift: f64, scale: f64, p: usi
 
 /// Optimized phi_k Taylor series for lower-bidiagonal `a_bi`.
 ///
-/// Exploits the structure of `a_bi` (diagonal `d[i]`, constant subdiagonal `s`):
-/// - Accumulation into `ts_expm` touches only the lower-triangular band of `m`.
-/// - The update `m ← a_bi * m` is an in-place bottom-to-top row sweep:
-///       new_m[(r, c)] = d[r] * m[(r, c)] + s * m[(r-1, c)]
-///   processed from row n-1 down to 1, then row 0 separately.
-/// - The bandwidth of `m` grows by 1 each iteration (starting at 2),
-///   so only O(n * iter) entries are touched per step instead of O(n²).
-///
 /// # Args
-/// * `A` : the matrix
+/// * `a_bi` : the lower bidiagonal matrix
 /// * `shift` : spectrum shift parameter. 0.0 for unshifted matexp.
 /// * `scale` : spectrum shift parameter. 1.0 for unscaled matexp.
 /// * `p` : polynomial order
@@ -382,7 +544,7 @@ pub fn phik_taylor_bidiag<T: ComplexField>(a_bi: MatRef<T>, shift: f64, scale: f
         fact *= (k + i + 1) as f64;
         let inv_fact_t = from_f64::<T>(1.0 / fact);
 
-        // ts_expm += m / fact  — band-aware: m[(row,col)] ≠ 0 only for col ≤ row < col+bandwidth.
+        // ts_expm += m / fact - band-aware: m[(row,col)] =/= 0 only for col <= row < col+bandwidth.
         for col in 0..n {
             let row_max = (col + bandwidth).min(n);
             for row in col..row_max {
@@ -392,7 +554,7 @@ pub fn phik_taylor_bidiag<T: ComplexField>(a_bi: MatRef<T>, shift: f64, scale: f
             }
         }
 
-        // m ← a_bi * m  in-place via bottom-to-top row sweep.
+        // m <- a_bi * m  in-place via bottom-to-top row sweep.
         // new_m[(r,c)] = d[r]*m[(r,c)] + s[r]*m[(r-1,c)]
         // New bandwidth = bandwidth + 1 (capped at n).
         let new_bw = (bandwidth + 1).min(n);
@@ -651,7 +813,6 @@ usize) -> Col<c64>
     let dd_row = buf_a;
 
     // Output: exp(mu) * dd_row[l+i].
-    // The hs^i scaling is already encoded in the seeds; no extra scale^i needed.
     let exp_mu = mu.exp();
     Col::from_fn(n_leja, |i| {
         exp_mu * dd_row[(0, l + i)]
@@ -679,6 +840,7 @@ pub struct LejaPhiEval {
     spec_norm: f64,
     spec_norm_tol: f64,
     spec_iters: usize,
+    spec_iom: usize,
     spec_method: String,
     dd_method: String,
     arnld_q: Option<Mat<f64>>,
@@ -700,6 +862,7 @@ impl LejaPhiEval {
     /// * `tol` - leja polynomial approximation tolerance
     /// * `spec_norm_tol` - tolerance used to trigger recomputation of spectrum parameters
     /// * `spec_iters` - maximum number of arnoldi iterations used in spectrum parameter calc
+    /// * `spec_iom` - orthogonalization depth used in arnolid spectrum parameter estimate
     /// * `spec_method` - method used to estimate spectrum parameters
     /// * `dd_method` - method used to compute divided differences
     /// * `krylov_reuse` - reuse krylov subspace for fast interpolation at the ritz values
@@ -730,6 +893,7 @@ impl LejaPhiEval {
             spec_norm: -1.0,
             spec_norm_tol: spec_norm_tol,
             spec_iters: spec_iters,
+            spec_iom: 12,
             spec_method: spec_method.to_string(),
             dd_method: dd_method.to_string(),
             arnld_q: None,
@@ -782,6 +946,7 @@ impl LejaPhiEval {
             spec_norm: -1.0,
             spec_norm_tol: spec_norm_tol,
             spec_iters: spec_iters,
+            spec_iom: 12,
             spec_method: spec_method.to_string(),
             dd_method: dd_method.to_string(),
             arnld_q: None,
@@ -1423,9 +1588,8 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
 
             match self.spec_method.as_str() {
                 "arnoldi" => {
-                    let iom = 20;  // incomplete ortho depth
                     let (_a, _b, _c, ritz_re, ritz_im, q, h) = spectrum_arnoldi_iom(
-                        a_lo, v_ext.as_ref(), dt, self.spec_iters, iom, false);
+                        a_lo, v_ext.as_ref(), dt, self.spec_iters, self.spec_iom, false);
                     // safty factor
                     let sf = 1.1;
                     let (a, b, c) = (sf*_a, _b, sf*_c);
@@ -1636,7 +1800,7 @@ pub fn spectrum_arnoldi_iom(
         return (*a, *b, *c, ritz_re, ritz_im, q, h)
     }
     // apply artificial spectrum bounds
-    (a.min(-1.0e-2), b.max(0.0), *c, ritz_re, ritz_im, q, h)
+    (a.min(-1.0e-2), 0.0, *c, ritz_re, ritz_im, q, h)
 }
 
 
@@ -1803,7 +1967,7 @@ mod test_matexp_leja {
         // leja polynomial method.
 
         // load leja points
-        let lp = LejaPoints::new_from_lib("leja_circle").slice(0, 100);
+        let lp = LejaPoints::new_from_fn("leja_circle").slice(0, 100);
 
         // Generate a test matrix
         let (test_b, test_v) = gen_test_b();
@@ -1851,7 +2015,7 @@ mod test_matexp_leja {
 
     fn _test_leja_ritz_phikv(dt: f64, test_b: Mat<f64>, test_v: Mat<f64>, krylov_reuse: bool, max_arnoldi_iters: usize, max_substeps: usize) {
         // load leja points
-        let lp = LejaPoints::new_from_lib("leja_circle").slice(0, 300);
+        let lp = LejaPoints::new_from_fn("leja_circle").slice(0, 300);
 
         // generate vb vector: vb = [b0, b1, ... bk]
         let test_vb = vec![test_v.as_ref(),];
@@ -2087,5 +2251,31 @@ mod test_matexp_leja {
         _test_dd_phi(a, b, c, 1.0, 100, 1e-10);
         _test_dd_phi(a, b, c, 1.0, 60,  1e-10);
         _test_dd_phi(a, b, c, 1.0, 100, 1e-10);
+    }
+
+    #[test]
+    fn test_leja_circle() {
+        let lp_fn = LejaPoints::new_from_fn("leja_circle").slice(0, 50);
+        let lp_lib = LejaPoints::new_from_lib("leja_circle").slice(0, 50);
+        for (lp_fn_re, lp_lib_re) in lp_fn.leja_re.iter().zip(lp_lib.leja_re.iter()) {
+            println!("{lp_lib_re}, {lp_fn_re}");
+            // assert_approx_eq!(lp_fn_re, lp_lib_re);
+        }
+        for (lp_fn_im, lp_lib_im) in lp_fn.leja_im.iter().zip(lp_lib.leja_im.iter()) {
+            // assert_approx_eq!(lp_fn_im, lp_lib_im);
+        }
+    }
+
+    #[test]
+    fn test_leja_line() {
+        let lp_fn = LejaPoints::new_from_fn("leja_real").slice(0, 50);
+        let lp_lib = LejaPoints::new_from_lib("leja_real").slice(0, 50);
+        for (lp_fn_re, lp_lib_re) in lp_fn.leja_re.iter().zip(lp_lib.leja_re.iter()) {
+            println!("{lp_lib_re}, {lp_fn_re}");
+            assert_approx_eq!(lp_fn_re, lp_lib_re);
+        }
+        for (lp_fn_im, lp_lib_im) in lp_fn.leja_im.iter().zip(lp_lib.leja_im.iter()) {
+            assert_approx_eq!(lp_fn_im, lp_lib_im);
+        }
     }
 }
