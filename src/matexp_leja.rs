@@ -1105,8 +1105,8 @@ impl LejaPhiEval {
         )
         -> Result<(usize, Mat<f64>, Mat<f64>), ()>
     {
-        match self.leja_ellipse_adapter.get_krylov_subspace() {
-            (Some(q), Some(h)) => {
+        match (self.krylov_reuse, self.leja_ellipse_adapter.get_krylov_subspace()) {
+            (true, (Some(q), Some(h))) => {
                 // number of ritz values available
                 let n_r = q.ncols();
 
@@ -1221,8 +1221,8 @@ impl LejaPhiEval {
         let n_leja_real = self.leja_x.slice(rp, rp+10).n_leja_real();
 
         // precompute scaling factors
-         let inv_scale    = 1.0 / scale;
-         let tau_inv_scale = tau * inv_scale;
+        let inv_scale    = 1.0 / scale;
+        let tau_inv_scale = tau * inv_scale;
 
         // compute leja polynomial terms for leading real points
         for i in 1+rp..=n_leja_real+rp {
@@ -2024,7 +2024,7 @@ mod test_matexp_leja {
     }
 
     #[test]
-    fn test_leja_phikv() {
+    fn test_leja_phikv_simple() {
         // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
         // leja polynomial method.
 
@@ -2046,7 +2046,7 @@ mod test_matexp_leja {
         // fn apply_phi_k_v(&self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
         let dt = 1.0;
         let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
-        leja_phikv_eval.apply_prepare(&test_b, 1.0, test_v.as_ref());
+        leja_phikv_eval.apply_prepare(&test_b, dt, test_v.as_ref());
         let phi0mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, dt, &test_vb);
 
         // Ensure results are consistent with pade methods.
