@@ -31,15 +31,17 @@ pub fn main() {
     // setup the integrator
     // let mut sys_solver = ode_bdf::BdfIntegrator::new(0.0, y0.as_ref(), 2);
     // let mut sys_solver = ode_rk::RkIntegrator::new(0.0, y0.as_ref(), 2);
-    let iom = 2;
-    let krylov_dim = 4;
-    let expmv = Box::new(matexp_pade::PadeExpm::new(12));
+    // let iom = 2;
+    // let krylov_dim = 4;
+    // let expmv = Box::new(matexp_pade::PadeExpm::new(12));
     // let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
 
     let _logger = init_logger();
     let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 60);
-    let mut matexp_m = matexp_leja::LejaPhiEval::new(
-        lp, 20, 0.0, 1.0, 1e-12, 1e-8, 20, "arnoldi", "dd_phi", true);
+    let leja_ellipse_adapter = matexp_leja::LejaEllipseAdapterArnoldiIOM::new(
+        -1.0, 0.0, 0.0, 1e-12, 20, 4, 1.0);
+    let matexp_m = matexp_leja::LejaPhiEval::new(
+        lp, 20, 1e-12, "clapm", "dd_phi", false, Box::new(leja_ellipse_adapter));
 
     let mut sys_solver = ode_epirk::EpirkIntegrator::<matexp_leja::LejaPhiEval>::new(
         0.0, y0.as_ref(), "epi3".to_string(), matexp_m);
