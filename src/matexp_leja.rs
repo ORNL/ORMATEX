@@ -29,7 +29,7 @@ use csv;
 
 use crate::ode_sys::{DynRefExtendedLinOp};
 use crate::matexp_traits::{LinOpPhikvEvaluator};
-use crate::arnoldi::{arnoldi_lop, arnoldi_lop_ext};
+use crate::arnoldi::{arnoldi_lop, arnoldi_lop_ext, arnoldi_lop_restarted};
 
 /// Pre-generated Leja points from file
 /// Real leja points in [-2, 2]
@@ -1126,8 +1126,9 @@ impl LejaPhiEval {
                 // number of ritz values available
                 let n_r = h.nrows()-1;
 
-                // convert to complex for interpolation at the (complex-conj) ritz values
-                // Note: The hessenberg matrix h built from the extended linop tau*A_ext
+                // convert to complex for interpolation at the ritz values
+                // Note: The hessenberg matrix h built from dt*A within
+                // the extend linop \tilde A = [[dt*A, B], [0, K]]
                 let cmplx_h: Mat<c64> = faer::Mat::from_fn(
                     h.nrows(), h.ncols(), |i, j| { tau*c64::new(h[(i, j)], 0.0) } );
 
@@ -1140,13 +1141,6 @@ impl LejaPhiEval {
                         d0
                     },
                     _ => {
-                        // Fix B: no H-zero-steps. The Krylov subspace is built from vₚ
-                        // (see Fix A in complex_conj_leja_expmv), so e1 = [1,0,...,0]ᵀ is
-                        // the correct starting direction. norm_u = ||vₚ|| provides the
-                        // correct scaling when projecting back via pr = norm_u * q * pm_re.
-                        // The old loop `for _ in 0..p { e1 = tau*H/scale * e1 }` modelled
-                        // (tau/scale)^p * Aᵖ * q[:,0], which is wrong for the nilpotent
-                        // injection case where Ã·[0;1] = [u₁;0] requires zero A-applications.
                         let mut e1: Mat<c64> = Mat::zeros(h.nrows(), 1);
                         e1[(0, 0)] = c64::new(1.0, 0.0);
                         e1
@@ -1158,10 +1152,7 @@ impl LejaPhiEval {
                 for r in self.p+1..=self.p+n_r {
                     log::info!("kryl, {r}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}",
                                 tau_rho_re[r-1], tau_rho_im[r-1], coeffs[r], 0.);
-                    println!("kryl, {r}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}",
-                                tau_rho_re[r-1], tau_rho_im[r-1], coeffs[r], 0.);
                     let z = c64::new(tau_rho_re[r-1], tau_rho_im[r-1]);
-                    // TODO: use the leja point locations directly as they should match the ritz values
                     dr = (cmplx_h.as_ref()*dr.as_ref() - faer::Scale(z)*dr.as_ref()) / faer::Scale(gamma);
                     pm += faer::Scale(coeffs[r]) * dr.as_ref();
                 }
@@ -1295,7 +1286,6 @@ impl LejaPhiEval {
         }
         // number of leading zeros + n ritz values
         rp += self.p;
-        println!("*** p: {} zeros. rp: {rp} nritz + zeros", self.p);
         // extract next leja points in the sequence
         let n_leja_real = self.leja_x.slice(rp, rp+10).n_leja_real();
 
@@ -1326,8 +1316,6 @@ impl LejaPhiEval {
             converged = err_est < self.tol * norm_u;
             iter += 1;
             log::info!("real, {i}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}",
-                leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i], err_est);
-            println!("real, {i}, {:0.8e} + {:0.8e}i, {:0.6e}, {:0.6e}",
                 leja_x_sc_re[i-1], leja_x_sc_im[i-1], coeffs[i], err_est);
         }
 
@@ -1928,25 +1916,23 @@ pub fn spectrum_arnoldi_iom(
     update_b: bool)
     -> (f64, f64, f64, Vec<f64>, Vec<f64>, Mat<f64>, Mat<f64>)
 {
+    // allocate hessenberg
+    let mut hs = faer::Mat::zeros(n+1, n+1);
+    let mut qs = faer::Mat::zeros(v0.nrows(), n+1);
     // run arnoldi
-    let (q, h_, _bdwn) = arnoldi_lop_ext(a_lo, scale, v0, n, iom);
+    let (_, bdwn_n) = arnoldi_lop_restarted(
+        a_lo, scale, v0, hs.as_mut(), qs.as_mut(), 0, n, iom);
 
-    // extend h by one column to make square (n+1, n+1 matrix)
-    let mut h = h_.to_owned();
-    if h_.ncols() != h_.nrows() {
-        h = faer::Mat::from_fn(
-            h_.nrows(), h_.ncols()+1, |i, j|
-            {
-                if j == h_.ncols() { 0.0 }
-                else { h_[(i, j)] }
-            }
-        );
-    }
+    // trim hessenberg to size
+    let h_dim = min(n, bdwn_n);
+    // get H_{m+1}
+    let h = hs.get(0..h_dim+1, 0..h_dim+1).to_owned();
+    let q = qs.get(.., 0..h_dim+1).to_owned();
     assert!(h.ncols() == h.nrows());
     assert!(q.ncols() == h.nrows());
 
-    // compute the ritz values
-    let ritzv = h.get(0..min(n, _bdwn), 0..min(n, _bdwn)).eigenvalues().unwrap();
+    // compute the ritz values of H_{m}
+    let ritzv = hs.get(0..h_dim, 0..h_dim).eigenvalues().unwrap();
 
     // eigenvalues of `dt * a_lo`, matching the time-step
     // used in the Leja polynomial.

@@ -287,7 +287,7 @@ fn integrate_wrapper_rs<'py>(
     let spec_iter: usize = get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
     let spec_method: String = get_val_or_default(py, &kd_hash, String::from("spec_method"), String::from("arnoldi"));
     let dd_method: String = get_val_or_default(py, &kd_hash, String::from("dd_method"), String::from("dd_phi"));
-    let krylov_reuse: bool = get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), true);
+    let krylov_reuse: bool = get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), false);
     // optional logging settings
     let logging: bool = get_val_or_default(py, &kd_hash, String::from("logging"), false);
     let _logger: Option<LoggerHandle> = if logging {Some(init_logger())} else { None };
