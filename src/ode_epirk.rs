@@ -162,8 +162,8 @@ where
             vb2.as_ref(),
         ];
         let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
-        let (v, _n) = &ext_a_lo.get_v(&vb);
-        self.expm.apply_prepare(&ext_a_lo, 1.0, v.as_ref());
+        let (_v, _n) = &ext_a_lo.get_v(&vb);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), 1.0, y0.as_ref(), 2);
         let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result
@@ -186,7 +186,7 @@ where
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
-        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref());
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 0);
 
         // correction for nonautonomous case
         let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
@@ -248,8 +248,8 @@ where
             vb2.as_ref(),
         ];
         let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
-        let (v, _n) = &ext_a_lo.get_v(&vb);
-        self.expm.apply_prepare(&ext_a_lo, 1.0, v.as_ref());
+        let (_v, _n) = &ext_a_lo.get_v(&vb);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), 1.0, y0.as_ref(), 2);
         let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result
