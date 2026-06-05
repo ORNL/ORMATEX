@@ -370,13 +370,11 @@ impl LejaPoints {
         nz
     }
 
-    /// Build the lower bidiagonal matrix
-    ///
-    ///     Xi =
-    ///         [[leja_0,       0,       0],
-    ///         [[      1, leja_1,       0],
-    ///         [[    ...,     ...,    ...],
-    ///         [[      0,       1, leja_n],
+    /// Build the lower bidiagonal matrix, Xi =
+    /// [[leja_0,       0,       0],
+    /// [[      1, leja_1,       0],
+    /// [[    ...,     ...,    ...],
+    /// [[      0,       1, leja_n],
     ///
     pub fn gen_xi(&self) -> Mat<c64> {
         let n_leja = self.leja_re.nrows();
@@ -959,6 +957,7 @@ impl LejaPhiEval {
         shift: f64,
         scale: f64,
         coeffs: ColRef<c64>,
+        use_krylov: bool,
         ) -> (bool, usize)
     {
         log::info!("=== ReLPM, shift: {:0.6e}, scale: {:0.6e}", shift, scale);
@@ -980,9 +979,11 @@ impl LejaPhiEval {
         let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
 
         // Augment leja sequence with krylov subspace polynomial if available
-        let krylov_res = self.krylov_poly_expmv(None, tau,
-            leja_x_sc.as_ref(), _leja_x_sc_im.as_ref(),
-            coeffs, shift, scale, norm_u);
+        let krylov_res = if use_krylov {
+            self.krylov_poly_expmv(None, tau,
+                leja_x_sc.as_ref(), _leja_x_sc_im.as_ref(),
+                coeffs, shift, scale, norm_u)
+        } else { Err(()) };
         let mut r: usize = 0;  // number of ritz values
         match krylov_res {
             Ok((n_r, xr, dr)) => {
@@ -990,7 +991,11 @@ impl LejaPhiEval {
                 vm = dr;
                 r = n_r;
             }
-            _ => {}
+            _ => {
+                if self.p > 0 {
+                    pm += faer::Scale(coeffs[self.p].re) * vm.as_ref();
+                }
+            }
         }
 
         // compute leja poly and check for convergence each iter
@@ -1210,6 +1215,7 @@ impl LejaPhiEval {
         shift: f64,
         scale: f64,
         coeffs: ColRef<c64>,
+        use_krylov: bool,
         ) -> (bool, usize)
     {
         let clock = std::time::Instant::now();
@@ -1224,7 +1230,7 @@ impl LejaPhiEval {
         // use the real leja point method if all leja points are on the real line
         if self.leja_x.n_leja_real() >= self.m {
             return self.real_leja_expmv(
-                pm, ext_a_lo, tau, u, shift, scale, coeffs)
+                pm, ext_a_lo, tau, u, shift, scale, coeffs, use_krylov)
         }
 
         // shift and scale leja points to align to the spectrum parameters
@@ -1251,10 +1257,10 @@ impl LejaPhiEval {
 
         // Fix A: advance vm one more scaled step so that vm = vₚ = (tau/scale)^p * Ã^p * u.
         // taylor_expmv(m=p) loops for j in 1..p, returning tau^{p-1} * Ã^{p-1} * u.
-        // One more application gives tau^{p-1} * Ã^p * u; scaling by tau*(1/scale)^p yields vₚ.
+        // One more application gives tau^{p-1} * Ã^p * u; scaling by tau/scale^p yields vₚ.
         if self.p > 0 {
             ext_a_lo.apply(av.as_mut(), vm.as_ref(), par, MemStack::new(&mut mem_buf));
-            let scale_p = tau * (tau / scale).powi(self.p as i32);
+            let scale_p = tau / scale.powi(self.p as i32);
             vm = faer::Scale(scale_p) * av.as_ref();
         }
 
@@ -1263,9 +1269,11 @@ impl LejaPhiEval {
         let mut converged: bool = err_est == 0.;
 
         // Augment leja sequence with krylov subspace polynomial if available
-        let krylov_res = self.krylov_poly_expmv(None, tau,
-            leja_x_sc_re.as_ref(), leja_x_sc_im.as_ref(),
-            coeffs, shift, scale, norm_u);
+        let krylov_res = if use_krylov {
+            self.krylov_poly_expmv(None, tau,
+                leja_x_sc_re.as_ref(), leja_x_sc_im.as_ref(),
+                coeffs, shift, scale, norm_u)
+        } else { Err(()) };
         let mut rp: usize = 0;
         match krylov_res {
             Ok((nr, pr, dr)) => {
@@ -1279,7 +1287,11 @@ impl LejaPhiEval {
                 // number of ritz values used
                 rp = nr;
             }
-            _ => {}
+            _ => {
+                if self.p > 0 {
+                    pm += faer::Scale(coeffs[self.p].re) * vm.as_ref();
+                }
+            }
         }
         // number of leading zeros + n ritz values
         rp += self.p;
@@ -1424,7 +1436,7 @@ impl LejaPhiEval {
             // no substep
             let (_conv, _iters) = self.complex_conj_leja_expmv(
                 w.as_mut(), ext_a_lo, h, w_t.as_ref(), shift, scale,
-                coeffs.as_ref());
+                coeffs.as_ref(), true);
             println!("converged: {}, leja iters: {}, shift: {}, scale: {}",
                 _conv, _iters, shift, scale);
         } else {
@@ -1442,7 +1454,7 @@ impl LejaPhiEval {
 
                 let (_conv, _iters) = self.complex_conj_leja_expmv(
                     w.as_mut(), ext_a_lo, h_tau, w_t.as_ref(),
-                    shift_tau, scale_tau, coeffs.as_ref());
+                    shift_tau, scale_tau, coeffs.as_ref(), i == 0);
 
                 println!("sub converged: {}, leja iters: {}, shift: {}, scale: {}",
                     _conv, _iters, shift_tau, scale_tau);
@@ -1742,7 +1754,7 @@ impl GetSpectrumBounds for LejaEllipseAdapterArnoldiIOM {
     fn get_ritz_leja(&self) -> Option<LejaPoints> {
         let (lp_ritz, _, _) = LejaPoints::new(self.ritz_re.to_owned().unwrap(), self.ritz_im.to_owned().unwrap())
             .normalize(self.a, self.b, self.c)
-            // .reorder_conj_pairs()
+            .reorder_conj_pairs()
             .rescale(self.a, self.b, self.c);
         Some(lp_ritz)
     }
@@ -2193,11 +2205,28 @@ mod test_matexp_leja {
         let phi1mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi1mv_pade_dense = phi((dt*test_b).as_ref(), 1) * test_v.as_ref();
+        let phi1mv_pade_dense = phi((dt*test_b.as_ref()).as_ref(), 1) * test_v.as_ref();
         println!("leja_ritz phi1mv: {:?}", &phi1mv_leja_pm);
         println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
         mat_mat_approx_eq(
             phi1mv_leja_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-7);
+
+        // generate vb vector: vb = [b0, b1, ... bk]
+        let zeros = faer::Mat::zeros(test_v.nrows(), test_v.ncols());
+        let test_vb = vec![zeros.as_ref(), zeros.as_ref(), test_v.as_ref()];
+
+        // compute phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk
+        let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
+        leja_phikv_eval.apply_prepare(&test_b, dt, test_v.as_ref(), 2);
+        leja_phikv_eval.set_max_substeps(max_substeps);
+        let phi2mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
+
+        // Ensure results are consistent with pade methods.
+        let phi2mv_pade_dense = phi((dt*test_b.as_ref()).as_ref(), 2) * test_v.as_ref();
+        println!("leja_ritz phi2mv: {:?}", &phi2mv_leja_pm);
+        println!("pade phi2mv: {:?}", &phi2mv_pade_dense);
+        mat_mat_approx_eq(
+            phi2mv_leja_pm.as_ref(), phi2mv_pade_dense.as_ref(), 1e-7);
     }
 
     #[test]
