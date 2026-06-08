@@ -64,11 +64,14 @@ pub fn jac_newton_sys <'a> (
 /// solve J * a = G(x_k) for a. with a = x_k - x_k+1 then
 /// x_k+1 = x_k - a
 ///
-pub fn jac_newton <'a> (
+/// `'jac` is the lifetime of the Jacobian linear operator (tied to the ODE
+/// system object). `x0` is the initial guess and is cloned immediately, so
+/// its lifetime is decoupled from `'jac`.
+pub fn jac_newton <'jac> (
         t: f64,
-        x0: MatRef<'a, f64>,
+        x0: MatRef<'_, f64>,
         frhs: &dyn Fn(f64, MatRef<f64>) -> Mat<f64>,
-        frhs_jac: &dyn Fn(f64, MatRef<f64>) -> ShiftedLinOp<'a>,
+        frhs_jac: &dyn Fn(f64, MatRef<f64>) -> ShiftedLinOp<'jac>,
         tol: f64,
         tol_lin: f64,
         iters: usize,
@@ -80,9 +83,11 @@ pub fn jac_newton <'a> (
     for _i in 0..iters {
         // eval G(x_k)
         let gfn_x = frhs(t, x.as_ref());
-        // let jac_gfn_x = jac_gfn(t, x.as_ref());
         let jac_gfn_x = frhs_jac(t, x.as_ref());
         let x_old_norm = x.norm_l2();
+        // Reset the GMRES solution buffer to zero each iteration so the
+        // initial residual is always b (not b - J*a_prev from last iteration).
+        a.fill(0.0);
         // solve J * a = G(x_k) for a
         let (_err, _iters) = gmres(jac_gfn_x, gfn_x.as_ref(), a.as_mut(), iters_lin, tol_lin, None).unwrap();
         // apply a:  x_k+1 = x_k - a
