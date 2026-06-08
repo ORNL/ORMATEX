@@ -339,8 +339,16 @@ impl<'a> IntegrateSys<'a> for BdfIntegrator<'a> {
 #[cfg(test)]
 mod test_bdf {
     use crate::test_common::*;
+    use crate::ode_rk::RkIntegrator;
     use super::*;
 
+    /// Test parameters: Lotka–Volterra y0=[5,4], 10 steps × dt=0.01 → t=0.1
+    const DT: f64 = 0.01;
+    const N_STEPS: usize = 10;
+    const T_END: f64 = DT * N_STEPS as f64; // 0.1 s
+
+    /// Convenience stepper used with `dyn IntegrateSys` (for integrators that
+    /// carry a phantom lifetime, e.g. `BdfIntegrator` and `DirkIntegrator`).
     fn run_steps<'a>(
         solver: &mut dyn IntegrateSys<'a, TimeType = f64, SysStateType = Mat<f64>>,
         sys: &'a dyn OdeSys<'a>,
@@ -353,128 +361,209 @@ mod test_bdf {
         }
     }
 
-    // ── BDF legacy tests (unchanged behaviour) ───────────────────────────────
+    /// Generate the RK4 reference solution on Lotka–Volterra at t = T_END.
+    ///
+    /// RK4 is 4th order; global error at t=0.1 with dt=0.01 is
+    /// O(dt^4) ≈ 1e-8, negligible compared with the 1st–3rd order implicit
+    /// errors being tested.  RK4 (`ode_rk::RkIntegrator`) has no phantom
+    /// lifetime, so it can be used freely inside a helper function.
+    fn rk4_reference() -> Mat<f64> {
+        let sys = TestLvSys::new();
+        let y0  = faer::mat![[5.0_f64,], [4.0_f64,]];
+        let mut rk4 = RkIntegrator::new(0.0, y0.as_ref(), 4);
+        for _ in 0..N_STEPS {
+            let res = rk4.step(&sys, DT).unwrap();
+            rk4.accept_step(res);
+        }
+        println!("RK4 reference at t={T_END}: y = {:?}", rk4.state());
+        rk4.state()
+    }
 
+    /// Assert `y` is within `tol_rel` (relative) of the RK4 reference `y_ref`.
+    ///
+    /// Scale is max(|y_ref[i]|, 1e-8) to handle near-zero components.
+    fn assert_close_to_rk4(label: &str, y: &Mat<f64>, y_ref: &Mat<f64>, tol_rel: f64) {
+        for row in 0..y_ref.nrows() {
+            let diff  = (y[(row, 0)] - y_ref[(row, 0)]).abs();
+            let scale = y_ref[(row, 0)].abs().max(1e-8);
+            let tol   = tol_rel * scale;
+            assert!(
+                diff < tol,
+                "{label} component[{row}]: got {:.8}, RK4={:.8}, \
+                 rel-err={:.2e} exceeds tol {tol_rel:.2e}",
+                y[(row, 0)], y_ref[(row, 0)],
+                diff / scale
+            );
+        }
+    }
+
+    // ── BDF integrator tests ─────────────────────────────────────────────────
+
+    /// BDF1 with finite-difference Jacobian (JFNK path) vs RK4 baseline.
+    /// BDF1 is 1st order; 5 % relative tolerance at dt=0.01.
     #[test]
     fn test_bdf1_jfnk() {
-        let sys = TestLvFdSys::new();
-        let y0  = faer::mat![[5.0,], [4.0,]];
-        let mut solver = BdfIntegrator::new(0.0, y0.as_ref(), 2);
-        let dt = 0.01;
-        for _ in 0..10 {
-            let res = solver.step(&sys, dt).unwrap();
-            print!("t:{:?}, y:{:?}", solver.time(), &res.y);
+        let y_rk4 = rk4_reference();
+        let sys   = TestLvFdSys::new();
+        let y0    = faer::mat![[5.0,], [4.0,]];
+        let mut solver = BdfIntegrator::new(0.0, y0.as_ref(), 1);
+        for _ in 0..N_STEPS {
+            let res = solver.step(&sys, DT).unwrap();
             solver.accept_step(res);
         }
+        let y = solver.state();
+        println!("BDF1 JFNK at t={T_END}: y = {:?}", y);
+        assert_close_to_rk4("BDF1 JFNK", &y, &y_rk4, 5e-2);
     }
 
+    /// BDF2 with exact analytic Jacobian vs RK4 baseline.
+    /// BDF2 is 2nd order; 0.5 % relative tolerance at dt=0.01.
     #[test]
-    fn test_bdf1_nk() {
-        let sys = TestLvSys::new();
-        let y0  = faer::mat![[5.0,], [4.0,]];
+    fn test_bdf2_nk() {
+        let y_rk4 = rk4_reference();
+        let sys   = TestLvSys::new();
+        let y0    = faer::mat![[5.0,], [4.0,]];
         let mut solver = BdfIntegrator::new(0.0, y0.as_ref(), 2);
-        let dt = 0.01;
-        for _ in 0..10 {
-            let res = solver.step(&sys, dt).unwrap();
-            print!("t:{:?}, y:{:?}", solver.time(), &res.y);
+        for _ in 0..N_STEPS {
+            let res = solver.step(&sys, DT).unwrap();
             solver.accept_step(res);
         }
+        let y = solver.state();
+        println!("BDF2 NK at t={T_END}: y = {:?}", y);
+        assert_close_to_rk4("BDF2 NK", &y, &y_rk4, 5e-3);
     }
 
-    // ── DirkIntegrator tests ─────────────────────────────────────────────────
+    // ── DirkIntegrator tests (each checked against RK4) ──────────────────────
 
+    /// SDIRK22 with finite-difference Jacobian (JFNK) vs RK4.
+    /// 2nd order; 0.5 % relative tolerance at dt=0.01.
     #[test]
     fn test_sdirk22_fd() {
-        let sys = TestLvFdSys::new();
-        let y0  = faer::mat![[5.0,], [4.0,]];
+        let y_rk4 = rk4_reference();
+        let sys   = TestLvFdSys::new();
+        let y0    = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk22());
-        run_steps(&mut solver, &sys, 0.01, 10);
-        println!("SDIRK22 FD:  y = {:?}", solver.state());
+        run_steps(&mut solver, &sys, DT, N_STEPS);
+        let y = solver.state();
+        println!("SDIRK22 FD at t={T_END}: y = {:?}", y);
+        assert_close_to_rk4("SDIRK22 FD", &y, &y_rk4, 5e-3);
     }
 
+    /// SDIRK22 with exact analytic Jacobian vs RK4.
     #[test]
     fn test_sdirk22_exact_jac() {
-        let sys = TestLvSys::new();
-        let y0  = faer::mat![[5.0,], [4.0,]];
+        let y_rk4 = rk4_reference();
+        let sys   = TestLvSys::new();
+        let y0    = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk22());
-        run_steps(&mut solver, &sys, 0.01, 10);
-        println!("SDIRK22 exact Jac: y = {:?}", solver.state());
+        run_steps(&mut solver, &sys, DT, N_STEPS);
+        let y = solver.state();
+        println!("SDIRK22 exact Jac at t={T_END}: y = {:?}", y);
+        assert_close_to_rk4("SDIRK22 exact Jac", &y, &y_rk4, 5e-3);
     }
 
+    /// SDIRK32 (L-stable, γ=1/4) with finite-difference Jacobian vs RK4.
+    /// 2nd order; 0.5 % relative tolerance at dt=0.01.
     #[test]
     fn test_sdirk32_fd() {
-        let sys = TestLvFdSys::new();
-        let y0  = faer::mat![[5.0,], [4.0,]];
+        let y_rk4 = rk4_reference();
+        let sys   = TestLvFdSys::new();
+        let y0    = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32());
-        run_steps(&mut solver, &sys, 0.01, 10);
-        println!("SDIRK32 FD:  y = {:?}", solver.state());
+        run_steps(&mut solver, &sys, DT, N_STEPS);
+        let y = solver.state();
+        println!("SDIRK32 FD at t={T_END}: y = {:?}", y);
+        assert_close_to_rk4("SDIRK32 FD", &y, &y_rk4, 5e-3);
     }
 
+    /// SDIRK32 (L-stable default) with exact analytic Jacobian vs RK4.
     #[test]
     fn test_sdirk32_exact_jac() {
-        let sys = TestLvSys::new();
-        let y0  = faer::mat![[5.0,], [4.0,]];
+        let y_rk4 = rk4_reference();
+        let sys   = TestLvSys::new();
+        let y0    = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32());
-        run_steps(&mut solver, &sys, 0.01, 10);
-        println!("SDIRK32 exact Jac: y = {:?}", solver.state());
+        run_steps(&mut solver, &sys, DT, N_STEPS);
+        let y = solver.state();
+        println!("SDIRK32 exact Jac at t={T_END}: y = {:?}", y);
+        assert_close_to_rk4("SDIRK32 exact Jac", &y, &y_rk4, 5e-3);
     }
 
+    /// SDIRK32 Norsett variant (γ=(3−√3)/6) with exact analytic Jacobian vs RK4.
     #[test]
     fn test_sdirk32_norsett_exact_jac() {
-        let sys = TestLvSys::new();
-        let y0  = faer::mat![[5.0,], [4.0,]];
+        let y_rk4 = rk4_reference();
+        let sys   = TestLvSys::new();
+        let y0    = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32_norsett());
-        run_steps(&mut solver, &sys, 0.01, 10);
-        println!("SDIRK32 Norsett: y = {:?}", solver.state());
+        run_steps(&mut solver, &sys, DT, N_STEPS);
+        let y = solver.state();
+        println!("SDIRK32 Norsett at t={T_END}: y = {:?}", y);
+        assert_close_to_rk4("SDIRK32 Norsett", &y, &y_rk4, 5e-3);
     }
 
+    /// SDIRK33 Alexander (1977) — 3rd order — vs RK4.
+    /// 3rd order; 0.05 % relative tolerance at dt=0.01 (tighter than 2nd order).
     #[test]
     fn test_sdirk33_exact_jac() {
-        let sys = TestLvSys::new();
-        let y0  = faer::mat![[5.0,], [4.0,]];
+        let y_rk4 = rk4_reference();
+        let sys   = TestLvSys::new();
+        let y0    = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk33());
-        run_steps(&mut solver, &sys, 0.01, 10);
-        println!("SDIRK33 Alexander: y = {:?}", solver.state());
+        run_steps(&mut solver, &sys, DT, N_STEPS);
+        let y = solver.state();
+        println!("SDIRK33 Alexander at t={T_END}: y = {:?}", y);
+        assert_close_to_rk4("SDIRK33 Alexander", &y, &y_rk4, 5e-4);
     }
 
-    /// All DIRK variants should produce results close to BDF1 on Lotka–Volterra
-    /// with a small step size (dt = 0.001).  We accept 1 % relative agreement.
+    // ── Consolidated accuracy test ────────────────────────────────────────────
+
+    /// All implicit DIRK variants are tested against the RK4 reference solution
+    /// at t=0.1 (10 steps × dt=0.01) on the Lotka–Volterra system.
+    ///
+    /// Tolerance reflects the expected global error for each method's order:
+    ///   order 1  (Backward Euler):  O(dt)   → 5 %
+    ///   order 2  (CN, SDIRK22/32):  O(dt²)  → 0.5 %
+    ///   order 3  (SDIRK33):         O(dt³)  → 0.05 %
+    ///
+    /// RK4 global error is O(dt^4) ≈ 1e-8 at t=0.1, negligible as reference.
     #[test]
-    fn test_dirk_methods_agree_with_bdf1() {
-        let y0 = faer::mat![[5.0,], [4.0,]];
-        let dt = 0.001;
-        let n  = 10;
+    fn test_implicit_methods_vs_rk4() {
+        let y_rk4 = rk4_reference();
+        println!("RK4 reference at t={T_END}: {:?}", y_rk4);
 
-        // BDF1 baseline
-        let ref_sys = TestLvSys::new();
-        let mut ref_solver = BdfIntegrator::new(0.0, y0.as_ref(), 1);
-        run_steps(&mut ref_solver, &ref_sys, dt, n);
-        let y_ref = ref_solver.state();
-
-        let methods: &[(&str, ImplicitBT)] = &[
-            ("ImplicitEuler",  ImplicitBT::implicit_euler()),
-            ("CrankNicolson",  ImplicitBT::crank_nicolson()),
-            ("SDIRK22",        ImplicitBT::sdirk22()),
-            ("SDIRK32",        ImplicitBT::sdirk32()),
-            ("SDIRK32_Norsett",ImplicitBT::sdirk32_norsett()),
-            ("SDIRK33",        ImplicitBT::sdirk33()),
+        // (method name, ImplicitBT, expected order, relative tolerance)
+        let methods: &[(&str, ImplicitBT, usize, f64)] = &[
+            ("ImplicitEuler",   ImplicitBT::implicit_euler(),    1, 5e-2),
+            ("CrankNicolson",   ImplicitBT::crank_nicolson(),    2, 5e-3),
+            ("SDIRK22",         ImplicitBT::sdirk22(),           2, 5e-3),
+            ("SDIRK32",         ImplicitBT::sdirk32(),           2, 5e-3),
+            ("SDIRK32_Norsett", ImplicitBT::sdirk32_norsett(),   2, 5e-3),
+            ("SDIRK33",         ImplicitBT::sdirk33(),           3, 5e-4),
         ];
 
-        for (name, bt) in methods {
+        for (name, bt, order, tol_rel) in methods {
             let sys = TestLvSys::new();
+            let y0  = faer::mat![[5.0_f64,], [4.0_f64,]];
             let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), bt.clone());
-            run_steps(&mut solver, &sys, dt, n);
+            run_steps(&mut solver, &sys, DT, N_STEPS);
             let y = solver.state();
-            println!("{name}: y = {:?}", y);
-            for row in 0..y_ref.nrows() {
-                let tol = 0.01 * y_ref[(row, 0)].abs().max(1e-10);
-                let diff = (y[(row, 0)] - y_ref[(row, 0)]).abs();
-                assert!(
-                    diff < tol,
-                    "{name} row {row}: got {}, expected {}, diff {diff} > tol {tol}",
-                    y[(row, 0)], y_ref[(row, 0)]
-                );
-            }
+
+            // Compute relative error vs RK4 for reporting
+            let rel_err: Vec<f64> = (0..y_rk4.nrows())
+                .map(|r| {
+                    let diff  = (y[(r, 0)] - y_rk4[(r, 0)]).abs();
+                    let scale = y_rk4[(r, 0)].abs().max(1e-8);
+                    diff / scale
+                })
+                .collect();
+            println!(
+                "{name} (order {order}): y={:?}  rel-err={:?}  tol={tol_rel:.2e}",
+                (0..y.nrows()).map(|r| format!("{:.6}", y[(r,0)])).collect::<Vec<_>>(),
+                rel_err.iter().map(|e| format!("{e:.2e}")).collect::<Vec<_>>()
+            );
+
+            assert_close_to_rk4(name, &y, &y_rk4, *tol_rel);
         }
     }
 }
