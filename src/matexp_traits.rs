@@ -45,7 +45,7 @@ pub trait LinOpPhikvEvaluator
 {
     /// Evaluate a linear combination of phi-function vector prodcuts
     /// of the form [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]
-    fn apply_phi_k_v(&self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64>;
+    fn apply_phi_k_v(&mut self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64>;
 
     /// Evaluate the phi-function vector prodcut:
     /// phi_k(dt*A) * vk

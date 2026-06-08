@@ -1551,7 +1551,7 @@ impl LejaPhiEval {
 }
 
 impl LinOpPhikvEvaluator for LejaPhiEval {
-    fn apply_phi_k_v(&self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
+    fn apply_phi_k_v(&mut self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
         let clock = std::time::Instant::now();
         // TODO: optionally auto-run apply_prepare here!
         // remark: a_lo may contain a scaling by dt, so a_lo = dt*A

@@ -31,7 +31,7 @@ pub fn main() {
     let iom = 2;
     let krylov_dim = 3;
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
-    let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
+    let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
     let mut sys_solver = ode_epirk::EpirkIntegrator::<matexp_krylov::KrylovExpm>::new(
         0.0, y0.as_ref(), "epi2".to_string(), matexp_m).with_opt(String::from("tol_fdt"), 1e-8);
 
