@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/// Butcher tableaux for implicit Runge-Kutta methods (DIRK / SDIRK / ESDIRK).
+/// Butcher tableau for implicit Runge-Kutta methods (DIRK / SDIRK / ESDIRK).
 ///
 /// Layout convention
 /// -----------------
@@ -23,16 +23,9 @@
 /// When `a[i][i] == 0.0` the stage is explicit (used for ESDIRK methods such as
 /// Crank–Nicolson where the first stage is always explicit).
 ///
-/// This is different from the *explicit* `BT` in `ode_rk.rs`, where `a[i]` has
+/// This is different from the explicit `BT` in `ode_rk.rs`, where `a[i]` has
 /// only `i` entries (the zero diagonal is omitted entirely).
 ///
-/// L-stability note
-/// ----------------
-/// All multi-stage methods below use the FSAL (First Same As Last) property
-/// `b == a[s-1]`, which guarantees L-stability:
-///   b^T A^{-1} e  =  (last row of A) · A^{-1} · e  =  e_{s-1} · e  =  1
-///   R(∞) = 1 - b^T A^{-1} e = 0  ⟹  L-stable.
-
 #[derive(Clone)]
 pub struct ImplicitBT {
     /// Number of stages
@@ -48,8 +41,6 @@ pub struct ImplicitBT {
 }
 
 impl ImplicitBT {
-    // ── 1-stage ──────────────────────────────────────────────────────────────
-
     /// Implicit (Backward) Euler — order 1, L-stable.
     ///
     /// Equivalent to BDF1.  Single implicit stage at c = 1.
@@ -65,8 +56,6 @@ impl ImplicitBT {
             a: vec![vec![1.0]],
         }
     }
-
-    // ── 2-stage ──────────────────────────────────────────────────────────────
 
     /// Crank–Nicolson (trapezoidal rule) — order 2, A-stable, ESDIRK.
     ///
@@ -91,7 +80,7 @@ impl ImplicitBT {
 
     /// SDIRK(2,2) — 2 stages, order 2, L-stable.  Norsett (1974).
     ///
-    /// γ = 1 − 1/√2 ≈ 0.2929
+    /// γ = 1 − 1/sqrt(2) ≈ 0.2929
     ///
     ///   c  | a           b
     ///   ---+---------  -----
@@ -112,8 +101,6 @@ impl ImplicitBT {
         }
     }
 
-    // ── 3-stage ──────────────────────────────────────────────────────────────
-
     /// SDIRK(3,2) — 3 stages, order 2, L-stable (default).
     ///
     /// γ = 1/4,  c = [1/4, 1/2, 1].
@@ -125,9 +112,6 @@ impl ImplicitBT {
     ///   1/2 | 1/4  1/4              1/4
     ///   1   | 1/2  1/4  1/4         1/4
     ///
-    /// Verification:
-    ///   Σb = 1 ✓    Σb·c = 1/2·1/4 + 1/4·1/2 + 1/4·1 = 1/8+1/8+1/4 = 1/2 ✓
-    ///   L-stable via FSAL (b ≡ a[2], so b^T A^{-1} e = 1, R(∞) = 0).
     pub fn sdirk32() -> Self {
         ImplicitBT {
             s: 3,
@@ -143,19 +127,19 @@ impl ImplicitBT {
 
     /// SDIRK(3,2) Norsett variant — 3 stages, order 2, L-stable.
     ///
-    /// γ_N = (3−√3)/6 ≈ 0.2113,  c = [γ_N, 1/2, 1].
+    /// γ_N = (3−sqrt(3))/6,  c = [γ_N, 1/2, 1].
     /// Uses FSAL (b = a[2]).  Smaller diagonal γ means less implicit dissipation
     /// (closer to the Norsett optimal accuracy parameter).
     ///
-    /// Exact coefficients (α = √3):
-    ///   b₀ = (α−1)/2,   b₁ = (α−1)/α = 1 − 1/α,   b₂ = γ_N
+    /// Exact coefficients (α = sqrt(3)):
+    ///   b0 = (α−1)/2,   b1 = (α−1)/α = 1 − 1/α,   b2 = γ_N
     ///
     /// Reference: Norsett (1974) SDIRK family, L-stable variant via FSAL.
     pub fn sdirk32_norsett() -> Self {
         let sq3 = 3.0_f64.sqrt();
-        let gamma = (3.0 - sq3) / 6.0;          // ≈ 0.21132
-        let b1 = (sq3 - 1.0) / sq3;             // = 1 − 1/√3 ≈ 0.42265
-        let b0 = (sq3 - 1.0) / 2.0;             // = (√3−1)/2  ≈ 0.36603
+        let gamma = (3.0 - sq3) / 6.0;
+        let b1 = (sq3 - 1.0) / sq3;
+        let b0 = (sq3 - 1.0) / 2.0;
         ImplicitBT {
             s: 3,
             c: vec![gamma, 0.5, 1.0],
@@ -168,30 +152,26 @@ impl ImplicitBT {
         }
     }
 
-    /// SDIRK(3,3) Alexander — 3 stages, order 3, L-stable.
+    /// SDIRK(3,3) Alexander - 3 stages, order 3, L-stable.
     ///
-    /// γ ≈ 0.4358665215454664  (unique real root of 6x³−18x²+9x−1=0 in (1/6,1/2))
+    /// γ ≈ 0.4358665215454664
     ///
     ///   c        | a                        b
     ///   ---------+-------------------    -------
-    ///   γ        | γ                        b₁
-    ///   (1+γ)/2  | (1−γ)/2   γ              b₂
-    ///   1        | b₁        b₂    γ        γ
+    ///   γ        | γ                        b1
+    ///   (1+γ)/2  | (1−γ)/2   γ              b2
+    ///   1        | b1        b2    γ        γ
     ///
-    ///   b₁ = −(6γ²−16γ+1)/4
-    ///   b₂ =  (6γ²−20γ+5)/4
-    ///
-    /// Uses FSAL (b = a[2]), so L-stable.
-    /// Note b₂ < 0 — this is expected for this method.
+    ///   b1 = −(6γ^2−16γ+1)/4
+    ///   b2 =  (6γ^2−20γ+5)/4
     ///
     /// Reference: Alexander (1977), "Diagonally implicit Runge–Kutta methods for
     /// stiff ODEs", SIAM J. Numer. Anal. 14(6), pp. 1006–1021.
     pub fn sdirk33() -> Self {
-        // Unique root in (1/6, 1/2) of 6γ³ − 18γ² + 9γ − 1 = 0
         const GAMMA: f64 = 0.435_866_521_545_466_4;
         let g = GAMMA;
-        let b1 = -(6.0 * g * g - 16.0 * g + 1.0) / 4.0;   // ≈  1.2085
-        let b2 =  (6.0 * g * g - 20.0 * g + 5.0) / 4.0;   // ≈ −0.6444
+        let b1 = -(6.0 * g * g - 16.0 * g + 1.0) / 4.0;
+        let b2 =  (6.0 * g * g - 20.0 * g + 5.0) / 4.0;
         ImplicitBT {
             s: 3,
             c: vec![g, (1.0 + g) / 2.0, 1.0],
@@ -205,10 +185,8 @@ impl ImplicitBT {
     }
 }
 
-// ── Verification helpers (used in tests only) ─────────────────────────────
-
 impl ImplicitBT {
-    /// Check Σb = 1 (consistency) and Σb·c = 1/2 (order-2 condition).
+    /// Check sum(b) = 1 (consistency) and sum(b*c) = 1/2 (order-2 condition).
     /// Returns (sum_b, sum_bc).
     #[cfg(test)]
     pub fn check_order2(&self) -> (f64, f64) {
@@ -227,6 +205,13 @@ impl ImplicitBT {
 
     /// L-stability check: compute b^T A^{-1} e by forward substitution.
     /// Returns the value; should equal 1.0 for an L-stable method.
+    ///
+    /// L-stability note
+    /// ----------------
+    /// All multi-stage methods below use the FSAL (First Same As Last) property
+    /// `b == a[s-1]`, which guarantees L-stability:
+    ///   b^T A^{-1} e  =  (last row of A) * A^{-1} * e  =  e_{s-1} * e  =  1
+    ///   R(\infty) = 1 - b^T A^{-1} e = 0  => L-stable.
     #[cfg(test)]
     pub fn check_l_stability(&self) -> f64 {
         // Solve A x = e (e = all-ones) by forward substitution on lower-triangular A.
@@ -245,7 +230,7 @@ impl ImplicitBT {
 }
 
 #[cfg(test)]
-mod test_tableaux {
+mod test_tableau {
     use super::*;
     use assert_approx_eq::assert_approx_eq;
 
@@ -254,8 +239,6 @@ mod test_tableaux {
         println!("{name}: Σb={sum_b:.6}, Σb·c={sum_bc:.6}");
         assert_approx_eq!(sum_b, 1.0, 1e-12);
         if expected_order >= 2 {
-            // 1e-10: SDIRK33's γ is a polynomial root not exactly representable
-            // in f64, so Σb·c = 1/2 holds only to ~1e-11 floating-point accuracy.
             assert_approx_eq!(sum_bc, 0.5, 1e-10);
         }
         let consistency = bt.check_consistency();

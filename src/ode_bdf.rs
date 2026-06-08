@@ -18,10 +18,6 @@
 ///   - Generic DIRK / SDIRK via Butcher tableau  (`DirkIntegrator`)
 ///   - BDF1 and BDF2 linear multistep methods     (`BdfIntegrator`)
 ///
-/// BDF1 and Crank–Nicolson are tableau-expressible and delegate to
-/// `dirk_step`/`DirkIntegrator`.  BDF2 is a multistep method that keeps its
-/// own history-based implementation.
-
 use faer::prelude::*;
 use crate::ode_sys::*;
 use crate::newton::*;
@@ -30,25 +26,23 @@ use std::marker::PhantomData;
 use std::collections::VecDeque;
 
 
-// ─── Generic DIRK step (free function) ───────────────────────────────────────
-
 /// Advance `y' = f(t,y)` by one step `dt` using the implicit Butcher tableau `bt`.
 ///
 /// For each stage `i`:
 ///
 /// 1. Build the explicit accumulation
-///    `y_expl = y0 + dt · Σ_{j < i} a[i][j] · k[j]`
+///    `y_expl = y0 + dt * \sum_{j < i} a[i][j] · k[j]`
 ///
-/// 2. **Explicit stage** (`a[i][i] == 0`):
-///    `k[i] = f(t + c[i]·dt, y_expl)` — no solve needed.
+/// 2. Explicit stage. (`a[i][i] == 0`):
+///    `k[i] = f(t + c[i]*dt, y_expl)`
 ///
-/// 3. **Implicit stage** (`a[i][i] != 0`):
-///    Solve  `g(y_i) = y_i − y_expl − dt·a[i][i]·f(t_i, y_i) = 0`
+/// 3. Implicit stage. (`a[i][i] != 0`):
+///    Solve  `g(y_i) = y_i − y_expl − dt*a[i][i]*f(t_i, y_i) = 0`
 ///    using Newton–Krylov, starting from `y_expl`, with Jacobian
-///    `I − dt·a[i][i]·J_f ≡ fjac_shifted(t_i, y_i, −dt·a[i][i], γ=1)`.
+///    `I − dt*a[i][i]*J_f ≡ fjac_shifted(t_i, y_i, −dt*a[i][i], γ=1)`.
 ///    Then `k[i] = f(t_i, y_i)`.
 ///
-/// Finally `y_{n+1} = y0 + dt · Σ_i b[i] · k[i]`.
+/// Finally `y_{n+1} = y0 + dt * \sum_i b[i] · k[i]`.
 ///
 /// Lifetime `'jac` is the lifetime of the ODE system (governs `ShiftedLinOp`).
 /// `y0` may have any lifetime shorter than `'jac`; it is cloned on entry.
@@ -68,7 +62,7 @@ fn dirk_step<'jac>(
     let mut k: Vec<Mat<f64>> = Vec::with_capacity(s);
 
     for i in 0..s {
-        // ── explicit accumulation: y_expl = y0 + dt * Σ_{j<i} a[i][j]*k[j] ──
+        // explicit accumulation: y_expl = y0 + dt * \sum_{j<i} a[i][j]*k[j]
         let mut y_expl: Mat<f64> = y0.to_owned();
         for j in 0..i {
             y_expl = y_expl.as_ref()
@@ -79,18 +73,14 @@ fn dirk_step<'jac>(
         let t_i  = t + bt.c[i] * dt;
 
         let k_i: Mat<f64> = if a_ii == 0.0 {
-            // ── Explicit stage ───────────────────────────────────────────────
+            // Explicit stage
             sys.frhs(t_i, y_expl.as_ref())
 
         } else {
-            // ── Implicit stage ───────────────────────────────────────────────
+            // Implicit stage
             // Solve  g(y_i) = y_i - y_expl - dt*a_ii*f(t_i, y_i) = 0
-            // ∂g/∂y_i = I - dt*a_ii * J_f(t_i, y_i)
+            // dg/dy_i = I - dt*a_ii * J_f(t_i, y_i)
             //         ≡ fjac_shifted(t_i, y_i, scale=-dt*a_ii, gamma=1.0)
-            //
-            // The `gfn` closure captures `y_expl` by shared ref; `gfn_jac` is
-            // annotated to return `ShiftedLinOp<'jac>` so the lifetime of
-            // `y_expl` (used only as initial guess) stays decoupled from `'jac`.
             let scale_ii = -dt * a_ii;
 
             // HRTB on the input MatRef so `jac_newton` can call the closure
@@ -107,8 +97,6 @@ fn dirk_step<'jac>(
                 &|t_arg, y_i| sys.fjac_shifted(t_arg, y_i, scale_ii, Some(1.0));
 
             // Newton initial guess = y_expl (explicit accumulation for this stage).
-            // Its lifetime is local — safe because jac_newton clones it immediately
-            // (see the decoupled 'jac / '_ lifetimes in newton::jac_newton).
             let y_i = jac_newton(
                 t_i, y_expl.as_ref(),
                 gfn, gfn_jac,
@@ -122,7 +110,7 @@ fn dirk_step<'jac>(
         k.push(k_i);
     }
 
-    // ── final accumulation: y_{n+1} = y0 + dt * Σ_i b[i]*k[i] ──────────────
+    // final accumulation: y_{n+1} = y0 + dt * \sum_i ( b[i]*k[i] )
     let mut y_new: Mat<f64> = y0.to_owned();
     for i in 0..s {
         y_new = y_new.as_ref() + faer::Scale(dt * bt.b[i]) * k[i].as_ref();
@@ -131,12 +119,11 @@ fn dirk_step<'jac>(
 }
 
 
-// ─── DirkIntegrator ──────────────────────────────────────────────────────────
-
-/// Generic single-step DIRK / SDIRK integrator driven by an [`ImplicitBT`] tableau.
+/// Generic single-step DIRK / SDIRK integrator defined by an [`ImplicitBT`] tableau.
 ///
 /// Works with any fully-implicit or ESDIRK tableau: Backward Euler,
-/// Crank–Nicolson, SDIRK22, SDIRK32, SDIRK32 (Norsett), SDIRK33, …
+/// Crank–Nicolson, SDIRK22, SDIRK32, SDIRK32 (Norsett), SDIRK33, ect.
+///
 pub struct DirkIntegrator<'a> {
     bt: ImplicitBT,
     t:  f64,
@@ -194,8 +181,6 @@ impl<'a> IntegrateSys<'a> for DirkIntegrator<'a> {
 }
 
 
-// ─── BdfIntegrator ───────────────────────────────────────────────────────────
-
 /// BDF linear multistep integrator.
 ///
 /// `order = 1` — BDF1 (Backward Euler); delegates to `dirk_step` with
@@ -205,8 +190,6 @@ impl<'a> IntegrateSys<'a> for DirkIntegrator<'a> {
 ///               first step when history is not yet full.  Cannot be expressed
 ///               as a Butcher tableau (multistep method).
 ///
-/// `order = 3` — Crank–Nicolson (legacy alias); delegates to `dirk_step` with
-///               `ImplicitBT::crank_nicolson()`.
 pub struct BdfIntegrator<'a> {
     order: usize,
     t:     f64,
@@ -235,8 +218,7 @@ impl<'a> BdfIntegrator<'a> {
         }
     }
 
-    // ── BDF1 → delegates to ImplicitBT::implicit_euler() ────────────────────
-
+    /// BDF1 delegates to ImplicitBT::implicit_euler()
     fn step_order_1<'b>(
         &self,
         sys: &'b dyn OdeSys<'b>,
@@ -249,8 +231,7 @@ impl<'a> BdfIntegrator<'a> {
         )
     }
 
-    // ── BDF2: linear multistep — history-based, no Butcher tableau ──────────
-
+    /// BDF2: linear multistep
     fn step_order_2<'b>(
         &self,
         sys: &'b dyn OdeSys<'b>,
@@ -267,7 +248,7 @@ impl<'a> BdfIntegrator<'a> {
         //   g(y) = y − (4/3)*y_n + (1/3)*y_{n-1} − (2/3)*dt*f(t+dt, y) = 0
         //
         // Jacobian of g:
-        //   ∂g/∂y = I − (2/3)*dt*J_f  ≡  fjac_shifted(scale=−2dt/3, gamma=1)
+        //   dg/dy = gamma*I − (2/3)*dt*J_f  ≡  fjac_shifted(scale=−2dt/3, gamma=1)
         let scale = -(2.0 / 3.0) * dt;
 
         let gfn: &dyn for<'c> Fn(f64, MatRef<'c, f64>) -> Mat<f64> =
@@ -334,15 +315,13 @@ impl<'a> IntegrateSys<'a> for BdfIntegrator<'a> {
 }
 
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod test_bdf {
     use crate::test_common::*;
     use crate::ode_rk::RkIntegrator;
     use super::*;
 
-    /// Test parameters: Lotka–Volterra y0=[5,4], 10 steps × dt=0.01 → t=0.1
+    /// Test parameters: Lotka–Volterra y0=[5,4], 10 steps * dt=0.01, tf=0.1
     const DT: f64 = 0.01;
     const N_STEPS: usize = 10;
     const T_END: f64 = DT * N_STEPS as f64; // 0.1 s
@@ -365,8 +344,7 @@ mod test_bdf {
     ///
     /// RK4 is 4th order; global error at t=0.1 with dt=0.01 is
     /// O(dt^4) ≈ 1e-8, negligible compared with the 1st–3rd order implicit
-    /// errors being tested.  RK4 (`ode_rk::RkIntegrator`) has no phantom
-    /// lifetime, so it can be used freely inside a helper function.
+    /// errors being tested.
     fn rk4_reference() -> Mat<f64> {
         let sys = TestLvSys::new();
         let y0  = faer::mat![[5.0_f64,], [4.0_f64,]];
@@ -396,8 +374,6 @@ mod test_bdf {
             );
         }
     }
-
-    // ── BDF integrator tests ─────────────────────────────────────────────────
 
     /// BDF1 with finite-difference Jacobian (JFNK path) vs RK4 baseline.
     /// BDF1 is 1st order; 5 % relative tolerance at dt=0.01.
@@ -432,8 +408,6 @@ mod test_bdf {
         println!("BDF2 NK at t={T_END}: y = {:?}", y);
         assert_close_to_rk4("BDF2 NK", &y, &y_rk4, 5e-3);
     }
-
-    // ── DirkIntegrator tests (each checked against RK4) ──────────────────────
 
     /// SDIRK22 with finite-difference Jacobian (JFNK) vs RK4.
     /// 2nd order; 0.5 % relative tolerance at dt=0.01.
@@ -489,7 +463,7 @@ mod test_bdf {
         assert_close_to_rk4("SDIRK32 exact Jac", &y, &y_rk4, 5e-3);
     }
 
-    /// SDIRK32 Norsett variant (γ=(3−√3)/6) with exact analytic Jacobian vs RK4.
+    /// SDIRK32 Norsett variant (γ=(3−sqrt(3))/6) with exact analytic Jacobian vs RK4.
     #[test]
     fn test_sdirk32_norsett_exact_jac() {
         let y_rk4 = rk4_reference();
@@ -516,15 +490,13 @@ mod test_bdf {
         assert_close_to_rk4("SDIRK33 Alexander", &y, &y_rk4, 5e-4);
     }
 
-    // ── Consolidated accuracy test ────────────────────────────────────────────
-
     /// All implicit DIRK variants are tested against the RK4 reference solution
     /// at t=0.1 (10 steps × dt=0.01) on the Lotka–Volterra system.
     ///
     /// Tolerance reflects the expected global error for each method's order:
-    ///   order 1  (Backward Euler):  O(dt)   → 5 %
-    ///   order 2  (CN, SDIRK22/32):  O(dt²)  → 0.5 %
-    ///   order 3  (SDIRK33):         O(dt³)  → 0.05 %
+    ///   order 1  (Backward Euler):  O(dt)    -> 5 %
+    ///   order 2  (CN, SDIRK22/32):  O(dt^2)  -> 0.5 %
+    ///   order 3  (SDIRK33):         O(dt^3)  -> 0.05 %
     ///
     /// RK4 global error is O(dt^4) ≈ 1e-8 at t=0.1, negligible as reference.
     #[test]
