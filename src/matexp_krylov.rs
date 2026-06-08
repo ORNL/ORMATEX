@@ -32,7 +32,9 @@ pub struct KrylovExpm {
     /// current krylov dim
     m: usize,
     /// max krylov dim size
-    krylov_dim: usize,
+    krylov_dim_max: usize,
+    /// krylov dim increment used in adaptive krylov subspace method
+    krylov_dim_inc: usize,
     /// incomplete ortho depth
     iom: usize,
     /// storage for tmp hessenberg
@@ -45,15 +47,16 @@ pub struct KrylovExpm {
 }
 
 impl KrylovExpm {
-    pub fn new(expmv: Box<dyn DensePhikvEvaluator>, m: usize, max_krylov_dim: usize, tol: f64, iom_in: Option<usize>) -> Self {
-        assert!(max_krylov_dim > 0);
-        assert!(m <= max_krylov_dim);
+    pub fn new(expmv: Box<dyn DensePhikvEvaluator>, m: usize, krylov_dim_max: usize, tol: f64, iom_in: Option<usize>) -> Self {
+        assert!(krylov_dim_max > 0);
+        assert!(m <= krylov_dim_max);
         Self {
             expmv,
-            m: min(m, max_krylov_dim),
-            krylov_dim: max_krylov_dim,
-            hs: faer::Mat::zeros(max_krylov_dim, max_krylov_dim),
-            qs: faer::Mat::zeros(max_krylov_dim, max_krylov_dim),
+            m: min(m, krylov_dim_max),
+            krylov_dim_max: krylov_dim_max,
+            krylov_dim_inc: 20,
+            hs: faer::Mat::zeros(krylov_dim_max, krylov_dim_max),
+            qs: faer::Mat::zeros(krylov_dim_max, krylov_dim_max),
             iom: iom_in.unwrap_or(2),
             tol: tol,
             verbose: false,
@@ -63,6 +66,11 @@ impl KrylovExpm {
     /// Set extra verbosity for additional stdout output
     pub fn set_verbosity(&mut self, verbose: bool) {
         self.verbose = verbose;
+    }
+
+    /// Set extra verbosity for additional stdout output
+    pub fn set_krylov_dim_inc(&mut self, krylov_dim_inc: usize) {
+        self.krylov_dim_inc = krylov_dim_inc;
     }
 
     /// Computes exp(A*dt)*v0 when A is a linear operator.
@@ -94,10 +102,10 @@ impl KrylovExpm {
         log::info!("=== Adaptive KrylovExpm");
         // Allocate storage matrices with correct dimensions
         // The storage must be large enough to hold:
-        // - hs: square matrix at least (m+1) x (m+1) where m can grow up to krylov_dim
-        // - qs: (v0.nrows()) x (m+1) where m can grow up to krylov_dim
+        // - hs: square matrix at least (m+1) x (m+1) where m can grow up to krylov_dim_max
+        // - qs: (v0.nrows()) x (m+1) where m can grow up to krylov_dim_max
         let v0_dim = v0.nrows();
-        let storage_size = self.krylov_dim + 1; // +1 for extended Hessenberg
+        let storage_size = self.krylov_dim_max + 1; // +1 for extended Hessenberg
         self.hs = faer::Mat::zeros(storage_size, storage_size);
         self.qs = faer::Mat::zeros(v0_dim, storage_size);
 
@@ -111,7 +119,6 @@ impl KrylovExpm {
             0, self.m, self.iom);
 
         const BUFFER_M: usize = 2;
-        const INCREMENT_M: usize = 20;
         let beta = v0.norm_l2();
         let mut res = v0.to_owned();
         let mut converged = false;
@@ -155,19 +162,19 @@ impl KrylovExpm {
             }
 
             if !converged {
-                // run arnoldi an additional INCREMENT_M iters
+                // run arnoldi additional iters
                 let (bd, bd_n) = arnoldi_lop_restarted(
                     a_lo, dt, v0, self.hs.as_mut(), self.qs.as_mut(),
-                    self.m, INCREMENT_M, self.iom);
+                    self.m, self.krylov_dim_inc, self.iom);
                 breakdown_m = bd_n;
                 breakdown_flag = bd;
                 // extend krylov dim
-                self.m += INCREMENT_M;
+                self.m += self.krylov_dim_inc;
             }
 
             // TODO: return Err() or Warning
-            if self.m >= self.krylov_dim {
-                self.m = self.krylov_dim;
+            if self.m >= self.krylov_dim_max {
+                self.m = self.krylov_dim_max;
                 break
             }
             adapt_iter += 1;
@@ -188,7 +195,7 @@ impl KrylovExpm {
         &self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>, k: usize)
         -> Mat<f64>
     {
-        let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim, self.iom);
+        let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim_max, self.iom);
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
@@ -259,9 +266,9 @@ mod test_matexp_krylov {
         let iom = 2;
         let m = 10;
         let tol = 1e-12;
-        let max_krylov_dim = 100;
+        let krylov_dim_max = 100;
         let expmv = Box::new(matexp_pade::PadeExpm::new(12));
-        let mut krylov_phikv_eval = KrylovExpm::new(expmv, m, max_krylov_dim, tol, Some(iom));
+        let mut krylov_phikv_eval = KrylovExpm::new(expmv, m, krylov_dim_max, tol, Some(iom));
         krylov_phikv_eval.set_verbosity(true);
 
         // generate vb vector: vb = [b0, b1, ... bk]
