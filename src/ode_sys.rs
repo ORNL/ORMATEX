@@ -332,22 +332,44 @@ impl <'a> LinOp<f64> for DynRefExtendedLinOp<'a>   {
 }
 
 
-/// Wrapper to shift and scale a LinOp
+/// Wrapper to shift and scale a LinOp, optionally weighted by a mass matrix.
+///
+/// Computes one of:
+///   `(γ·M + s·J)·v`   when `gamma` is Some and `mass` is Some
+///   `(γ·I + s·J)·v`   when `gamma` is Some and `mass` is None  ← default
+///   `(s·J)·v`          when `gamma` is None
+///
+/// where `J` is the wrapped inner linear operator (the system Jacobian),
+/// `M` is an optional mass matrix supplied by `OdeSys::fmass`, `s` is the
+/// `scale` factor, and `γ` is the `gamma` shift value.
+///
+/// Implicit integrators solve `(γ·M + s·J)·δ = r`, so setting `scale = -dt·a_ii`
+/// and `gamma = 1` yields the standard `(M − dt·a_ii·J)` system.
 pub struct ShiftedLinOp<'a> {
     t: f64,
     inner_lop: Box<dyn LinOp<f64> + 'a>,
     scale: f64,
     gamma: Option<f64>,
+    /// Optional mass matrix M.  `None` falls back to the identity (current
+    /// behaviour unchanged).  When `Some`, the gamma shift uses `γ·M·v`
+    /// instead of `γ·I·v`.
+    mass: Option<Box<dyn LinOp<f64> + 'a>>,
 }
 
 impl <'a> ShiftedLinOp <'a> {
-    pub fn new(t: f64, inner_lop: Box<dyn LinOp<f64> + 'a>, scale: f64, gamma: Option<f64>)
-    -> Self {
+    pub fn new(
+        t: f64,
+        inner_lop: Box<dyn LinOp<f64> + 'a>,
+        scale: f64,
+        gamma: Option<f64>,
+        mass: Option<Box<dyn LinOp<f64> + 'a>>,
+    ) -> Self {
         Self {
             t,
             inner_lop,
             scale,
-            gamma
+            gamma,
+            mass,
         }
     }
 }
@@ -379,10 +401,9 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
     }
 
     /// Apply linear operator to vec or mat. Stores result in `out`.
-    /// Computes (gamma*I + s*J)*v
-    /// Where gamma is a shift constant and s is a scaling constant.
-    /// By default, s is 1 and gamma is 0.
-    /// Ex: implicit methods typically result in s<0, gamma==1.
+    ///
+    /// Computes `(γ·M + s·J)·v`, reducing to `(γ·I + s·J)·v` when `mass`
+    /// is `None` (unchanged from the previous identity-shift behaviour).
     ///
     /// * `out` - output
     /// * `rhs` - target to apply linop to
@@ -395,14 +416,27 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
         stack: &mut MemStack,
         )
     {
-        // compute unshifted jacobian vector product
+        // s·J·v
         self.inner_lop.apply(out.as_mut(), rhs, parallelism, stack);
         out *= self.scale;
 
-        // compute optional shift
+        // γ·M·v  or  γ·v  (identity fallback)
         match self.gamma {
-            Some(gamma) => { out += faer::Scale(gamma) * rhs.as_ref() },
-            _ => { },
+            Some(gamma) => {
+                match &self.mass {
+                    Some(mass_lop) => {
+                        // Allocate a temporary for M·v and accumulate γ·M·v.
+                        let mut mv = faer::Mat::zeros(out.nrows(), rhs.ncols());
+                        mass_lop.apply(mv.as_mut(), rhs, parallelism, stack);
+                        out += faer::Scale(gamma) * mv.as_ref();
+                    }
+                    None => {
+                        // No mass matrix: γ·I·v = γ·v  (original behaviour).
+                        out += faer::Scale(gamma) * rhs.as_ref();
+                    }
+                }
+            }
+            _ => { }
         }
     }
 
@@ -583,6 +617,22 @@ pub trait OdeSys<'a>: Sync + Send {
             x: MatRef<'b, f64>)
         -> Box<dyn LinOp<f64> + 'a>;
 
+    /// Optional mass matrix M at time `t`.
+    ///
+    /// When `Some(M)` is returned, the shifted Jacobian operator used by
+    /// implicit integrators becomes `(γ·M + s·J)` instead of `(γ·I + s·J)`.
+    /// This lets the user solve DAE-like or FEM problems where the time
+    /// derivative appears as `M·dy/dt = f(t, y)`.
+    ///
+    /// The default implementation returns `None`, which preserves the current
+    /// identity-matrix behaviour.
+    ///
+    /// TODO: currently, explicit and exponential integrators
+    /// ignore this mass matrix
+    fn fmass(&'a self, _t: f64) -> Option<Box<dyn LinOp<f64> + 'a>> {
+        None
+    }
+
     fn fjac_shifted<'b>(&'a self,
             t: f64,
             x: MatRef<'b, f64>,
@@ -595,6 +645,7 @@ pub trait OdeSys<'a>: Sync + Send {
             self.fjac(t, x),
             scale,
             gamma,
+            self.fmass(t),
         )
     }
 }
@@ -609,6 +660,7 @@ pub fn get_fd_jac<'a>(sys: &'a dyn OdeSys<'a>, t: f64, x: MatRef<f64>) -> FdJacL
 /// Obtain finite difference shifted and scaled jacobian LinOp of a system at a given operating point
 pub fn get_fd_jac_shifted<'a>(inner_lop: Box<dyn LinOp<f64> + 'a>, t: f64, scale: f64, gamma: Option<f64>) -> ShiftedLinOp<'a>
 {
-    // sys.fjac_shifted(t, x, scale, gamma)
-    ShiftedLinOp::new(t, inner_lop, scale, gamma)
+    // No OdeSys available here, so mass matrix is always None.
+    // Use OdeSys::fjac_shifted if a mass matrix is required.
+    ShiftedLinOp::new(t, inner_lop, scale, gamma, None)
 }
