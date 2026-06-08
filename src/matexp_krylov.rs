@@ -57,11 +57,33 @@ impl KrylovExpm {
         }
     }
 
-    /// Computes exp(A*dt)*v0 when A is a linear operator
+    /// Computes exp(A*dt)*v0 when A is a linear operator.
+    /// Alias to apply_phik_linop with k=0.
+    ///
+    /// Args:
+    /// * `a_lo` - Linear operator, A
+    /// * `dt` - time step scale.
+    /// * `v0` - the vector to which the matrix exponential is applied
+    ///
     pub fn apply_linop(&mut self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>)
         -> Mat<f64>
     {
-        log::info!("=== KrylovExpm");
+        self.apply_phik_linop(a_lo, dt, v0, 0)
+    }
+
+    /// Computes phi_k(A*dt) * v0 where A is a LinOp and
+    /// adapts the krylov dimension.
+    ///
+    /// Args:
+    /// * `a_lo` - Linear operator, A
+    /// * `dt` - time step scale.
+    /// * `v0` - the vector to which the matrix phi-function is applied
+    /// * `k` - the phi function order
+    pub fn apply_phik_linop_adapt(
+        &mut self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>, k: usize)
+        -> Mat<f64>
+    {
+        log::info!("=== Adaptive KrylovExpm");
         // Allocate storage matrices with correct dimensions
         // The storage must be large enough to hold:
         // - hs: square matrix at least (m+1) x (m+1) where m can grow up to krylov_dim
@@ -96,7 +118,7 @@ impl KrylovExpm {
             let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
             unit_vec[(0, 0)] = 1.0;
             let phi_h = self.expmv.phik_apply(
-                h.as_ref(), 1.0, unit_vec.as_ref(), 0);
+                h.as_ref(), 1.0, unit_vec.as_ref(), k);
             res = faer::Scale(beta) * (q.as_ref() * phi_h.as_ref());
             // TODO: throw the last vector away?
             // res = faer::Scale(beta) * (q.as_ref().get(0..last_m-1, ..) * phi_h.get(0..last_m-1, ..))
@@ -132,7 +154,13 @@ impl KrylovExpm {
     }
 
     /// Computes phi_k(A*dt) * v0 where A is a LinOp
-    pub fn apply_phi_linop(
+    ///
+    /// Args:
+    /// * `a_lo` - Linear operator, A
+    /// * `dt` - time step scale.
+    /// * `v0` - the vector to which the matrix phi-function is applied
+    /// * `k` - the phi function order
+    pub fn apply_phik_linop(
         &self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>, k: usize)
         -> Mat<f64>
     {
@@ -140,41 +168,7 @@ impl KrylovExpm {
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
-        // let phi_k = matexp_pade::phi_ext((faer::Scale(dt) * h.as_ref()).as_ref(), k);
-        // return faer::Scale(beta) * (q.as_ref() * phi_k.as_ref() * unit_vec)
         return faer::Scale(beta) * (q.as_ref() * self.expmv.phik_apply(h.as_ref(), dt, unit_vec.as_ref(), k))
-    }
-
-    /// Computes tripplet (phi_k(A*dt)*v0, phi_k(A*dt*2)*v0, phi_k(A*dt*3)*v0)
-    /// where A is a LinOp
-    /// This saves two calls to arnoldi.
-    ///
-    /// From ref:  M. Hochbruck, C. Lubich and H. Selhofer.
-    /// Exponential Integrators for Large
-    /// Systems of Differential Equations.  J. Sci. Comp. 1996.
-    pub fn apply_phi_linop_3(
-        &self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>, k: usize)
-        -> (Mat<f64>, Mat<f64>, Mat<f64>)
-    {
-        let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim, self.iom);
-        let phi_k = matexp_pade::phi_ext((faer::Scale(dt) * h.as_ref()).as_ref(), k);
-        let id = faer::Mat::<f64>::identity(phi_k.nrows(), phi_k.ncols());
-        let beta = v0.norm_l2();
-        let mut unit_vec = faer::Mat::zeros(phi_k.nrows(), 1);
-        unit_vec[(0, 0)] = 1.0;
-        // compute unscaled phi_k_1 = phi_k(A*dt)*v0
-        let phi_k_1 = faer::Scale(beta) * (q.as_ref() * phi_k.as_ref() * unit_vec.as_ref());
-        // compute scaled phi_k_2 = phi_k(A*dt*2)*v0
-        let phi_2tau_h = (faer::Scale(dt * 1./2.) * h.as_ref() * phi_k.as_ref() + id.as_ref()) * phi_k.as_ref();
-        let phi_k_2 = q.as_ref()
-            * phi_2tau_h.as_ref()
-            * unit_vec.as_ref() * faer::Scale(beta);
-        // compute scaled phi_k_3 = phi_k(A*dt*3)*v0
-        let phi_k_3 = q.as_ref()
-            * (faer::Scale(2./3.) * (faer::Scale(dt) * h.as_ref() * phi_k.as_ref() + id.as_ref())
-            * phi_2tau_h.as_ref() + faer::Scale(1./3.) * phi_k.as_ref())
-            * unit_vec.as_ref() * faer::Scale(beta);
-        (phi_k_1, phi_k_2, phi_k_3)
     }
 
     /// This method evaluates linear combinations
@@ -185,7 +179,7 @@ impl KrylovExpm {
     /// "KIOPS: A fast adaptive Krylov subspace solver for exponential integrators."
     /// Journal of Computational Physics 372 (2018): 236-255.
     ///
-    /// NOTE: Currently krylov apply_linop implements an
+    /// NOTE: Currently krylov apply_phik_linop_adapt implements an
     /// adptive krylov subspace dimension procedure via the
     /// error estimate noted in the reference.
     /// TODO: Implement substepping adaptivity.
@@ -206,8 +200,8 @@ impl KrylovExpm {
         // setup the extended rhs vector
         let (ext_v, n) = ext_a_lo.get_v(vb);
 
-        // compute phi_0(tau*A_ext)*v_ext
-        let w = self.apply_linop(&ext_a_lo, tau, ext_v.as_ref());
+        // compute phi_0(tau*A_ext)*v_ext with adaptive krylov dimension
+        let w = self.apply_phik_linop_adapt(&ext_a_lo, tau, ext_v.as_ref(), 0);
 
         // extract first n rows
         w.get(0..n, 0..1).to_owned()
@@ -215,12 +209,12 @@ impl KrylovExpm {
 }
 
 impl LinOpPhikvEvaluator for KrylovExpm {
-    fn apply_phi_k_v(&mut self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
-        self.apply_linop_ext(a_lo, dt, vb)
+    fn apply_phi_k_v(&mut self, ext_a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
+        self.apply_linop_ext(ext_a_lo, dt, vb)
     }
 
     fn apply_phi_k(&self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, k: usize) -> Mat<f64> {
-        self.apply_phi_linop(a_lo, dt, v, k)
+        self.apply_phik_linop(a_lo, dt, v, k)
     }
 }
 
@@ -230,7 +224,7 @@ mod test_matexp_krylov {
     use assert_approx_eq::assert_approx_eq;
     use crate::mat_utils::mat_mat_approx_eq;
     use crate::matexp_pade::{matexp, phi_ext};
-    use crate::test_common::{gen_test_a, gen_test_b, gen_test_c};
+    use crate::test_common::{gen_test_b, gen_test_c};
 
     // bring everything from above (parent) module into scope
     use super::*;
