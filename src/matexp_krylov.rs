@@ -218,22 +218,18 @@ mod test_matexp_krylov {
     use assert_approx_eq::assert_approx_eq;
     use crate::mat_utils::mat_mat_approx_eq;
     use crate::matexp_pade::{matexp, phi_ext};
-    use crate::test_common::{gen_test_a, gen_test_b};
+    use crate::test_common::{gen_test_a, gen_test_b, gen_test_c};
 
     // bring everything from above (parent) module into scope
     use super::*;
 
-    #[test]
-    fn test_krylov_phikv() {
+    fn _run_krylov_phikv(test_b: Mat<f64>, test_v: Mat<f64>) {
         // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
         // krylov method.
         let iom = 2;
         let max_krylov_dim = 100;
         let expmv = Box::new(matexp_pade::PadeExpm::new(12));
         let mut krylov_phikv_eval = KrylovExpm::new(expmv, max_krylov_dim, Some(iom));
-
-        // Generate a test matrix
-        let (test_b, test_v) = gen_test_b();
 
         // generate vb vector: vb = [b0, b1, ... bk]
         let test_vb = vec![test_v.as_ref(),];
@@ -263,5 +259,21 @@ mod test_matexp_krylov {
         println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
         mat_mat_approx_eq(
             phi1mv_krylov_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);
+    }
+
+    #[test]
+    fn test_krylov_phikv_small() {
+        // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
+        // krylov method for a small 3x3 A
+        let (test_b, test_v) = gen_test_b();
+        _run_krylov_phikv(test_b, test_v);
+    }
+
+    #[test]
+    fn test_krylov_phikv_large() {
+        // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
+        // krylov method for a larger 40x40 A
+        let (test_b, test_v) = gen_test_c(40);
+        _run_krylov_phikv(test_b, test_v);
     }
 }
