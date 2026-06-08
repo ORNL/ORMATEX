@@ -40,6 +40,8 @@ pub struct KrylovExpm {
     qs: Mat<f64>,
     /// tolerance
     tol: f64,
+    /// verbosity
+    verbose: bool,
 }
 
 impl KrylovExpm {
@@ -54,7 +56,13 @@ impl KrylovExpm {
             qs: faer::Mat::zeros(max_krylov_dim, max_krylov_dim),
             iom: iom_in.unwrap_or(2),
             tol: tol,
+            verbose: false,
         }
+    }
+
+    /// Set extra verbosity for additional stdout output
+    pub fn set_verbosity(&mut self, verbose: bool) {
+        self.verbose = verbose;
     }
 
     /// Computes exp(A*dt)*v0 when A is a linear operator.
@@ -98,10 +106,11 @@ impl KrylovExpm {
         self.qs.fill(0.0);
 
         // run initial arnoldi iterations up to the current krylov dim
-        let (mut bdwn, mut bdwn_n) = arnoldi_lop_restarted(
+        let (mut breakdown_flag, mut breakdown_m) = arnoldi_lop_restarted(
             a_lo, dt, v0, self.hs.as_mut(), self.qs.as_mut(),
             0, self.m, self.iom);
 
+        const BUFFER_M: usize = 2;
         const INCREMENT_M: usize = 20;
         let beta = v0.norm_l2();
         let mut res = v0.to_owned();
@@ -109,7 +118,7 @@ impl KrylovExpm {
         let mut adapt_iter = 1;
         while !converged {
             // trim hessenberg to size
-            let h_dim = min(self.m, bdwn_n);
+            let h_dim = min(self.m, breakdown_m);
             // get H_{m+1} view
             let h = self.hs.get(0..h_dim+1, 0..h_dim+1);
             let q = self.qs.get(.., 0..h_dim+1);
@@ -120,23 +129,38 @@ impl KrylovExpm {
             let phi_h = self.expmv.phik_apply(
                 h.as_ref(), 1.0, unit_vec.as_ref(), k);
             res = faer::Scale(beta) * (q.as_ref() * phi_h.as_ref());
-            // TODO: throw the last vector away?
-            // res = faer::Scale(beta) * (q.as_ref().get(0..last_m-1, ..) * phi_h.get(0..last_m-1, ..))
 
             // compute error estimate
             let last_m = phi_h.nrows()-1;
-            let final_update = phi_h[(last_m, 0)] * (q.col(last_m));
-            let err_est = final_update.norm_l2();
-            converged = self.tol > err_est || bdwn;
-            log::info!("adapt i: {adapt_iter}, m: {}, err: {:.6e}, converged: {converged}, bkdwn: {bdwn}, bkdwn_n: {bdwn_n}",
-                       self.m, err_est);
+            for p in (1..=min(10, last_m)).rev() {
+                let last_m_p = last_m+1 - p;
+                let final_updates = q.get(.., last_m_p..last_m+1) * phi_h.col(0).get(last_m_p..last_m+1);
+                let err_est_p = final_updates.norm_l2();
+                converged = self.tol > err_est_p;
+
+                // log error estimate to stdout and log file
+                if self.verbose {
+                    let final_update = phi_h[(last_m, 0)] * (q.col(last_m));
+                    let err_est_m = final_update.norm_l2();
+                    println!("i: {adapt_iter}, m: {last_m}, mp: {last_m_p}, e_mp: {:.5e}, e_m: {:.5e} conv: {converged}, bdwn: {breakdown_flag}", err_est_p, err_est_m);
+                }
+                log::info!("adapt i: {adapt_iter}, mp: {last_m_p}, err: {:.6e}, converged: {converged}, bkdwn: {breakdown_flag}", err_est_p);
+
+                // update krylov dim
+                if converged {
+                    let m_next = last_m_p + BUFFER_M;
+                    self.m = m_next;
+                    break;
+                }
+            }
+
             if !converged {
                 // run arnoldi an additional INCREMENT_M iters
                 let (bd, bd_n) = arnoldi_lop_restarted(
                     a_lo, dt, v0, self.hs.as_mut(), self.qs.as_mut(),
                     self.m, INCREMENT_M, self.iom);
-                bdwn_n = bd_n;
-                bdwn = bd;
+                breakdown_m = bd_n;
+                breakdown_flag = bd;
                 // extend krylov dim
                 self.m += INCREMENT_M;
             }
@@ -238,6 +262,7 @@ mod test_matexp_krylov {
         let max_krylov_dim = 100;
         let expmv = Box::new(matexp_pade::PadeExpm::new(12));
         let mut krylov_phikv_eval = KrylovExpm::new(expmv, m, max_krylov_dim, tol, Some(iom));
+        krylov_phikv_eval.set_verbosity(true);
 
         // generate vb vector: vb = [b0, b1, ... bk]
         let test_vb = vec![test_v.as_ref(),];
