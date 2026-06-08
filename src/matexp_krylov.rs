@@ -195,7 +195,7 @@ impl KrylovExpm {
         &self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>, k: usize)
         -> Mat<f64>
     {
-        let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.krylov_dim_max, self.iom);
+        let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.m, self.iom);
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
