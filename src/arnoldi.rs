@@ -155,65 +155,6 @@ pub fn arnoldi_lop<T>(
 }
 
 
-/// Arnoldi iteration with linear operator A.
-/// Returns extended, (n+1,n) upper hessenberg matrix.
-///
-/// #Args
-/// * `a_lo` - linear operator, sparse mat or method to apply mat to vec
-/// * `a_lo_scale` - scale factor on the linear operator
-/// * `b` - initial vector in [b, Ab, A^2b, ...]
-/// * `n` - max krylov iteration
-/// * `iom` - incomplete ortho depth
-///
-pub fn arnoldi_lop_ext<T>(
-    a_lo: &dyn LinOp<T>,
-    a_lo_scale: T,
-    b: MatRef<T>,
-    n: usize,
-    iom: usize,
-) -> (Mat<T>, Mat<T>, usize)
-    where
-    T: RealField + Float,
-{
-    let mut breakdown_n = 0;
-    let m = std::cmp::min(n, b.nrows());
-    let mut hs = faer::Mat::zeros(m+1, m);
-    let mut qs = faer::Mat::zeros(b.nrows(), m+1);
-    let norm_b = b.norm_l2();
-
-    // prevent div by 0 if norm_b~0
-    let not_early_bkdwn: bool = (T::one() / norm_b).is_finite();
-    let q0 = if not_early_bkdwn {
-        b * faer::Scale(T::from(1.0).unwrap() / norm_b)
-    } else {
-        b * faer::Scale(T::from(1.0).unwrap())
-    };
-    qs.col_mut(0).copy_from(q0.col(0));
-    let mut breakdown_flag = !not_early_bkdwn;
-
-    // mem buffer size
-    let par = faer::get_global_parallelism();
-    let mut mem_buf = MemBuffer::new(a_lo.apply_scratch(b.ncols(), par));
-
-    for k in 0..m {
-        if breakdown_flag == true {
-            break
-        }
-        // NOTE: check that the last vector is properly computed in
-        // the inner loop.
-        breakdown_flag = arnoldi_inner_lop(
-            a_lo, a_lo_scale, k, m, iom, hs.as_mut(), qs.as_mut(),
-            MemStack::new(&mut mem_buf), true);
-        breakdown_n += 1;
-    }
-
-    (
-        qs.get(0..b.nrows(), 0..breakdown_n+1).to_owned(),
-        hs.get(0..breakdown_n+1, 0..breakdown_n).to_owned(),
-        breakdown_n
-    )
-}
-
 /// Arnoldi impl that can be restarted, taking mutable hessenberg
 /// and orthonormal matricies as input and writing into them.
 /// This avoids allocating h, q inside this method, but places
@@ -222,9 +163,6 @@ pub fn arnoldi_lop_ext<T>(
 ///
 /// This is equal to the arnoldi_lop procedure if
 /// i=0 and set n=desired krylov dim.
-///
-/// This is equal to the arnoldi_lop_ext procedure if
-/// i=0 and set n=desired krylov dim + 1.
 ///
 /// #Args
 /// * `a_lo` - linear operator, sparse mat or method to apply mat to vec

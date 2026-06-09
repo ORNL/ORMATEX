@@ -21,7 +21,6 @@ use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::traits::ComplexField;
 use faer::linalg::matmul::triangular::{matmul as tri_matmul, BlockStructure};
 use faer_traits::math_utils::{add, mul, from_f64};
-use num_traits::Float;
 
 use std::cmp::{max, min};
 use statrs::function::{factorial};
@@ -29,7 +28,7 @@ use csv;
 
 use crate::ode_sys::{DynRefExtendedLinOp};
 use crate::matexp_traits::{LinOpPhikvEvaluator};
-use crate::arnoldi::{arnoldi_lop, arnoldi_lop_ext, arnoldi_lop_restarted};
+use crate::arnoldi::arnoldi_lop_restarted;
 
 /// Pre-generated Leja points from file
 /// Real leja points in [-2, 2]
