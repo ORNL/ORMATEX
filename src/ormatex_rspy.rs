@@ -48,7 +48,8 @@ use std::rc::Rc;
 
 use crate::ode_sys::*;
 use crate::logger::init_logger;
-use crate::ode_bdf;
+use crate::ode_implicit;
+use crate::tableau_implicit::ImplicitBT;
 use crate::ode_rk;
 use crate::ode_epirk;
 use crate::matexp_krylov;
@@ -210,21 +211,37 @@ fn select_solver<'a, T: LinOpPhikvEvaluator + 'a>(
     y0_mat: MatRef<'_, f64>,
     method: String,
     tol_fdt: f64,
+    tol_lin: f64,
+    tol_nlin: f64,
     matexp_m: T,
     )
     -> Rc < RefCell<dyn IntegrateSys<'a, TimeType=f64, SysStateType=Mat<f64>> + 'a> >
 {
     // backward euler
     if method.as_str() == "bdf1" || method.as_str() == "backeuler" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 1)))
+        return Rc::new( RefCell::new(ode_implicit::BdfIntegrator::new(t0, y0_mat, 1, tol_lin, tol_nlin)))
     }
     // backward difference formula 2
     else if method.as_str() == "bdf2" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 2)))
+        return Rc::new( RefCell::new(ode_implicit::BdfIntegrator::new(t0, y0_mat, 2, tol_lin, tol_nlin)))
     }
     // crank-nicolson
     else if method.as_str() == "cn" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 3)))
+        return Rc::new(RefCell::new(
+                ode_implicit::DirkIntegrator::new(t0, y0_mat, ImplicitBT::crank_nicolson(), tol_lin, tol_nlin)
+                ))
+    }
+    // sdirk32
+    else if method.as_str() == "sdirk32" {
+        return Rc::new(RefCell::new(
+                ode_implicit::DirkIntegrator::new(t0, y0_mat, ImplicitBT::sdirk32(), tol_lin, tol_nlin)
+                ))
+    }
+    // sdirk33
+    else if method.as_str() == "sdirk33" {
+        return Rc::new(RefCell::new(
+                ode_implicit::DirkIntegrator::new(t0, y0_mat, ImplicitBT::sdirk33(), tol_lin, tol_nlin)
+                ))
     }
     // forward euler
     else if method.as_str() == "rk1" || method.as_str() == "forwardeuler" {
@@ -279,6 +296,9 @@ fn integrate_wrapper_rs<'py>(
     let tol: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
     let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol_fdt"), 1e-8);
     let osteps: usize = get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
+    // linear and nonlinear solver settings
+    let tol_lin: f64 = get_val_or_default(py, &kd_hash, String::from("tol_lin"), 1e-8);
+    let tol_nlin: f64 = get_val_or_default(py, &kd_hash, String::from("tol_nlin"), 1e-8);
     // jacobian spectrum analysis settings
     let leja_a: f64 = get_val_or_default(py, &kd_hash, String::from("leja_a"), -1.0);
     let leja_b: f64 = get_val_or_default(py, &kd_hash, String::from("leja_b"), 0.0);
@@ -328,7 +348,7 @@ fn integrate_wrapper_rs<'py>(
                 }
             };
             matexp_m.set_max_substeps(max_substeps);
-            select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
+            select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
         },
         "taylor" => {
             let lp = matexp_leja::LejaPoints::new(vec![0.0; m], vec![0.0; m]);
@@ -339,12 +359,12 @@ fn integrate_wrapper_rs<'py>(
                 matexp_leja::LejaPhiEval::new(
                     lp, std::cmp::min(m, 800), tol, "taylor", dd_method.as_str(),
                     krylov_reuse, Box::new(leja_ellipse_adapter));
-            select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
+            select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
         },
         // krylov is default
         _ => {
             let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, std::cmp::min(100, m), m, tol, Some(iom));
-            select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
+            select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
         },
     };
 

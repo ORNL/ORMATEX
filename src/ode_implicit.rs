@@ -136,13 +136,15 @@ pub struct DirkIntegrator<'a> {
 }
 
 impl<'a> DirkIntegrator<'a> {
-    pub fn new(t0: f64, y0: MatRef<'_, f64>, bt: ImplicitBT) -> Self {
+    pub fn new(t0: f64, y0: MatRef<'_, f64>, bt: ImplicitBT, tol_lin: f64, tol_nlin: f64) -> Self {
+        assert!(tol_nlin > 0.);
+        assert!(tol_lin > 0.);
         Self {
             bt,
             t: t0,
             y: y0.to_owned(),
-            tol_lin:    1.0e-12,
-            tol_nlin:   1.0e-12,
+            tol_lin:    tol_lin,
+            tol_nlin:   tol_nlin,
             iters_lin:  1000,
             iters_nlin: 50,
             phantom: Default::default(),
@@ -203,15 +205,17 @@ pub struct BdfIntegrator<'a> {
 }
 
 impl<'a> BdfIntegrator<'a> {
-    pub fn new(t0: f64, y0: MatRef<'_, f64>, order: usize) -> Self {
+    pub fn new(t0: f64, y0: MatRef<'_, f64>, order: usize, tol_lin: f64, tol_nlin: f64) -> Self {
+        assert!(tol_nlin > 0.);
+        assert!(tol_lin > 0.);
         let mut y_hist = VecDeque::with_capacity(order);
         y_hist.push_front(y0.to_owned());
         Self {
             order,
             t: t0,
             y_hist,
-            tol_lin:    1.0e-12,
-            tol_nlin:   1.0e-12,
+            tol_lin:    tol_lin,
+            tol_nlin:   tol_nlin,
             iters_lin:  1000,
             iters_nlin: 50,
             phantom: Default::default(),
@@ -316,7 +320,7 @@ impl<'a> IntegrateSys<'a> for BdfIntegrator<'a> {
 
 
 #[cfg(test)]
-mod test_bdf {
+mod test_implicit {
     use crate::test_common::*;
     use crate::ode_rk::RkIntegrator;
     use super::*;
@@ -382,7 +386,7 @@ mod test_bdf {
         let y_rk4 = rk4_reference();
         let sys   = TestLvFdSys::new();
         let y0    = faer::mat![[5.0,], [4.0,]];
-        let mut solver = BdfIntegrator::new(0.0, y0.as_ref(), 1);
+        let mut solver = BdfIntegrator::new(0.0, y0.as_ref(), 1, 1e-12, 1e-12);
         for _ in 0..N_STEPS {
             let res = solver.step(&sys, DT).unwrap();
             solver.accept_step(res);
@@ -399,7 +403,7 @@ mod test_bdf {
         let y_rk4 = rk4_reference();
         let sys   = TestLvSys::new();
         let y0    = faer::mat![[5.0,], [4.0,]];
-        let mut solver = BdfIntegrator::new(0.0, y0.as_ref(), 2);
+        let mut solver = BdfIntegrator::new(0.0, y0.as_ref(), 2, 1e-12, 1e-12);
         for _ in 0..N_STEPS {
             let res = solver.step(&sys, DT).unwrap();
             solver.accept_step(res);
@@ -416,7 +420,7 @@ mod test_bdf {
         let y_rk4 = rk4_reference();
         let sys   = TestLvFdSys::new();
         let y0    = faer::mat![[5.0,], [4.0,]];
-        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk22());
+        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk22(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
         println!("SDIRK22 FD at t={T_END}: y = {:?}", y);
@@ -429,7 +433,7 @@ mod test_bdf {
         let y_rk4 = rk4_reference();
         let sys   = TestLvSys::new();
         let y0    = faer::mat![[5.0,], [4.0,]];
-        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk22());
+        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk22(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
         println!("SDIRK22 exact Jac at t={T_END}: y = {:?}", y);
@@ -443,7 +447,7 @@ mod test_bdf {
         let y_rk4 = rk4_reference();
         let sys   = TestLvFdSys::new();
         let y0    = faer::mat![[5.0,], [4.0,]];
-        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32());
+        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
         println!("SDIRK32 FD at t={T_END}: y = {:?}", y);
@@ -456,7 +460,7 @@ mod test_bdf {
         let y_rk4 = rk4_reference();
         let sys   = TestLvSys::new();
         let y0    = faer::mat![[5.0,], [4.0,]];
-        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32());
+        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
         println!("SDIRK32 exact Jac at t={T_END}: y = {:?}", y);
@@ -469,7 +473,7 @@ mod test_bdf {
         let y_rk4 = rk4_reference();
         let sys   = TestLvSys::new();
         let y0    = faer::mat![[5.0,], [4.0,]];
-        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32_norsett());
+        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32_norsett(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
         println!("SDIRK32 Norsett at t={T_END}: y = {:?}", y);
@@ -483,7 +487,7 @@ mod test_bdf {
         let y_rk4 = rk4_reference();
         let sys   = TestLvSys::new();
         let y0    = faer::mat![[5.0,], [4.0,]];
-        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk33());
+        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk33(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
         println!("SDIRK33 Alexander at t={T_END}: y = {:?}", y);
@@ -517,7 +521,7 @@ mod test_bdf {
         for (name, bt, order, tol_rel) in methods {
             let sys = TestLvSys::new();
             let y0  = faer::mat![[5.0_f64,], [4.0_f64,]];
-            let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), bt.clone());
+            let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), bt.clone(), 1e-12, 1e-12);
             run_steps(&mut solver, &sys, DT, N_STEPS);
             let y = solver.state();
 
