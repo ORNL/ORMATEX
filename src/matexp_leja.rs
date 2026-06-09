@@ -21,7 +21,6 @@ use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::traits::ComplexField;
 use faer::linalg::matmul::triangular::{matmul as tri_matmul, BlockStructure};
 use faer_traits::math_utils::{add, mul, from_f64};
-use num_traits::Float;
 
 use std::cmp::{max, min};
 use statrs::function::{factorial};
@@ -29,7 +28,7 @@ use csv;
 
 use crate::ode_sys::{DynRefExtendedLinOp};
 use crate::matexp_traits::{LinOpPhikvEvaluator};
-use crate::arnoldi::{arnoldi_lop, arnoldi_lop_ext, arnoldi_lop_restarted};
+use crate::arnoldi::arnoldi_lop_restarted;
 
 /// Pre-generated Leja points from file
 /// Real leja points in [-2, 2]
@@ -957,7 +956,7 @@ impl LejaPhiEval {
         shift: f64,
         scale: f64,
         coeffs: ColRef<c64>,
-        use_krylov: bool,
+        _use_krylov: bool,
         ) -> (bool, usize)
     {
         log::info!("=== ReLPM, shift: {:0.6e}, scale: {:0.6e}", shift, scale);
@@ -978,28 +977,8 @@ impl LejaPhiEval {
         let par = faer::get_global_parallelism();
         let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
 
-        // Augment leja sequence with krylov subspace polynomial if available
-        let krylov_res = if use_krylov {
-            self.krylov_poly_expmv(None, tau,
-                leja_x_sc.as_ref(), _leja_x_sc_im.as_ref(),
-                coeffs, shift, scale, norm_u)
-        } else { Err(()) };
-        let mut r: usize = 0;  // number of ritz values
-        match krylov_res {
-            Ok((n_r, xr, dr)) => {
-                pm.copy_from(xr);
-                vm = dr;
-                r = n_r;
-            }
-            _ => {
-                if self.p > 0 {
-                    pm += faer::Scale(coeffs[self.p].re) * vm.as_ref();
-                }
-            }
-        }
-
         // compute leja poly and check for convergence each iter
-        for i in 1+r..self.m {
+        for i in 1..self.m {
             if converged {
                 break;
             }
@@ -1089,8 +1068,8 @@ impl LejaPhiEval {
         (converged, iter, vm)
     }
 
-    /// Compute the augmenting first term in the krylov-leja sequence
-    /// with krylov subspace polynomial, if available.
+    /// Compute the augmenting term in the hybrid krylov-newton polynomial
+    /// with krylov subspace, if available.
     ///
     /// If the krylov subspace has not been computed, or is unavailable,
     /// this routine returns Err(()).
@@ -1258,6 +1237,8 @@ impl LejaPhiEval {
         let norm_u: f64 = vm.norm_l2();
         let mut err_est = 2. * norm_u;
         let mut converged: bool = err_est == 0.;
+        // number of leading zeros + n ritz values
+        let mut rp: usize = self.p;
 
         // Augment leja sequence with krylov subspace polynomial if available
         let krylov_res = if use_krylov {
@@ -1265,18 +1246,17 @@ impl LejaPhiEval {
                 leja_x_sc_re.as_ref(), leja_x_sc_im.as_ref(),
                 coeffs, shift, scale, norm_u)
         } else { Err(()) };
-        let mut rp: usize = 0;
         match krylov_res {
             Ok((nr, pr, dr)) => {
                 if self.p > 0 {
-                    pm.copy_from(pr + pm.as_ref());
+                    pm += pr;
                 } else {
                     pm.copy_from(pr);
                 }
                 // iteration vector
                 vm.copy_from(dr);
                 // number of ritz values used
-                rp = nr;
+                rp += nr;
             }
             _ => {
                 if self.p > 0 {
@@ -1284,10 +1264,8 @@ impl LejaPhiEval {
                 }
             }
         }
-        // number of leading zeros + n ritz values
-        rp += self.p;
         // extract next leja points in the sequence
-        let n_leja_real = self.leja_x.slice(rp, rp+10).n_leja_real();
+        let n_leja_real = self.leja_x.slice(rp, rp+rp+10).n_leja_real();
 
         // precompute scaling factors
         let inv_scale    = 1.0 / scale;
@@ -1580,14 +1558,14 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
         println!("=== Updating Spectrum Parameters ===");
         self.leja_ellipse_adapter.update(a_lo, v.as_ref(), dt);
         let (a, b, c) = self.leja_ellipse_adapter.get_bounds();
-        let p = k;
         match (self.krylov_reuse, self.leja_ellipse_adapter.get_ritz_leja()) {
             (true, Some(lp_ritz)) => {
                 // inject the ritz values into the leja sequence
-                self.update_leja_splice(a, b, c, p, 0, lp_ritz)
+                self.update_leja_splice(a, b, c, k, 0, lp_ritz)
             },
             _ => { self.update_leja(a, b, c, 0); }
         }
+        println!("Spectrum params: a: {:0.6e}, b: {:0.6e}, c: {:0.6e}, p: {}", a, b, c, self.p);
         println!("apply_prepare time (s): {}", clock.elapsed().as_secs_f64());
     }
 }
@@ -1699,20 +1677,14 @@ impl GetSpectrumBounds for LejaEllipseAdapterArnoldiIOM {
             let sf = self.spec_saftey_factor;
             let (a, b, c) = (sf * fit_a, fit_b, sf * fit_c);
 
-            *self = Self {
-                a,
-                b,
-                c,
-                spec_norm: spec_norm,
-                spec_norm_tol: self.spec_norm_tol,
-                spec_iters: self.spec_iters,
-                spec_iom: self.spec_iom,
-                spec_saftey_factor: self.spec_saftey_factor,
-                arnld_q: Some(q),
-                arnld_h: Some(h),
-                ritz_re: Some(ritz_re),
-                ritz_im: Some(ritz_im),
-            };
+            self.a = a;
+            self.b = b;
+            self.c = c;
+            self.spec_norm = spec_norm;
+            self.arnld_q = Some(q);
+            self.arnld_h = Some(h);
+            self.ritz_re = Some(ritz_re);
+            self.ritz_im = Some(ritz_im);
         }
     }
 
@@ -1946,7 +1918,7 @@ pub fn spectrum_arnoldi_iom(
         return (*a, *b, *c, ritz_re, ritz_im, q, h)
     }
     // apply artificial spectrum bounds
-    (a.min(-1.0e-2), 0.0, *c, ritz_re, ritz_im, q, h)
+    (a.min(-1.0e-2), b.max(0.0), *c, ritz_re, ritz_im, q, h)
 }
 
 
