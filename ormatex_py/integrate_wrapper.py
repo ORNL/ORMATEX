@@ -60,8 +60,11 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     High level interface to all time integration methods in ORMATEX.
     """
     tic = time.perf_counter()
+    # available ormatex rust integrators
     is_rs = method in ["exprb2_rs", "exprb3_rs", "epi2_rs", "epi3_rs",
-                       "bdf2_rs", "bdf1_rs", "backeuler_rs", "cn_rs"]
+                       "bdf2_rs", "bdf1_rs", "backeuler_rs", "cn_rs",
+                       "sdirk32_rs", "sdirk33_rs",
+                       "rk4_rs"]
     is_rb = method in ExpRBIntegrator._valid_methods.keys()
     is_leja = method in ExpLejaIntegrator._valid_methods.keys()
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
