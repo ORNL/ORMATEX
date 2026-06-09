@@ -166,13 +166,19 @@ impl KrylovExpm {
 
             if !converged {
                 // run arnoldi additional iters
-                let (bd, bd_n) = arnoldi_lop_restarted(
-                    a_lo, dt, v0, self.hs.as_mut(), self.qs.as_mut(),
-                    self.m, self.krylov_dim_inc, self.iom);
-                breakdown_m = bd_n;
-                breakdown_flag = bd;
-                // extend krylov dim
-                self.m += self.krylov_dim_inc;
+                // cap the increment to available storage
+                let storage_size = self.krylov_dim_max + 1;
+                let max_increment = if storage_size > self.m { storage_size - self.m - 1 } else { 0 };
+                let dim_inc = min(self.krylov_dim_inc, max_increment);
+                if dim_inc > 0 {
+                    let (bd, bd_n) = arnoldi_lop_restarted(
+                        a_lo, dt, v0, self.hs.as_mut(), self.qs.as_mut(),
+                        self.m, dim_inc, self.iom);
+                    breakdown_m = bd_n;
+                    breakdown_flag = bd;
+                    // extend krylov dim
+                    self.m += dim_inc;
+                }
             }
 
             // TODO: return Err() or Warning

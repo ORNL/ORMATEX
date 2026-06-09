@@ -37,9 +37,9 @@ pub fn main() {
     // let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
 
     let _logger = init_logger();
-    let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 60);
+    let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 80);
     let leja_ellipse_adapter = matexp_leja::LejaEllipseAdapterArnoldiIOM::new(
-        -1.0, 0.0, 0.0, 1e-12, 20, 4, 1.0);
+        -1.0, 0.0, 1.0, 1e-18, 20, 2, 1.1);
     let matexp_m = matexp_leja::LejaPhiEval::new(
         lp, 20, 1e-12, "clapm", "dd_phi", false, Box::new(leja_ellipse_adapter));
 
@@ -53,7 +53,7 @@ pub fn main() {
     // step the solution forward
     let mut t = 0.0;
     let dt = 0.1;
-    let nsteps = 500;
+    let nsteps = 100;
     for _i in 0..nsteps {
         let y_new = sys_solver.step(&test_sys, dt).unwrap();
 

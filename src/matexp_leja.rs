@@ -1198,7 +1198,7 @@ impl LejaPhiEval {
             return (conv, iter)
         }
         // use the real leja point method if all leja points are on the real line
-        if self.leja_x.n_leja_real() >= self.m || self.method.as_str() == "relpm" {
+        if self.leja_x.n_leja_real() >= self.m {
             return self.real_leja_expmv(
                 pm, ext_a_lo, tau, u, shift, scale, coeffs, use_krylov)
         }
@@ -1558,14 +1558,14 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
         println!("=== Updating Spectrum Parameters ===");
         self.leja_ellipse_adapter.update(a_lo, v.as_ref(), dt);
         let (a, b, c) = self.leja_ellipse_adapter.get_bounds();
-        let p = k;
         match (self.krylov_reuse, self.leja_ellipse_adapter.get_ritz_leja()) {
             (true, Some(lp_ritz)) => {
                 // inject the ritz values into the leja sequence
-                self.update_leja_splice(a, b, c, p, 0, lp_ritz)
+                self.update_leja_splice(a, b, c, k, 0, lp_ritz)
             },
             _ => { self.update_leja(a, b, c, 0); }
         }
+        println!("Spectrum params: a: {:0.6e}, b: {:0.6e}, c: {:0.6e}, p: {}", a, b, c, self.p);
         println!("apply_prepare time (s): {}", clock.elapsed().as_secs_f64());
     }
 }
@@ -1677,20 +1677,14 @@ impl GetSpectrumBounds for LejaEllipseAdapterArnoldiIOM {
             let sf = self.spec_saftey_factor;
             let (a, b, c) = (sf * fit_a, fit_b, sf * fit_c);
 
-            *self = Self {
-                a,
-                b,
-                c,
-                spec_norm: spec_norm,
-                spec_norm_tol: self.spec_norm_tol,
-                spec_iters: self.spec_iters,
-                spec_iom: self.spec_iom,
-                spec_saftey_factor: self.spec_saftey_factor,
-                arnld_q: Some(q),
-                arnld_h: Some(h),
-                ritz_re: Some(ritz_re),
-                ritz_im: Some(ritz_im),
-            };
+            self.a = a;
+            self.b = b;
+            self.c = c;
+            self.spec_norm = spec_norm;
+            self.arnld_q = Some(q);
+            self.arnld_h = Some(h);
+            self.ritz_re = Some(ritz_re);
+            self.ritz_im = Some(ritz_im);
         }
     }
 
@@ -1924,7 +1918,7 @@ pub fn spectrum_arnoldi_iom(
         return (*a, *b, *c, ritz_re, ritz_im, q, h)
     }
     // apply artificial spectrum bounds
-    (a.min(-1.0e-2), 0.0, *c, ritz_re, ritz_im, q, h)
+    (a.min(-1.0e-2), b.max(0.0), *c, ritz_re, ritz_im, q, h)
 }
 
 
