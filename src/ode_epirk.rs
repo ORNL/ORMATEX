@@ -265,7 +265,9 @@ where
     type SysStateType = Mat<f64>;
 
     fn step<'b>(&mut self, sys: &'b dyn OdeSys<'b>,  dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
-        match self.method.as_str() {
+        println!("\nEPI step, t: {:?}, dt: {:?}", self.t, dt);
+        let clock = std::time::Instant::now();
+        let res = match self.method.as_str() {
             "epi2" | "exprb2" => {
                 self.step_order_2(sys, dt)
             },
@@ -280,7 +282,9 @@ where
                 self.step_exprb32(sys, dt)
             },
             _ => panic!("bad method"),
-       }
+        };
+        println!("EPI step time (s): {}", clock.elapsed().as_secs_f64());
+        res
     }
 
     fn time(&self) -> Self::TimeType {

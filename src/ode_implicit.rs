@@ -161,10 +161,14 @@ impl<'a> IntegrateSys<'a> for DirkIntegrator<'a> {
         sys: &'b dyn OdeSys<'b>,
         dt: Self::TimeType,
     ) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
-        dirk_step(
+        println!("\nDIRK step, t: {:?}, dt: {:?}", self.t, dt);
+        let clock = std::time::Instant::now();
+        let res = dirk_step(
             sys, self.t, self.y.as_ref(), dt, &self.bt,
             self.tol_nlin, self.tol_lin, self.iters_nlin, self.iters_lin,
-        )
+        );
+        println!("DIRK step time (s): {}", clock.elapsed().as_secs_f64());
+        res
     }
 
     fn time(&self) -> Self::TimeType { self.t }
@@ -285,7 +289,9 @@ impl<'a> IntegrateSys<'a> for BdfIntegrator<'a> {
         sys: &'b dyn OdeSys<'b>,
         dt: Self::TimeType,
     ) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
-        match self.order {
+        println!("\nBDF step, t: {:?}, dt: {:?}", self.t, dt);
+        let clock = std::time::Instant::now();
+        let res = match self.order {
             1 => self.step_order_1(sys, dt),
             2 => {
                 if self.y_hist.len() >= 2 {
@@ -296,7 +302,9 @@ impl<'a> IntegrateSys<'a> for BdfIntegrator<'a> {
                 }
             },
             _ => panic!("BdfIntegrator: unsupported order {}", self.order),
-        }
+        };
+        println!("BDF step time (s): {}", clock.elapsed().as_secs_f64());
+        res
     }
 
     fn time(&self) -> Self::TimeType { self.t }

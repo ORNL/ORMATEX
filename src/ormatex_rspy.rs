@@ -64,14 +64,13 @@ use crate::arnoldi::arnoldi_lop;
 #[pyclass]
 pub struct PySysWrapped {
     // alias of PyObject
-    // pub py_sys: Py<PyAny>,
-    pub py_sys: PyObject,
+    pub py_sys: Py<PyAny>,
 }
 
 #[pymethods]
 impl PySysWrapped {
     #[new]
-    pub fn new(py_sys: PyObject) -> Self {
+    pub fn new(py_sys: Py<PyAny>) -> Self {
         // let gil = Python::acquire_gil();
         Self {
             py_sys,
@@ -84,13 +83,13 @@ impl PySysWrapped {
 pub struct PyJaxJacLinOp {
     /// inner linop def in python
     /// see omatex_py.ode_sys.LinOp for def
-    py_linop: PyObject,
+    py_linop: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyJaxJacLinOp {
     #[new]
-    pub fn new(py_linop: PyObject) -> Self {
+    pub fn new(py_linop: Py<PyAny>) -> Self {
         // let gil = Python::acquire_gil();
         Self {
             py_linop,
@@ -283,7 +282,7 @@ fn integrate_wrapper_rs<'py>(
 {
     // process kwargs
     let kd: pyo3::Bound<'_, PyDict> = kwds.unwrap_or(PyDict::new(py));
-    let kd_hash: HashMap<String, PyObject> = kd.extract().unwrap_or(HashMap::new());
+    let kd_hash: HashMap<String, Py<PyAny>> = kd.extract().unwrap_or(HashMap::new());
 
     // stepper settings
     let method: String = get_val_or_default(py, &kd_hash, String::from("method"), String::from("epi2"));
@@ -431,7 +430,7 @@ fn phi_k_rs<'py>(
 #[pyfunction]
 fn arnoldi_rs<'py>(
     py: Python<'py>,
-    py_linop: PyObject,
+    py_linop: Py<PyAny>,
     a_lo_scale: f64,
     b: PyReadonlyArray2<f64>,
     m: usize,
