@@ -309,15 +309,22 @@ fn integrate_wrapper_rs<'py>(
             let mut matexp_m = match spec_method.as_str() {
                 "none" => {
                     // user specified spectrum parameters
-                    matexp_leja::LejaPhiEval::new_from_abc(
-                        lp, std::cmp::min(m, 800), leja_a, leja_b, leja_c, tol,
-                        spec_tol, spec_iter, "none", dd_method.as_str(), false)
-                },
-                _ => {
+                    let leja_ellipse_adapter =
+                        matexp_leja::LejaEllipseAdapterStatic::new(
+                        leja_a, leja_b, leja_c);
                     // adaptive specturm parameter updates
                     matexp_leja::LejaPhiEval::new(
-                        lp, std::cmp::min(m, 800), 0.0, 1.0, tol,
-                        spec_tol, spec_iter, "arnoldi", dd_method.as_str(), krylov_reuse)
+                        lp, std::cmp::min(m, 800), tol, "clapm", dd_method.as_str(),
+                        krylov_reuse, Box::new(leja_ellipse_adapter))
+                },
+                _ => {
+                    let leja_ellipse_adapter =
+                        matexp_leja::LejaEllipseAdapterArnoldiIOM::new(
+                        leja_a, leja_b, leja_c, spec_tol, spec_iter, iom, 1.0);
+                    // adaptive specturm parameter updates
+                    matexp_leja::LejaPhiEval::new(
+                        lp, std::cmp::min(m, 800), tol, "clapm", dd_method.as_str(),
+                        krylov_reuse, Box::new(leja_ellipse_adapter))
                 }
             };
             matexp_m.set_max_substeps(max_substeps);
@@ -325,9 +332,13 @@ fn integrate_wrapper_rs<'py>(
         },
         "taylor" => {
             let lp = matexp_leja::LejaPoints::new(vec![0.0; m], vec![0.0; m]);
-            let mut matexp_m = matexp_leja::LejaPhiEval::new(
-                lp, std::cmp::min(m, 800), 0.0, 0.0, tol,
-                spec_tol, spec_iter, "none", dd_method.as_str(), false);
+            let leja_ellipse_adapter =
+                matexp_leja::LejaEllipseAdapterStatic::new(
+                leja_a, leja_b, leja_c);
+            let mut matexp_m =
+                matexp_leja::LejaPhiEval::new(
+                    lp, std::cmp::min(m, 800), tol, "taylor", dd_method.as_str(),
+                    krylov_reuse, Box::new(leja_ellipse_adapter));
             select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
         },
         // krylov is default
