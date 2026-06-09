@@ -35,6 +35,8 @@ pub struct KrylovExpm {
     krylov_dim_max: usize,
     /// krylov dim increment used in adaptive krylov subspace method
     krylov_dim_inc: usize,
+    /// number of krylov steps to lookback over in adaptive kyrlov logic
+    krylov_dim_lookback: usize,
     /// incomplete ortho depth
     iom: usize,
     /// storage for tmp hessenberg
@@ -55,6 +57,7 @@ impl KrylovExpm {
             m: min(m, krylov_dim_max),
             krylov_dim_max: krylov_dim_max,
             krylov_dim_inc: 20,
+            krylov_dim_lookback: 10,
             hs: faer::Mat::zeros(krylov_dim_max, krylov_dim_max),
             qs: faer::Mat::zeros(krylov_dim_max, krylov_dim_max),
             iom: iom_in.unwrap_or(2),
@@ -71,6 +74,11 @@ impl KrylovExpm {
     /// Set extra verbosity for additional stdout output
     pub fn set_krylov_dim_inc(&mut self, krylov_dim_inc: usize) {
         self.krylov_dim_inc = krylov_dim_inc;
+    }
+
+    /// Set extra verbosity for additional stdout output
+    pub fn set_krylov_dim_lookback(&mut self, krylov_dim_lookback: usize) {
+        self.krylov_dim_lookback = krylov_dim_lookback;
     }
 
     /// Computes exp(A*dt)*v0 when A is a linear operator.
@@ -142,11 +150,14 @@ impl KrylovExpm {
 
             // compute error estimate
             let last_m = phi_h.nrows()-1;
-            for p in (1..=min(10, last_m)).rev() {
-                let last_m_p = last_m+1 - p;
+            let mut last_m_p = last_m;
+            let krylov_dim_lookback = max(self.krylov_dim_lookback, 2);
+            // p is the lookback
+            for p in 1..=min(krylov_dim_lookback, last_m) {
+                converged = p > 1;
+                last_m_p = last_m+1 - p;
                 let final_updates = q.get(.., last_m_p..last_m+1) * phi_h.col(0).get(last_m_p..last_m+1);
                 err_est_p = final_updates.norm_l2();
-                converged = self.tol > err_est_p;
 
                 // log error estimate to stdout and log file
                 if self.verbose {
@@ -156,15 +167,14 @@ impl KrylovExpm {
                 }
                 log::info!("adapt i: {adapt_iter}, mp: {last_m_p}, err: {:.6e}, converged: {converged}, bkdwn: {breakdown_flag}", err_est_p);
 
-                // update krylov dim
-                if converged {
-                    let m_next = last_m_p + BUFFER_M;
-                    self.m = m_next;
+                if !(self.tol > err_est_p) {
                     break;
                 }
             }
-
-            if !converged {
+            if converged {
+                let m_next = last_m_p + BUFFER_M;
+                self.m = m_next;
+            } else {
                 // run arnoldi additional iters
                 // cap the increment to available storage
                 let storage_size = self.krylov_dim_max + 1;
