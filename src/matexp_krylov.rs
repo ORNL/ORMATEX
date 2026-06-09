@@ -99,7 +99,9 @@ impl KrylovExpm {
         &mut self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>, k: usize)
         -> Mat<f64>
     {
+        let clock = std::time::Instant::now();
         log::info!("=== Adaptive KrylovExpm");
+        println!("=== Adaptive KrylovExpm");
         // Allocate storage matrices with correct dimensions
         // The storage must be large enough to hold:
         // - hs: square matrix at least (m+1) x (m+1) where m can grow up to krylov_dim_max
@@ -123,6 +125,7 @@ impl KrylovExpm {
         let mut res = v0.to_owned();
         let mut converged = false;
         let mut adapt_iter = 1;
+        let mut err_est_p = 0.0;
         while !converged {
             // trim hessenberg to size
             let h_dim = min(self.m, breakdown_m);
@@ -142,7 +145,7 @@ impl KrylovExpm {
             for p in (1..=min(10, last_m)).rev() {
                 let last_m_p = last_m+1 - p;
                 let final_updates = q.get(.., last_m_p..last_m+1) * phi_h.col(0).get(last_m_p..last_m+1);
-                let err_est_p = final_updates.norm_l2();
+                err_est_p = final_updates.norm_l2();
                 converged = self.tol > err_est_p;
 
                 // log error estimate to stdout and log file
@@ -180,6 +183,8 @@ impl KrylovExpm {
             adapt_iter += 1;
         }
 
+        println!("converged: {converged}, m: {}, err_est: {:0.6e}", self.m, err_est_p);
+        println!("Krylov expmv time (s): {}", clock.elapsed().as_secs_f64());
         // return final approximation beta*Q*exp(H)*e1
         res
     }

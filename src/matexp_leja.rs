@@ -956,7 +956,7 @@ impl LejaPhiEval {
         shift: f64,
         scale: f64,
         coeffs: ColRef<c64>,
-        use_krylov: bool,
+        _use_krylov: bool,
         ) -> (bool, usize)
     {
         log::info!("=== ReLPM, shift: {:0.6e}, scale: {:0.6e}", shift, scale);
@@ -977,28 +977,8 @@ impl LejaPhiEval {
         let par = faer::get_global_parallelism();
         let mut mem_buf = MemBuffer::new(ext_a_lo.apply_scratch(u.ncols(), par));
 
-        // Augment leja sequence with krylov subspace polynomial if available
-        let krylov_res = if use_krylov {
-            self.krylov_poly_expmv(None, tau,
-                leja_x_sc.as_ref(), _leja_x_sc_im.as_ref(),
-                coeffs, shift, scale, norm_u)
-        } else { Err(()) };
-        let mut r: usize = 0;  // number of ritz values
-        match krylov_res {
-            Ok((n_r, xr, dr)) => {
-                pm.copy_from(xr);
-                vm = dr;
-                r = n_r;
-            }
-            _ => {
-                if self.p > 0 {
-                    pm += faer::Scale(coeffs[self.p].re) * vm.as_ref();
-                }
-            }
-        }
-
         // compute leja poly and check for convergence each iter
-        for i in 1+r..self.m {
+        for i in 1..self.m {
             if converged {
                 break;
             }
@@ -1088,8 +1068,8 @@ impl LejaPhiEval {
         (converged, iter, vm)
     }
 
-    /// Compute the augmenting first term in the krylov-leja sequence
-    /// with krylov subspace polynomial, if available.
+    /// Compute the augmenting term in the hybrid krylov-newton polynomial
+    /// with krylov subspace, if available.
     ///
     /// If the krylov subspace has not been computed, or is unavailable,
     /// this routine returns Err(()).
@@ -1218,7 +1198,7 @@ impl LejaPhiEval {
             return (conv, iter)
         }
         // use the real leja point method if all leja points are on the real line
-        if self.leja_x.n_leja_real() >= self.m {
+        if self.leja_x.n_leja_real() >= self.m || self.method.as_str() == "relpm" {
             return self.real_leja_expmv(
                 pm, ext_a_lo, tau, u, shift, scale, coeffs, use_krylov)
         }
@@ -1257,6 +1237,8 @@ impl LejaPhiEval {
         let norm_u: f64 = vm.norm_l2();
         let mut err_est = 2. * norm_u;
         let mut converged: bool = err_est == 0.;
+        // number of leading zeros + n ritz values
+        let mut rp: usize = self.p;
 
         // Augment leja sequence with krylov subspace polynomial if available
         let krylov_res = if use_krylov {
@@ -1264,18 +1246,17 @@ impl LejaPhiEval {
                 leja_x_sc_re.as_ref(), leja_x_sc_im.as_ref(),
                 coeffs, shift, scale, norm_u)
         } else { Err(()) };
-        let mut rp: usize = 0;
         match krylov_res {
             Ok((nr, pr, dr)) => {
                 if self.p > 0 {
-                    pm.copy_from(pr + pm.as_ref());
+                    pm += pr;
                 } else {
                     pm.copy_from(pr);
                 }
                 // iteration vector
                 vm.copy_from(dr);
                 // number of ritz values used
-                rp = nr;
+                rp += nr;
             }
             _ => {
                 if self.p > 0 {
@@ -1283,10 +1264,8 @@ impl LejaPhiEval {
                 }
             }
         }
-        // number of leading zeros + n ritz values
-        rp += self.p;
         // extract next leja points in the sequence
-        let n_leja_real = self.leja_x.slice(rp, rp+10).n_leja_real();
+        let n_leja_real = self.leja_x.slice(rp, rp+rp+10).n_leja_real();
 
         // precompute scaling factors
         let inv_scale    = 1.0 / scale;
