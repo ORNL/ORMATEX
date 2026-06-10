@@ -77,6 +77,7 @@ fn dirk_step<'jac>(
             sys.frhs(t_i, y_expl.as_ref())
 
         } else {
+            print!("Implicit stage: {} ", i+1);
             // Implicit stage
             // Solve  g(y_i) = y_i - y_expl - dt*a_ii*f(t_i, y_i) = 0
             // dg/dy_i = I - dt*a_ii * J_f(t_i, y_i)

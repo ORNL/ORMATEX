@@ -44,7 +44,7 @@ pub fn jac_newton <'jac> (
         ) -> Result<Mat<f64>, StepError>
     {
     println!("=== Newton Solve");
-    const TOL_STEP: f64 = 1.0;
+    const TOL_STEP: f64 = 0.1;
     let mut x = x0.to_owned();
     let mut dx_norm = 1.0e20;
     let mut a = faer::Mat::zeros(x.nrows(), x.ncols());
@@ -54,11 +54,11 @@ pub fn jac_newton <'jac> (
 
         // check for g(x) ~= zero
         let norm_f = gfn_x.norm_l2();
-        print!("i: {i}, ||f(x_{i})||: {:0.6e}", norm_f);
-        let step_ok = dx_norm < (TOL_STEP * (1.0 + x.norm_l2()));
         let res_ok = norm_f < tol;
-        if (step_ok && res_ok) || (res_ok && i <= 1) {
-            println!("");
+        let step_ok = dx_norm < (TOL_STEP * (1.0 + x.norm_l2()));
+        print!("i: {i}, ||f(x_{i})||: {:0.6e} ", norm_f);
+        if (step_ok || i <= 1) && res_ok {
+            println!("< tol: {:0.5e}. converged after {i} newton steps.", tol);
             return Ok(x);
         }
 
