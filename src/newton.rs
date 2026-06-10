@@ -44,11 +44,24 @@ pub fn jac_newton <'jac> (
         ) -> Result<Mat<f64>, StepError>
     {
     println!("=== Newton Solve");
+    const TOL_STEP: f64 = 1.0;
     let mut x = x0.to_owned();
+    let mut dx_norm = 1.0e20;
     let mut a = faer::Mat::zeros(x.nrows(), x.ncols());
     for i in 0..iters {
         // eval G(x_k)
         let gfn_x = gf(t, x.as_ref());
+
+        // check for g(x) ~= zero
+        let norm_f = gfn_x.norm_l2();
+        print!("i: {i}, ||f(x_{i})||: {:0.6e}", norm_f);
+        let step_ok = dx_norm < (TOL_STEP * (1.0 + x.norm_l2()));
+        let res_ok = norm_f < tol;
+        if (step_ok && res_ok) || (res_ok && i <= 1) {
+            println!("");
+            return Ok(x);
+        }
+
         let jac_gfn_x = gf_jac(t, x.as_ref());
         // Reset the GMRES solution buffer to zero each iteration so the
         // initial residual is always b (not b - J*a_prev from last iteration).
@@ -58,11 +71,8 @@ pub fn jac_newton <'jac> (
             jac_gfn_x, gfn_x.as_ref(), a.as_mut(), iters_lin, tol_lin, None).unwrap();
         // apply a:  x_k+1 = x_k - a
         x = x - a.as_ref();
-        let x_new_norm = a.norm_l2();
-        println!("Nonlinear iter: {i}, ||x_{} - x_{}||: {:0.6e},  Linear iters: {lin_iters}, Linear res: {:0.6e}", i+1, i, x_new_norm, lin_err);
-        if (x_new_norm) < tol {
-            return Ok(x);
-        }
+        dx_norm = a.norm_l2();
+        println!(", ||x_{}-x_{}||: {:0.6e},  Lin iters: {lin_iters}, Lin res: {:0.6e}", i+1, i, dx_norm, lin_err);
     }
     let err = StepError{error_code: 1, msg: format!("Newton Failed")};
     Err(err)
