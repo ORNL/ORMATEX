@@ -305,6 +305,7 @@ fn integrate_wrapper_rs<'py>(
     let spec_tol: f64 = get_val_or_default(py, &kd_hash, String::from("spec_tol"), 1.0e-8);
     let spec_iter: usize = get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
     let spec_method: String = get_val_or_default(py, &kd_hash, String::from("spec_method"), String::from("arnoldi"));
+    let spec_saftey_factor: f64 = get_val_or_default(py, &kd_hash, String::from("spec_saftey_factor"), 1.05);
     let dd_method: String = get_val_or_default(py, &kd_hash, String::from("dd_method"), String::from("dd_phi"));
     let krylov_reuse: bool = get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), false);
     // optional logging settings
@@ -331,16 +332,15 @@ fn integrate_wrapper_rs<'py>(
                     let leja_ellipse_adapter =
                         matexp_leja::LejaEllipseAdapterStatic::new(
                         leja_a, leja_b, leja_c);
-                    // adaptive specturm parameter updates
                     matexp_leja::LejaPhiEval::new(
                         lp, std::cmp::min(m, 800), tol, "clapm", dd_method.as_str(),
                         krylov_reuse, Box::new(leja_ellipse_adapter))
                 },
                 _ => {
+                    // adaptive specturm parameter updates
                     let leja_ellipse_adapter =
                         matexp_leja::LejaEllipseAdapterArnoldiIOM::new(
-                        leja_a, leja_b, leja_c, spec_tol, spec_iter, iom, 1.0);
-                    // adaptive specturm parameter updates
+                        leja_a, leja_b, leja_c, spec_tol, spec_iter, iom, spec_saftey_factor);
                     matexp_leja::LejaPhiEval::new(
                         lp, std::cmp::min(m, 800), tol, "clapm", dd_method.as_str(),
                         krylov_reuse, Box::new(leja_ellipse_adapter))

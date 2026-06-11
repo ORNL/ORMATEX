@@ -109,11 +109,30 @@ class RAD_SEM(OdeSplitSys):
 def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplot"):
     """
     Plots eigvals of the scaled system Jacobian
+    Writes Jacobian and y vector to Matrix Market format files for post-processing
     """
     import matplotlib.pyplot as plt
-    dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
+    from scipy.io import mmwrite
+    import scipy.sparse as sp
+
+    jac = np.asarray(ode_sys.fjac(t, y).dense())
+    dtJ = np.asarray(dt*jac)
     print("dt*J", dtJ)
     eigdtJ = np.linalg.eig(dtJ)[0]
+
+    # Write Jacobian to Matrix Market format
+    # Convert to sparse matrix for more efficient storage
+    jac_sparse = sp.csr_matrix(jac)
+    jac_mmfile = figname + "_jacobian.mtx"
+    mmwrite(jac_mmfile, jac_sparse, precision=16)
+    print(f"Jacobian written to: {jac_mmfile}")
+
+    # Write y vector to Matrix Market format
+    # Reshape as column vector for Matrix Market format
+    y_sparse = sp.csr_matrix(np.asarray(y).reshape(-1, 1))
+    y_mmfile = figname + "_y_vector.mtx"
+    mmwrite(y_mmfile, y_sparse, precision=16)
+    print(f"y vector written to: {y_mmfile}")
 
     plt.figure()
     plt.scatter(-eigdtJ.real+1., eigdtJ.imag)

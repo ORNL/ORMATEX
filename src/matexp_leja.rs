@@ -884,7 +884,7 @@ pub struct LejaPhiEval {
     /// Divided difference method
     dd_method: String,
     /// Extracts spectrum information from a LinOp
-    leja_ellipse_adapter: Box<dyn GetSpectrumBounds>,
+    pub leja_ellipse_adapter: Box<dyn GetSpectrumBounds>,
 }
 
 
@@ -1104,6 +1104,7 @@ impl LejaPhiEval {
             (true, (Some(q), Some(h))) => {
                 // number of ritz values available
                 let n_r = h.nrows()-1;
+                println!("Interpolating at the ritz values. n_ritz: {n_r}");
 
                 // convert to complex for interpolation at the ritz values
                 // Note: The hessenberg matrix h built from dt*A within
