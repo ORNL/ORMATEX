@@ -298,7 +298,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
             max_krylov_dim=300, iom=2,
             tol=1e-12, spec_iter=24, spec_method="arnoldi",
             tol_lin=1e-10, tol_nlin=1e-8,
-            krylov_reuse=False, osteps=500, **kwargs
+            krylov_reuse=True, osteps=500, **kwargs
             )
     t_res, y_res = res.t_res, res.y_res
 
