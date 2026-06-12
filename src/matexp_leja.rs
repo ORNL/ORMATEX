@@ -340,10 +340,9 @@ impl LejaPoints {
     /// Number of leading leja points on the real axis
     pub fn n_leja_real(&self) -> usize {
         // count number of leading real leaja points
-        let tol = 1.0e-20;
         let mut nr: usize = 0;
         for i in 0..self.leja_re.nrows() {
-            if self.leja_im[i].abs() < tol {
+            if self.leja_im[i].abs() < 1.0e-20 {
                 nr += 1;
             }
             else {
@@ -414,11 +413,11 @@ impl LejaPoints {
         final_lp
     }
 
-    /// Prepend `p` zero-spectrum nodes to this Leja sequence.
+    /// Prepend `p` zero points to this Leja sequence.
     ///
     /// Each prepended node has `leja_re = -shift/scale` and `leja_im = 0.0`,
-    /// so that `shift + scale * leja_re = 0` in spectrum space.
-    /// These nodes encode the BAMPHI Block 1 Taylor prefix: iterating the
+    /// so that `shift + scale * leja_re = 0`.
+    /// These nodes encode the Taylor prefix: iterating the
     /// Newton recurrence at a zero spectrum node gives `vm <- tau*A*vm/scale`,
     /// i.e., a pure Taylor step.
     ///
@@ -457,10 +456,9 @@ impl LejaPoints {
         let mut leja_reordered: Vec<c64> = vec![];
         let mut leja_re_reordered: Vec<f64> = vec![];
         let mut leja_im_reordered: Vec<f64> = vec![];
-        let tol = f64::EPSILON * 100.0;
         // flag real ritz values
         for i in 0..self.leja_re.nrows() {
-            if self.leja_im[i].abs() < tol {
+            if self.leja_im[i].abs() < f64::EPSILON {
                 re_idxs.push(i);
             }
             else {
@@ -860,7 +858,7 @@ usize) -> Col<c64>
 
 /// Used for phi function evaluation at the leja points
 /// Evaluates linear combinations of phi-function-vector products
-/// using either the real leja point method (RelPM) or
+/// using either the real leja point method (ReLPM) or
 /// the conj. complex conj leja point method (CLaPM).
 pub struct LejaPhiEval {
     /// the leja points
@@ -1403,7 +1401,7 @@ impl LejaPhiEval {
             // no substep
             let (_conv, _iters) = self.complex_conj_leja_expmv(
                 w.as_mut(), ext_a_lo, h, w_t.as_ref(), shift, scale,
-                coeffs.as_ref(), true);
+                coeffs.as_ref(), self.krylov_reuse);
             println!("converged: {}, leja iters: {}, shift: {}, scale: {}",
                 _conv, _iters, shift, scale);
         } else {
@@ -1435,39 +1433,6 @@ impl LejaPhiEval {
 
         // extract the first n elements
         w.get(0..n, 0..1).to_owned()
-    }
-
-    /// Log optional performance and accuracy metrics of the polynomial interpolation.
-    /// NOTE: Very expensive to run. Only intended for debugging or diagnostic mode.
-    fn leja_performance_detail(&self, ext_a_lo: &DynRefExtendedLinOp, h: f64, vb: &Vec<MatRef<f64>>)
-    {
-        // compute the approximation accuracy of leja polynomial interpolation
-        // || exp(h*Lambda)*v - p_m_leja(Lambda, h, v) ||
-        // with increasing approximation order m
-        // where Lambda is a digonal matrix of eigs(J) where J is
-        // the system jacobian.  Lambda is estimated via Krylov Shur since
-        // J is provided as a LinOp.
-        //
-        // compute Lambda
-        let (ext_v, n) = ext_a_lo.get_v(vb);
-        let (_, _, _, lambda_re, lambda_im, _ev) =
-            spectrum_krylov_schur(ext_a_lo, ext_v.as_ref(), 1.0, 100, 1e-8, false);
-        // compute exp(h*lambda_i)*v_i
-        let expected: Vec<c64> = lambda_re.iter().zip(lambda_im.iter()).map(
-            |(x_re, x_im)| c64::new(*x_re, *x_im).exp()).collect();
-        // compute p_m_leja(h*Lambda)*v
-        // create diagonal matrix Lambda
-        let lambda = faer::Mat::from_fn(lambda_re.len(), lambda_re.len(),
-            |i, j| {
-                if i == j {
-                   c64::new(lambda_re[i], lambda_im[i])
-                }
-                else {
-                   c64::new(0.0, 0.0)
-                }
-            }
-            );
-
     }
 
     /// Set the krylov reuse flag
@@ -1758,9 +1723,6 @@ impl GetSpectrumBounds for LejaEllipseAdapterStatic {
     }
 }
 
-
-
-
 /// Using the Gershgorin circle theorem to estimate
 /// spectrum paramters.
 /// diagonals of matrix are centers of disks
@@ -1922,6 +1884,121 @@ pub fn spectrum_arnoldi_iom(
     (a.min(-1.0e-2), b.max(0.0), *c, ritz_re, ritz_im, q, h)
 }
 
+/// Evaluate the phi_k(D)*v product using the leja polynomial approximation
+/// with a digonal matrix, D, which is complex.
+///
+/// # Args
+/// * `d_diag_re` - real components along digonal of D
+/// * `d_diag_im` - imag components along digonal of D
+/// * `v_re` - real components of the vector v
+/// * `v_im` - imag components of the vector v
+/// * `k` - phi function order. k==0 for matexp
+/// * `m` - maximum leja polynomial order
+/// * `iom` - incomplete orthogonalization parameter. typically 2.
+/// * `n_ritz` - number of arnoldi iterations used in leja spectrum parameter update
+/// * `krylov_reuse` - flag to re-use krylov subspace in leja polynomial
+/// * `spec_saftey_factor` - optional scaling factor applied to spectrum parameters
+///
+/// # Returns
+/// real and imaginary components of the result, and real and imaginary
+/// components of the interpolation sequence used to compute the result.
+///
+pub fn complex_diag_leja_phikv(
+    a_lo: &dyn LinOp<f64>,
+    x: MatRef<f64>,
+    dt: f64,
+    d_diag_re: ColRef<f64>,
+    d_diag_im: ColRef<f64>,
+    v_re: ColRef<f64>,
+    v_im: ColRef<f64>,
+    k: usize,
+    m: usize,
+    iom: usize,
+    n_ritz: usize,
+    krylov_reuse: bool,
+    spec_saftey_factor: Option<f64>,
+    )
+    -> (Col<f64>, Col<f64>, Col<f64>, Col<f64>)
+{
+    let lp = LejaPoints::new_from_fn("leja_circle").slice(0, 800);
+    let leja_ellipse_adapter = LejaEllipseAdapterArnoldiIOM::new(
+        -1.0, 0.0, 1.0, 1e-8, n_ritz, iom, spec_saftey_factor.unwrap_or(1.0));
+    let mut leja_phikv_eval = LejaPhiEval::new(
+        lp, m, 1e-21, "clapm", "dd_taylor", krylov_reuse, Box::new(leja_ellipse_adapter));
+    // adapt the leja ellipse to the target
+    leja_phikv_eval.apply_prepare(a_lo, dt, x.as_ref(), k);
+
+    // build real faer sparse block matrix D_r with 2x2 blocks of
+    // [[\alpha, -\beta], [\beta, \alpha]]
+    // for each complex num \alpha + i*\beta in d_diag
+    let n = d_diag_re.nrows();
+    let mut triplets = vec![];
+    for i in 0..n {
+        let alpha = d_diag_re[i];
+        let beta = d_diag_im[i];
+        triplets.push(faer::sparse::Triplet::new(2*i, 2*i, alpha));
+        triplets.push(faer::sparse::Triplet::new(2*i, 2*i+1, -beta));
+        triplets.push(faer::sparse::Triplet::new(2*i+1, 2*i, beta));
+        triplets.push(faer::sparse::Triplet::new(2*i+1, 2*i+1, alpha));
+    }
+    let dmat_sprs_r =
+        faer::sparse::SparseColMat::<usize, f64>::try_new_from_triplets(
+        2*n, 2*n, &triplets)
+        .unwrap();
+
+    // interleave real and imaginary components, v_re & v_im,
+    // into one real rhs vector v_r
+    let mut v_r: Mat<f64> = Mat::zeros(2*n, 1);
+    for i in 0..n {
+        v_r[(2*i,     0)] = v_re[i];
+        v_r[(2*i+1,   0)] = v_im[i];
+    }
+
+    let zeros = faer::Mat::zeros(v_r.nrows(), 1);
+    let mut ext_vr: Vec<MatRef<f64>> = vec![];
+    for _i in 0..k {
+        ext_vr.push(zeros.as_ref());
+    }
+    ext_vr.push(v_r.as_ref());
+
+    leja_phikv_eval.set_krylov_reuse(false);
+    let ext_dmat_r = DynRefExtendedLinOp::new(1.0, &dmat_sprs_r, &ext_vr);
+    let phikv_leja_r: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_dmat_r, 1.0, &ext_vr);
+
+    // extract shifted and scaled leja sequence
+    let (shift, scale) = leja_phikv_eval.leja_ellipse_adapter.get_shift_scale();
+    let (lp_sc_re, lp_sc_im) = leja_phikv_eval.leja_x.leja_sc(shift, scale);
+
+    // split into real and imaginary components and return
+    let phikv_leja_re = Mat::from_fn(n, phikv_leja_r.ncols(), |i, j| {
+        phikv_leja_r[(2*i, j)]
+    });
+    let phikv_leja_im = Mat::from_fn(n, phikv_leja_r.ncols(), |i, j| {
+        phikv_leja_r[(2*i+1, j)]
+    });
+
+    (phikv_leja_re.col(0).to_owned(), phikv_leja_im.col(0).to_owned(), lp_sc_re, lp_sc_im)
+}
+
+pub fn complex_diag_leja_phikv_static(
+    leja_a: f64,
+    leja_b: f64,
+    leja_c: f64,
+    dt: f64,
+    d_diag_re: Col<f64>,
+    d_diag_im: Col<f64>,
+    v_re: Col<f64>,
+    v_im: Col<f64>,
+    k: usize,
+    m: usize,
+    )
+    -> (Mat<f64>, Mat<f64>, Col<f64>, Col<f64>)
+{
+    assert!(leja_a <= leja_b);
+    assert!(leja_c >= 0.0);
+    todo!();
+}
+
 
 #[cfg(test)]
 mod test_matexp_leja {
@@ -1936,24 +2013,6 @@ mod test_matexp_leja {
 
     // bring everything from above (parent) module into scope
     use super::*;
-
-    #[test]
-    fn test_dd_taylor() {
-        // test the divided differences
-        let lp = LejaPoints::new_from_lib("leja_circle").slice(0, 100);
-        let a = -1.0;
-        let b = 0.0;
-        let c = 0.5;
-        let (lp_sc, shift, scale) = lp.rescale(a, b, c);
-
-        // compute the leja polynomial coeffs
-        let coeffs = dd_taylor(&lp_sc, shift, scale, 1.0, 16, 0);
-
-        println!("dd_0: {}", coeffs[0]);
-        println!("dd_1: {}", coeffs[1]);
-        println!("dd_2: {}", coeffs[2]);
-        println!("dd_3: {}", coeffs[3]);
-    }
 
     #[test]
     fn test_spectrum_params() {
@@ -1976,7 +2035,8 @@ mod test_matexp_leja {
         let mut vbk: Vec<MatRef<f64>> = vec![];
         vbk.push(test_v.as_ref());
         let ext_a_lo = DynRefExtendedLinOp::new(1.0, &test_a, &vbk);
-        let (ext_a, ext_b, ext_c, _, _, _, _) = spectrum_arnoldi_iom(&ext_a_lo, test_v.as_ref(), 1.0, 10, 10, true);
+        let (ext_a, ext_b, ext_c, _, _, _, _) = spectrum_arnoldi_iom(
+            &ext_a_lo, test_v.as_ref(), 1.0, 10, 10, true);
 
         // check for consistency
         assert_approx_eq!(a, ext_a, 1e-1);
@@ -2367,15 +2427,34 @@ mod test_matexp_leja {
     }
 
     #[test]
+    fn test_dd_taylor() {
+        // test the divided differences
+        let lp = LejaPoints::new_from_lib("leja_circle").slice(0, 100);
+        let a = -1.0;
+        let b = 0.0;
+        let c = 0.5;
+        let (lp_sc, shift, scale) = lp.rescale(a, b, c);
+
+        // compute the leja polynomial coeffs
+        let coeffs = dd_taylor(&lp_sc, shift, scale, 1.0, 16, 0);
+
+        println!("dd_0: {}", coeffs[0]);
+        println!("dd_1: {}", coeffs[1]);
+        println!("dd_2: {}", coeffs[2]);
+        println!("dd_3: {}", coeffs[3]);
+    }
+
+
+    #[test]
     fn test_leja_circle() {
-        let lp_fn = LejaPoints::new_from_fn("leja_circle").slice(0, 50);
-        let lp_lib = LejaPoints::new_from_lib("leja_circle").slice(0, 50);
+        let lp_fn = LejaPoints::new_from_fn("leja_circle").slice(0, 4);
+        let lp_lib = LejaPoints::new_from_lib("leja_circle").slice(0, 4);
         for (lp_fn_re, lp_lib_re) in lp_fn.leja_re.iter().zip(lp_lib.leja_re.iter()) {
             println!("{lp_lib_re}, {lp_fn_re}");
-            // assert_approx_eq!(lp_fn_re, lp_lib_re);
+            assert_approx_eq!(lp_fn_re, lp_lib_re);
         }
         for (lp_fn_im, lp_lib_im) in lp_fn.leja_im.iter().zip(lp_lib.leja_im.iter()) {
-            // assert_approx_eq!(lp_fn_im, lp_lib_im);
+            assert_approx_eq!(lp_fn_im, lp_lib_im);
         }
     }
 
