@@ -1903,7 +1903,7 @@ pub fn spectrum_arnoldi_iom(
 /// real and imaginary components of the result, and real and imaginary
 /// components of the interpolation sequence used to compute the result.
 ///
-pub fn complex_diag_leja_phikv(
+pub fn complex_diag_leja_phikv_fitted(
     a_lo: &dyn LinOp<f64>,
     x: MatRef<f64>,
     dt: f64,
@@ -1928,6 +1928,45 @@ pub fn complex_diag_leja_phikv(
     // adapt the leja ellipse to the target
     leja_phikv_eval.apply_prepare(a_lo, dt, x.as_ref(), k);
 
+    complex_diag_leja_phikv(
+        leja_phikv_eval, dt, d_diag_re, d_diag_im, v_re, v_im, k)
+}
+
+pub fn complex_diag_leja_phikv_static(
+    leja_a: f64,
+    leja_b: f64,
+    leja_c: f64,
+    dt: f64,
+    d_diag_re: ColRef<f64>,
+    d_diag_im: ColRef<f64>,
+    v_re: ColRef<f64>,
+    v_im: ColRef<f64>,
+    k: usize,
+    m: usize,
+    )
+    -> (Col<f64>, Col<f64>, Col<f64>, Col<f64>)
+{
+    assert!(leja_a <= leja_b);
+    assert!(leja_c >= 0.0);
+    let lp = LejaPoints::new_from_fn("leja_circle").slice(0, 800);
+    let leja_ellipse_adapter = LejaEllipseAdapterStatic::new(leja_a, leja_b, leja_c);
+    let leja_phikv_eval = LejaPhiEval::new(
+        lp, m, 1e-21, "clapm", "dd_taylor", false, Box::new(leja_ellipse_adapter));
+    complex_diag_leja_phikv(
+        leja_phikv_eval, dt, d_diag_re, d_diag_im, v_re, v_im, k)
+}
+
+fn complex_diag_leja_phikv(
+    mut leja_phikv_eval: LejaPhiEval,
+    dt: f64,
+    d_diag_re: ColRef<f64>,
+    d_diag_im: ColRef<f64>,
+    v_re: ColRef<f64>,
+    v_im: ColRef<f64>,
+    k: usize,
+    )
+    -> (Col<f64>, Col<f64>, Col<f64>, Col<f64>)
+{
     // build real faer sparse block matrix D_r with 2x2 blocks of
     // [[\alpha, -\beta], [\beta, \alpha]]
     // for each complex num \alpha + i*\beta in d_diag
@@ -1978,25 +2017,6 @@ pub fn complex_diag_leja_phikv(
     });
 
     (phikv_leja_re.col(0).to_owned(), phikv_leja_im.col(0).to_owned(), lp_sc_re, lp_sc_im)
-}
-
-pub fn complex_diag_leja_phikv_static(
-    leja_a: f64,
-    leja_b: f64,
-    leja_c: f64,
-    dt: f64,
-    d_diag_re: Col<f64>,
-    d_diag_im: Col<f64>,
-    v_re: Col<f64>,
-    v_im: Col<f64>,
-    k: usize,
-    m: usize,
-    )
-    -> (Mat<f64>, Mat<f64>, Col<f64>, Col<f64>)
-{
-    assert!(leja_a <= leja_b);
-    assert!(leja_c >= 0.0);
-    todo!();
 }
 
 

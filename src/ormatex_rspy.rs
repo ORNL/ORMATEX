@@ -53,7 +53,7 @@ use crate::tableau_implicit::ImplicitBT;
 use crate::ode_rk;
 use crate::ode_epirk;
 use crate::matexp_krylov;
-use crate::matexp_leja;
+use crate::matexp_leja::{self, complex_diag_leja_phikv_static};
 use crate::matexp_cauchy;
 use crate::matexp_pade::{PadeExpm, phi_ext};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
@@ -455,6 +455,43 @@ fn arnoldi_rs<'py>(
         q_ndarray.into_pyarray(py),
         h_ndarray.into_pyarray(py),
         bkdwn
+    )
+}
+
+#[pyfunction]
+fn complex_diag_leja_phikv_static_rs<'py>(
+    py: Python<'py>,
+    a: f64, b: f64, c: f64,
+    dt: f64,
+    d_diag_re: PyReadonlyArray1<f64>,
+    d_diag_im: PyReadonlyArray1<f64>,
+    v_re: PyReadonlyArray1<f64>,
+    v_im: PyReadonlyArray1<f64>,
+    k: usize,
+    m: usize,
+    )
+    -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>,
+        Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>)
+{
+    // convert vecs into fear col
+    let v_re_col = v_re.into_faer();
+    let v_im_col = v_im.into_faer();
+    let d_diag_re_col = d_diag_re.into_faer();
+    let d_diag_im_col = d_diag_im.into_faer();
+
+    let (phikv_re, phikv_im, lp_sc_re, lp_sc_im) = complex_diag_leja_phikv_static(
+        a, b, c, dt, d_diag_re_col, d_diag_im_col, v_re_col, v_im_col, k, m);
+
+    // convert output to numpy
+    let phikv_re_ndarray = phikv_re.as_mat().as_ref().into_ndarray().to_owned();
+    let phikv_im_ndarray = phikv_im.as_mat().as_ref().into_ndarray().to_owned();
+    let lp_sc_re_ndarray = lp_sc_re.as_mat().as_ref().into_ndarray().to_owned();
+    let lp_sc_im_ndarray = lp_sc_im.as_mat().as_ref().into_ndarray().to_owned();
+    (
+        phikv_re_ndarray.into_pyarray(py),
+        phikv_im_ndarray.into_pyarray(py),
+        lp_sc_re_ndarray.into_pyarray(py),
+        lp_sc_im_ndarray.into_pyarray(py),
     )
 }
 
