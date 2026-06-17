@@ -53,7 +53,10 @@ use crate::tableau_implicit::ImplicitBT;
 use crate::ode_rk;
 use crate::ode_epirk;
 use crate::matexp_krylov;
-use crate::matexp_leja::{self, complex_diag_leja_phikv_static};
+use crate::matexp_leja;
+use crate::matexp_leja::{
+    complex_diag_leja_phikv_static,
+    complex_diag_leja_phikv_fitted};
 use crate::matexp_cauchy;
 use crate::matexp_pade::{PadeExpm, phi_ext};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
@@ -495,6 +498,56 @@ fn complex_diag_leja_phikv_static_rs<'py>(
     )
 }
 
+#[pyfunction]
+fn complex_diag_leja_phikv_fitted_rs<'py>(
+    py: Python<'py>,
+    a: PyReadonlyArray2<f64>,
+    b: PyReadonlyArray2<f64>,
+    dt: f64,
+    d_diag_re: PyReadonlyArray1<f64>,
+    d_diag_im: PyReadonlyArray1<f64>,
+    v_re: PyReadonlyArray1<f64>,
+    v_im: PyReadonlyArray1<f64>,
+    k: usize,
+    m: usize,
+    iom: usize,
+    n_ritz: usize,
+    krylov_reuse: bool,
+    spec_saftey_factor: f64,
+    )
+    -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>,
+        Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>)
+{
+    // create wrapper around python linop
+    let a_mat = a.into_faer();
+
+    // convert b vec into fear mat
+    let b_mat = b.into_faer();
+
+    // convert vecs into fear col
+    let v_re_col = v_re.into_faer();
+    let v_im_col = v_im.into_faer();
+    let d_diag_re_col = d_diag_re.into_faer();
+    let d_diag_im_col = d_diag_im.into_faer();
+
+    let (phikv_re, phikv_im, lp_sc_re, lp_sc_im) = complex_diag_leja_phikv_fitted(
+        &a_mat, b_mat.as_ref(),
+        dt, d_diag_re_col, d_diag_im_col, v_re_col, v_im_col, k, m, iom,
+        n_ritz, krylov_reuse, Some(spec_saftey_factor));
+
+    // convert output to numpy
+    let phikv_re_ndarray = phikv_re.as_mat().as_ref().into_ndarray().to_owned();
+    let phikv_im_ndarray = phikv_im.as_mat().as_ref().into_ndarray().to_owned();
+    let lp_sc_re_ndarray = lp_sc_re.as_mat().as_ref().into_ndarray().to_owned();
+    let lp_sc_im_ndarray = lp_sc_im.as_mat().as_ref().into_ndarray().to_owned();
+    (
+        phikv_re_ndarray.into_pyarray(py),
+        phikv_im_ndarray.into_pyarray(py),
+        lp_sc_re_ndarray.into_pyarray(py),
+        lp_sc_im_ndarray.into_pyarray(py),
+    )
+}
+
 
 /// Python interface for computing dense phi_k(A*dt)*v0 products
 #[pyclass(unsendable)]
@@ -546,6 +599,12 @@ mod ormatex {
 
     #[pymodule_export]
     use super::arnoldi_rs;
+
+    #[pymodule_export]
+    use super::complex_diag_leja_phikv_static_rs;
+
+    #[pymodule_export]
+    use super::complex_diag_leja_phikv_fitted_rs;
 
     #[pymodule_export]
     use super::phi_k_rs;

@@ -1929,7 +1929,7 @@ pub fn complex_diag_leja_phikv_fitted(
     leja_phikv_eval.apply_prepare(a_lo, dt, x.as_ref(), k);
 
     complex_diag_leja_phikv(
-        leja_phikv_eval, dt, d_diag_re, d_diag_im, v_re, v_im, k)
+        leja_phikv_eval, dt, d_diag_re, d_diag_im, v_re, v_im, k, m)
 }
 
 pub fn complex_diag_leja_phikv_static(
@@ -1950,10 +1950,12 @@ pub fn complex_diag_leja_phikv_static(
     assert!(leja_c >= 0.0);
     let lp = LejaPoints::new_from_fn("leja_circle").slice(0, 800);
     let leja_ellipse_adapter = LejaEllipseAdapterStatic::new(leja_a, leja_b, leja_c);
-    let leja_phikv_eval = LejaPhiEval::new(
+    let mut leja_phikv_eval = LejaPhiEval::new(
         lp, m, 1e-21, "clapm", "dd_taylor", false, Box::new(leja_ellipse_adapter));
+    // adapt the leja ellipse to the target
+    leja_phikv_eval.update_leja(leja_a, leja_b, leja_c, 0);
     complex_diag_leja_phikv(
-        leja_phikv_eval, dt, d_diag_re, d_diag_im, v_re, v_im, k)
+        leja_phikv_eval, dt, d_diag_re, d_diag_im, v_re, v_im, k, m)
 }
 
 fn complex_diag_leja_phikv(
@@ -1964,6 +1966,7 @@ fn complex_diag_leja_phikv(
     v_re: ColRef<f64>,
     v_im: ColRef<f64>,
     k: usize,
+    m: usize,
     )
     -> (Col<f64>, Col<f64>, Col<f64>, Col<f64>)
 {
@@ -2006,7 +2009,7 @@ fn complex_diag_leja_phikv(
 
     // extract shifted and scaled leja sequence
     let (shift, scale) = leja_phikv_eval.leja_ellipse_adapter.get_shift_scale();
-    let (lp_sc_re, lp_sc_im) = leja_phikv_eval.leja_x.leja_sc(shift, scale);
+    let (lp_sc_re, lp_sc_im) = leja_phikv_eval.leja_x.slice(0, m).leja_sc(shift, scale);
 
     // split into real and imaginary components and return
     let phikv_leja_re = Mat::from_fn(n, phikv_leja_r.ncols(), |i, j| {

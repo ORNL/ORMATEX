@@ -458,8 +458,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
 }
 
 
-/// Linear operator to apply to vec or mat. Stores result in `out`.
-/// Provides the linpo L := (gamma*I + scale*J)
+/// Provides the linop L := (gamma*I + scale*J)
 /// that be applied to a vector:  L*v
 pub struct FdJacLinOp <'a> {
     t: f64,
@@ -473,6 +472,7 @@ pub struct FdJacLinOp <'a> {
 impl <'a> FdJacLinOp <'a> {
     /// Create a new finite difference based jacobian linear operator
     ///
+    /// # Args
     /// * `t` - time at which to evaluate the jacobian
     /// * `x` - current system state about which to evaluate the jacobian
     /// * `frhs` - system rhs
@@ -493,6 +493,7 @@ impl <'a> FdJacLinOp <'a> {
 
     /// Reset point about which to linearize
     ///
+    /// # Args
     /// * `t` - time at which to evaluate the jacobian
     /// * `x` - current system state about which to evaluate the jacobian
     pub fn set_op_x(&mut self, t: f64, x: Mat<f64>)
@@ -543,6 +544,7 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
     /// By default, s is 1 and gamma is 0.
     /// Ex: implicit methods typically result in s<0, gamma==1.
     ///
+    /// # Args
     /// * `out` - output
     /// * `rhs` - target to apply linop to
     /// * `parallelism` - faer parallelism
@@ -581,6 +583,7 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
 
     /// Apply transpose of the linear operator to vec or mat. Stores result in `out`.
     ///
+    /// # Args
     /// * `out` - output
     /// * `rhs` - target to apply linop to
     /// * `parallelism` - faer parallelism
@@ -600,18 +603,15 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
 pub trait OdeSys<'a>: Sync + Send {
     /// Defines the rhs of the system
     fn frhs(&self, t: f64, x: MatRef<f64>) -> Mat<f64>;
-    fn frhs_aug(&self, t: f64, x: MatRef<f64>, aug: MatRef<f64>, aug_scale: f64) -> Mat<f64> {
-        aug_scale * self.frhs(t, x) + aug
-    }
 
     /// Defines the Jacobian of the system
     ///
     /// This behavior can be overridden by implementing your own
     /// fjac.
     ///
-    /// See: https://stackoverflow.com/questions/59646632/share-function-reference-between-threads-in-rust
-    /// for the Sync trait for &dyn Fn for thread safe closures.  This extra Sync trait req
-    /// only applys to closures not function pointers!
+    /// # Args
+    /// * `t` - the current time
+    /// * `x` - the current state
     fn fjac<'b>(&'a self,
             t: f64,
             x: MatRef<'b, f64>)
@@ -620,19 +620,28 @@ pub trait OdeSys<'a>: Sync + Send {
     /// Optional mass matrix M at time `t`.
     ///
     /// When `Some(M)` is returned, the shifted Jacobian operator used by
-    /// implicit integrators becomes `(γ·M + s·J)` instead of `(γ·I + s·J)`.
+    /// implicit integrators becomes `(γ * M + s * J)` instead of `(γ * I + s * J)`.
     /// This lets the user solve DAE-like or FEM problems where the time
-    /// derivative appears as `M·dy/dt = f(t, y)`.
+    /// derivative appears as `M * dy/dt = f(t, y)`.
     ///
-    /// The default implementation returns `None`, which preserves the current
+    /// The default implementation returns `None`, which preserves
     /// identity-matrix behaviour.
     ///
     /// TODO: currently, explicit and exponential integrators
     /// ignore this mass matrix
+    ///
+    /// # Args
+    /// * `t` - the current time
     fn fmass(&'a self, _t: f64) -> Option<Box<dyn LinOp<f64> + 'a>> {
         None
     }
 
+    /// Represents the operator `W = (γ * M + s * J)`. If
+    /// no mass matrix is supplied, this `(γ * I + s * J)`.
+    ///
+    /// # Args
+    /// * `t` - the current time
+    /// * `x` - the current state
     fn fjac_shifted<'b>(&'a self,
             t: f64,
             x: MatRef<'b, f64>,

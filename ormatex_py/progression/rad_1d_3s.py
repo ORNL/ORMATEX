@@ -36,6 +36,12 @@ from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM, torus_dista
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix, analytic_bateman_single_parent
 from ormatex_py import integrate_wrapper
 
+try:
+    from ormatex_py.ormatex import complex_diag_leja_phikv_static_rs, complex_diag_leja_phikv_fitted_rs
+    HAS_ORMATEX_RUST = True
+except ImportError:
+    HAS_ORMATEX_RUST = False
+
 keymap = ["c_0", "c_1", "c_2"]
 # decay_lib = {
 #     'c_0':  ('c_1', 1.0e-1*10),
@@ -44,7 +50,7 @@ keymap = ["c_0", "c_1", "c_2"]
 # }
 decay_lib = {
     'c_0':  ('c_1', 1.0e-1),
-    'c_1':  ('c_2', 1.0e1),
+    'c_1':  ('c_2', 1.0e2),
     'c_2':  ('none', 1.0e-2),
 }
 
@@ -149,6 +155,97 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     dtJeig_min = np.min(np.abs(eigdtJ))
     print("CFL: %0.4f/%0.4f" % (dtJeig_max, dtJnorm))
     return dtJeig_max, dtJeig_min
+
+def plot_leja_conv_detail_rs(
+        ode_sys, y, t, dt, outdir="./",
+        n_leja_list=[4, 8, 12, 24, 36, 50], **kwargs):
+    import matplotlib.pyplot as plt
+    from matplotlib import colors
+    dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
+    eigdtJ = np.linalg.eig(dtJ)[0]
+
+    a = kwargs.get("leja_a", None)
+    a = np.min(eigdtJ.real) if a is None else a
+    b = 0.0
+    c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
+
+    # create grid on the complex plane covering the spectrum
+    # split into real and complex parts
+    a_plot = np.minimum(-1e-4, -np.max(np.abs(eigdtJ.real))) - 1
+    b_plot = 0.0+1.0
+    c_plot = np.maximum(1e-4, np.max(np.abs(eigdtJ.imag))) + 1
+    xr_grid = np.linspace(a_plot, b_plot, 200)
+    xi_grid = np.linspace(-c_plot, c_plot, 200)
+    zr_grid, zi_grid = np.meshgrid(xr_grid, xi_grid)
+    zs_grid = zr_grid.flatten() + 1.j * zi_grid.flatten()
+    d_diag = zs_grid
+    d_diag_re = np.real(zs_grid)
+    d_diag_im = np.imag(zs_grid)
+    v = np.ones(len(d_diag_re), dtype=np.complex128);
+    v_re = np.real(v)
+    v_im = np.imag(v)
+
+    # leja approx settings
+    m = 80
+    iom = 2
+    krylov_reuse = True
+    spec_iter = 24
+    spec_saftey_factor = 1.05
+
+    # compute expm(\Lambda)*v via leja approx
+    y_col = np.atleast_2d(y).reshape(-1, 1)
+    #expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_fitted_rs(
+    #        dtJ / dt, y_col, dt,
+    #        d_diag_re, d_diag_im, v_re, v_im,
+    #        1, m, iom, spec_iter, krylov_reuse, spec_saftey_factor)
+    expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_static_rs(
+            a, b, c, dt,
+            d_diag_re, d_diag_im, v_re, v_im,
+            1, m)
+    expmv = np.vectorize(complex)(expmv_re, expmv_im)
+
+    # compute the true result: expmv_true_i = exp(\lambda_i)*v_i
+    # expmv_true = np.asarray([np.exp(lambda_i)*v_i for lambda_i, v_i in zip(d_diag, v)])
+    expmv_true = np.asarray(((np.exp(d_diag)-1.0) / d_diag) * v)
+
+    # compute the errors
+    diff_grid = np.abs(expmv.flatten() - expmv_true.flatten())
+
+    # plot the errors on the complex plane
+    Z = diff_grid.reshape(zr_grid.shape)
+
+    xscale = "linear"
+    plt.figure()
+    if "log" in xscale:
+        pcm = plt.pcolor(
+                  -np.real(zs_grid.reshape(zr_grid.shape))+1,
+                   np.imag(zs_grid.reshape(zr_grid.shape)), Z,
+                   norm=colors.LogNorm(vmin=1e-14, vmax=100.0),
+                   shading='auto')
+        plt.scatter(-eigdtJ.real + 1., eigdtJ.imag, color='lightblue', marker='.',
+                    label="Jacobian spectrum")
+        plt.scatter(-np.real(lp_sc_re)+1, lp_sc_im,
+                    color='tab:red', marker='x', label="Leja points")
+        # plt.xscale(xscale)
+        plt.xlabel("negative real + 1")
+    else:
+        pcm = plt.pcolor(
+                   np.real(zs_grid.reshape(zr_grid.shape)),
+                   np.imag(zs_grid.reshape(zr_grid.shape)), Z,
+                   norm=colors.LogNorm(vmin=1e-14, vmax=100.0),
+                   shading='auto')
+        plt.scatter(eigdtJ.real, eigdtJ.imag, color='lightblue', marker='.',
+                    label="Jacobian spectrum")
+        plt.scatter(np.real(lp_sc_re), lp_sc_im,
+                    color='tab:red', marker='x', label="Leja points")
+        plt.xlabel("real")
+    plt.ylabel("imaginary")
+    plt.colorbar(pcm)
+    plt.legend(fancybox=True, framealpha=0.5, loc='lower right')
+    plt.tight_layout()
+    plt.savefig(outdir + "leja_rs_approx_err_contour_m_%d.png" % m, dpi=200)
+    plt.close()
+
 
 def plot_leja_conv_detail(
         ode_sys, y, t, dt, outdir="./",
@@ -358,8 +455,10 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
         plot_dt_jac_spec(ode_sys, y_res[-1], 0.0, dt, figname="reac_adv_diff_s3_eigplot")
 
         # plot the leja polynomial matexp-vec approx
-        if "leja" in method and kwargs.get("leja_plot", False):
+        if "leja" in method and "rs" not in method and kwargs.get("leja_plot", False):
             plot_leja_conv_detail(ode_sys, y_res[-1], t, dt, outdir=outdir, **kwargs)
+        elif "leja" in args.phikv_method and kwargs.get("leja_plot", False):
+            plot_leja_conv_detail_rs(ode_sys, y_res[-1], t, dt, outdir=outdir, **kwargs)
 
     print("=== Species MAEs at t=%0.4e ===" % t_res[-1])
     [print("%0.4e" % a, end=', ') for a in mae_list]
