@@ -1,5 +1,3 @@
-use std::error::Error;
-
 /*
  * Copyright© 2025 UT-Battelle, LLC
  *
@@ -18,6 +16,7 @@ use std::error::Error;
 /// The phi-function evaluator traits
 use faer::prelude::*;
 use faer::matrix_free::LinOp;
+use faer_traits::ComplexField;
 use crate::ode_sys::{DynRefExtendedLinOp};
 
 
@@ -31,12 +30,17 @@ pub struct PhikvStatus {
 }
 
 
-/// Trait for implementors of a phi_k(A*dt)*v method for dense A
-/// Provides capability to evaluate a phi_k function-vector product.
-pub trait DensePhikvEvaluator
+/// Trait for implementors of a phi_k(A*dt)*v method for dense A.
+///
+/// The type parameter `T` controls the element type of the input matrix and
+/// output. `dt` is always real (`f64`) per the assumption that the time step
+/// is a real scalar. The default `T = f64` preserves backward-compatibility:
+/// existing code that spells `dyn DensePhikvEvaluator` (no type argument)
+/// continues to resolve to `DensePhikvEvaluator<f64>`.
+pub trait DensePhikvEvaluator<T: ComplexField = f64>
 {
     /// Evaluates phi_k(dt*A) * v0
-    fn phik_apply(&self, a: MatRef<f64>, dt: f64, v0: MatRef<f64>, k: usize) -> Mat<f64>;
+    fn phik_apply(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize) -> Mat<T>;
 }
 
 
