@@ -31,12 +31,6 @@ pub struct PhikvStatus {
 
 
 /// Trait for implementors of a phi_k(A*dt)*v method for dense A.
-///
-/// The type parameter `T` controls the element type of the input matrix and
-/// output. `dt` is always real (`f64`) per the assumption that the time step
-/// is a real scalar. The default `T = f64` preserves backward-compatibility:
-/// existing code that spells `dyn DensePhikvEvaluator` (no type argument)
-/// continues to resolve to `DensePhikvEvaluator<f64>`.
 pub trait DensePhikvEvaluator<T: ComplexField = f64>
 {
     /// Evaluates phi_k(dt*A) * v0
