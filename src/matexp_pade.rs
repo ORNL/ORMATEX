@@ -103,12 +103,8 @@ where
     let z_inv = qr.inverse();
     let id = Mat::<T>::identity(z.nrows(), z.ncols());
     for i in 1..=k {
-        // (1..i).product() computes (i-1)!, which is the correct factorial for
         // the phi recurrence: phi_k = Z^{-1}(phi_{k-1} - 1/(k-1)! · I).
         let fact = (1..i).product::<usize>() as f64;
-        // Use max(1, fact) to avoid 0! == empty-product == 1 confusion: the
-        // empty product already returns 1, so this is purely a guard for
-        // clarity and for the i=1 case where the range is empty.
         let fact = if fact == 0.0 { 1.0 } else { fact };
         phi_k = z_inv.as_ref() * (phi_k.as_ref()
             - Scale(from_f64::<T>(1.0 / fact)) * id.as_ref());
