@@ -50,7 +50,7 @@ keymap = ["c_0", "c_1", "c_2"]
 # }
 decay_lib = {
     'c_0':  ('c_1', 1.0e-1),
-    'c_1':  ('c_2', 1.0e2),
+    'c_1':  ('c_2', 1.0e1),
     'c_2':  ('none', 1.0e-2),
 }
 
@@ -167,13 +167,14 @@ def plot_leja_conv_detail_rs(
     a = kwargs.get("leja_a", None)
     a = np.min(eigdtJ.real) if a is None else a
     b = 0.0
-    c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
+    # c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
+    c = np.max(np.abs(eigdtJ.imag))
 
     # create grid on the complex plane covering the spectrum
     # split into real and complex parts
-    a_plot = np.minimum(-1e-4, -np.max(np.abs(eigdtJ.real))) - 1
+    a_plot = (np.minimum(-1e-4, -np.max(np.abs(eigdtJ.real))) - 1) * 1.0
     b_plot = 0.0+1.0
-    c_plot = np.maximum(1e-4, np.max(np.abs(eigdtJ.imag))) + 1
+    c_plot = (np.maximum(1e-4, np.max(np.abs(eigdtJ.imag))) + 1) * 1.0
     xr_grid = np.linspace(a_plot, b_plot, 200)
     xi_grid = np.linspace(-c_plot, c_plot, 200)
     zr_grid, zi_grid = np.meshgrid(xr_grid, xi_grid)
@@ -186,27 +187,31 @@ def plot_leja_conv_detail_rs(
     v_im = np.imag(v)
 
     # leja approx settings
-    m = 80
-    iom = 2
-    krylov_reuse = True
-    spec_iter = 24
+    m = 160
+    iom = 4
+    krylov_reuse = kwargs.get("krylov_reuse", False)
+    spec_iter = 40
     spec_saftey_factor = 1.05
 
     # compute expm(\Lambda)*v via leja approx
     y_col = np.atleast_2d(y).reshape(-1, 1)
-    #expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_fitted_rs(
-    #        dtJ / dt, y_col, dt,
-    #        d_diag_re, d_diag_im, v_re, v_im,
-    #        1, m, iom, spec_iter, krylov_reuse, spec_saftey_factor)
-    expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_static_rs(
-            a, b, c, dt,
+    # TODO: Do not pass dtJ to fitted_rs, instead pass diag(eigs(dtJ))
+    expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_fitted_rs(
+            dtJ, np.ones(y_col.shape), 1.0,
             d_diag_re, d_diag_im, v_re, v_im,
-            1, m)
+            0, m, iom, spec_iter, krylov_reuse, spec_saftey_factor)
+    # expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_static_rs(
+    #         a, b, c, 1.0,
+    #         d_diag_re, d_diag_im, v_re, v_im,
+    #         0, m)
     expmv = np.vectorize(complex)(expmv_re, expmv_im)
+    print("=== lp sequence detail ===")
+    for i, (lp_re, lp_im) in enumerate(zip(lp_sc_re, lp_sc_im)):
+        print(f"i: {i}, re: {lp_re}, im: {lp_im}")
 
     # compute the true result: expmv_true_i = exp(\lambda_i)*v_i
-    # expmv_true = np.asarray([np.exp(lambda_i)*v_i for lambda_i, v_i in zip(d_diag, v)])
-    expmv_true = np.asarray(((np.exp(d_diag)-1.0) / d_diag) * v)
+    # expmv_true = np.asarray(((np.exp(d_diag)-1.0) / d_diag) * v)
+    expmv_true = np.asarray(np.exp(d_diag) * v)
 
     # compute the errors
     diff_grid = np.abs(expmv.flatten() - expmv_true.flatten())
@@ -392,10 +397,10 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=300, iom=2,
-            tol=1e-12, spec_iter=24, spec_method="arnoldi",
+            max_krylov_dim=300, iom=4,
+            tol=1e-12, spec_iter=40, spec_method="arnoldi",
             tol_lin=1e-10, tol_nlin=1e-8,
-            krylov_reuse=True, osteps=500, **kwargs
+            osteps=500, **kwargs
             )
     t_res, y_res = res.t_res, res.y_res
 
@@ -491,10 +496,11 @@ if __name__ == "__main__":
     parser.add_argument("-nu", help="diffusion coeff", type=float, default=1e-8)
     parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
+    parser.add_argument("-krylov_reuse", help="Recycle krylov vectors", action='store_true', default=False)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
     parser.add_argument("-phikv_method", help="phi-function-vec prod method", type=str, default="leja")
     parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
-    parser.add_argument("-max_substeps", help="divided difference method", type=int, default=0)
+    parser.add_argument("-max_substeps", help="max number of substeps", type=int, default=0)
     parser.add_argument("-leja_n_zeros", help="number of zeros prepended to leja sequence", type=int, default=1)
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
     args = parser.parse_args()
@@ -559,6 +565,6 @@ if __name__ == "__main__":
              phikv_method=args.phikv_method,
              leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep,
              leja_tol=args.leja_tol, leja_n_zeros=args.leja_n_zeros,
-             leja_plot=args.leja_plot,
+             leja_plot=args.leja_plot, krylov_reuse=args.krylov_reuse,
              dd_method=args.dd_method, max_substeps=args.max_substeps
              )

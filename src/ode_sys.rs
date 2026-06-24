@@ -405,6 +405,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
     /// Computes `(γ·M + s·J)·v`, reducing to `(γ·I + s·J)·v` when `mass`
     /// is `None` (unchanged from the previous identity-shift behaviour).
     ///
+    /// # Args
     /// * `out` - output
     /// * `rhs` - target to apply linop to
     /// * `parallelism` - faer parallelism
@@ -442,6 +443,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
 
     /// Apply transpose of the linear operator to vec or mat. Stores result in `out`.
     ///
+    /// # Args
     /// * `out` - output
     /// * `rhs` - target to apply linop to
     /// * `parallelism` - faer parallelism
