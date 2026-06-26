@@ -51,8 +51,24 @@ pub trait LinOpPhikvEvaluator
     /// phi_k(dt*A) * vk
     fn apply_phi_k(&self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, k: usize) -> Mat<f64>;
 
-    /// Prepare for apply_*
-    fn apply_prepare(&mut self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, k: usize) {
+    /// Prepare for apply_*.
+    ///
+    /// When `ext` is `Some((ext_a_lo, vb))` the implementation should compute the
+    /// p = vb.len()-1 Taylor-block iterates `w_j = ext_a_lo^j · tilde_v` (j=1..=p),
+    /// use `upper_block(w_p)` as the Arnoldi starting vector (correct per BAMPHI §3),
+    /// and cache the iterates for zero-duplication reuse in the subsequent
+    /// `apply_phi_k_v` call.
+    ///
+    /// When `ext` is `None` the legacy path is used: `v` is the Arnoldi starting
+    /// vector and `k` is the zero-prefix length.
+    fn apply_prepare(
+        &mut self,
+        a_lo: &dyn LinOp<f64>,
+        dt: f64,
+        v: MatRef<f64>,
+        k: usize,
+        ext: Option<(&DynRefExtendedLinOp, &Vec<MatRef<f64>>)>,
+    ) {
         // default is null-op
     }
 }

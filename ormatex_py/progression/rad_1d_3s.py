@@ -182,12 +182,12 @@ def plot_leja_conv_detail_rs(
     d_diag = zs_grid
     d_diag_re = np.real(zs_grid)
     d_diag_im = np.imag(zs_grid)
-    v = np.ones(len(d_diag_re), dtype=np.complex128);
+    v = np.ones(len(d_diag_re), dtype=np.complex128) * np.linalg.norm(y)
     v_re = np.real(v)
     v_im = np.imag(v)
 
     # leja approx settings
-    m = 160
+    m = 140
     iom = 4
     krylov_reuse = kwargs.get("krylov_reuse", False)
     spec_iter = 40
@@ -197,7 +197,7 @@ def plot_leja_conv_detail_rs(
     y_col = np.atleast_2d(y).reshape(-1, 1)
     # TODO: Do not pass dtJ to fitted_rs, instead pass diag(eigs(dtJ))
     expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_fitted_rs(
-            dtJ, np.ones(y_col.shape), 1.0,
+            dtJ, np.ones(y_col.shape)*np.linalg.norm(y), 1.0,
             d_diag_re, d_diag_im, v_re, v_im,
             0, m, iom, spec_iter, krylov_reuse, spec_saftey_factor)
     # expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_static_rs(
@@ -211,10 +211,10 @@ def plot_leja_conv_detail_rs(
 
     # compute the true result: expmv_true_i = exp(\lambda_i)*v_i
     # expmv_true = np.asarray(((np.exp(d_diag)-1.0) / d_diag) * v)
-    expmv_true = np.asarray(np.exp(d_diag) * v)
+    expmv_true = np.asarray(np.exp(d_diag) * v_re)
 
     # compute the errors
-    diff_grid = np.abs(expmv.flatten() - expmv_true.flatten())
+    diff_grid = np.abs((expmv.flatten() - expmv_true.flatten()))
 
     # plot the errors on the complex plane
     Z = diff_grid.reshape(zr_grid.shape)
@@ -231,6 +231,9 @@ def plot_leja_conv_detail_rs(
                     label="Jacobian spectrum")
         plt.scatter(-np.real(lp_sc_re)+1, lp_sc_im,
                     color='tab:red', marker='x', label="Leja points")
+        if krylov_reuse:
+            plt.scatter(-np.real(lp_sc_re[0:spec_iter])+1, lp_sc_im[0:spec_iter],
+                        color='tab:blue', marker='x', label=r"Ritz values")
         # plt.xscale(xscale)
         plt.xlabel("negative real + 1")
     else:
@@ -243,6 +246,9 @@ def plot_leja_conv_detail_rs(
                     label="Jacobian spectrum")
         plt.scatter(np.real(lp_sc_re), lp_sc_im,
                     color='tab:red', marker='x', label="Leja points")
+        if krylov_reuse:
+            plt.scatter(np.real(lp_sc_re[0:spec_iter]), lp_sc_im[0:spec_iter],
+                        color='tab:blue', marker='x', label=r"Ritz values")
         plt.xlabel("real")
     plt.ylabel("imaginary")
     plt.colorbar(pcm)
@@ -440,6 +446,8 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
             mae_rl = np.mean(np.abs(diff_rl))
             mae_list.append(mae)
             mae_rl_list.append(mae_rl)
+            if plot_idx == -1:
+                print(r"t_final. species: %d, MAE: %0.3e, dt=%0.2e" % (n, mae, dt))
             ax[n].set_title(r"%s, MAE: %0.3e, $\Delta$t=%0.2e" % (method_str, mae, dt))
         ax[0].set_ylabel("Species 0 [mol/cc]")
         ax[1].set_ylabel("Species 1 [mol/cc]")

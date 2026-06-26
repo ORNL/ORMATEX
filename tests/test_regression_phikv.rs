@@ -100,14 +100,8 @@ fn _case_s3_phikv(krylov_reuse: bool, k: usize)
         lp, 400, 1e-16, "clapm", "dd_taylor", krylov_reuse,
         Box::new(leja_ellipse_adapter));
 
-    // Prepare the evaluator
-    leja_eval.apply_prepare(&jac_sparse, dt, y_vec.as_ref(), k);
-
-    println!("n_ritz: {}", leja_eval.leja_ellipse_adapter.n_ritz());
-    println!("leja ritz_re: {:?}", leja_eval.leja_ellipse_adapter.get_ritz().0.unwrap());
-    println!("leja ritz_im: {:?}", leja_eval.leja_ellipse_adapter.get_ritz().1.unwrap());
-
-    // Create vector of reference vectors for phi_k application
+    // Build vb_vec and ext_jac_lo before apply_prepare so the correct BAMPHI
+    // Arnoldi starting vector (upper_block(ext^p * tilde_v)) can be computed.
     let mut zero_vec = y_vec.clone();
     zero_vec.fill(0.0);
     let vb_vec = if k == 1 {
@@ -117,10 +111,14 @@ fn _case_s3_phikv(krylov_reuse: bool, k: usize)
         } else {
             vec![y_vec.as_ref()]
         };
+    let ext_jac_lo = DynRefExtendedLinOp::new(dt, &jac_sparse, &vb_vec);
 
-    // Create extended linear operator
-    let ext_jac_lo = DynRefExtendedLinOp::new(
-        dt, &jac_sparse, &vb_vec);
+    // Prepare the evaluator with the correct extended operator
+    leja_eval.apply_prepare(&jac_sparse, dt, y_vec.as_ref(), k, Some((&ext_jac_lo, &vb_vec)));
+
+    println!("n_ritz: {}", leja_eval.leja_ellipse_adapter.n_ritz());
+    println!("leja ritz_re: {:?}", leja_eval.leja_ellipse_adapter.get_ritz().0.unwrap());
+    println!("leja ritz_im: {:?}", leja_eval.leja_ellipse_adapter.get_ritz().1.unwrap());
 
     // Apply phi_0 using Leja polynomial method
     let leja_phikv = leja_eval.apply_phi_k_v(&ext_jac_lo, 1.0, &vb_vec);
