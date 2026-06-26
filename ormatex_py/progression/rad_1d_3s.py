@@ -34,6 +34,7 @@ from ormatex_py.matexp_leja import plot_leja_conjugate_ellipse_error
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM, torus_distance
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix, analytic_bateman_single_parent
+from ormatex_py.progression.plot_helpers import plot_leja_conv_detail_rs, plot_leja_conv_detail
 from ormatex_py import integrate_wrapper
 
 try:
@@ -43,11 +44,6 @@ except ImportError:
     HAS_ORMATEX_RUST = False
 
 keymap = ["c_0", "c_1", "c_2"]
-# decay_lib = {
-#     'c_0':  ('c_1', 1.0e-1*10),
-#     'c_1':  ('c_2', 1.0e1*10),
-#     'c_2':  ('none', 1.0e-3*10),
-# }
 decay_lib = {
     'c_0':  ('c_1', 1.0e-1),
     'c_1':  ('c_2', 1.0e1),
@@ -156,160 +152,6 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     print("CFL: %0.4f/%0.4f" % (dtJeig_max, dtJnorm))
     return dtJeig_max, dtJeig_min
 
-def plot_leja_conv_detail_rs(
-        ode_sys, y, t, dt, outdir="./",
-        n_leja_list=[4, 8, 12, 24, 36, 50], **kwargs):
-    import matplotlib.pyplot as plt
-    from matplotlib import colors
-    dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
-    eigdtJ = np.linalg.eig(dtJ)[0]
-
-    a = kwargs.get("leja_a", None)
-    a = np.min(eigdtJ.real) if a is None else a
-    b = 0.0
-    # c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
-    c = np.max(np.abs(eigdtJ.imag))
-
-    # create grid on the complex plane covering the spectrum
-    # split into real and complex parts
-    a_plot = (np.minimum(-1e-4, -np.max(np.abs(eigdtJ.real))) - 1) * 1.0
-    b_plot = 0.0+1.0
-    c_plot = (np.maximum(1e-4, np.max(np.abs(eigdtJ.imag))) + 1) * 1.0
-    xr_grid = np.linspace(a_plot, b_plot, 200)
-    xi_grid = np.linspace(-c_plot, c_plot, 200)
-    zr_grid, zi_grid = np.meshgrid(xr_grid, xi_grid)
-    zs_grid = zr_grid.flatten() + 1.j * zi_grid.flatten()
-    d_diag = zs_grid
-    d_diag_re = np.real(zs_grid)
-    d_diag_im = np.imag(zs_grid)
-    v = np.ones(len(d_diag_re), dtype=np.complex128) * np.linalg.norm(y)
-    v_re = np.real(v)
-    v_im = np.imag(v)
-
-    # leja approx settings
-    m = 140
-    iom = 4
-    krylov_reuse = kwargs.get("krylov_reuse", False)
-    spec_iter = 40
-    spec_saftey_factor = 1.05
-
-    # compute expm(\Lambda)*v via leja approx
-    y_col = np.atleast_2d(y).reshape(-1, 1)
-    # TODO: Do not pass dtJ to fitted_rs, instead pass diag(eigs(dtJ))
-    expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_fitted_rs(
-            dtJ, np.ones(y_col.shape)*np.linalg.norm(y), 1.0,
-            d_diag_re, d_diag_im, v_re, v_im,
-            0, m, iom, spec_iter, krylov_reuse, spec_saftey_factor)
-    # expmv_re, expmv_im, lp_sc_re, lp_sc_im = complex_diag_leja_phikv_static_rs(
-    #         a, b, c, 1.0,
-    #         d_diag_re, d_diag_im, v_re, v_im,
-    #         0, m)
-    expmv = np.vectorize(complex)(expmv_re, expmv_im)
-    print("=== lp sequence detail ===")
-    for i, (lp_re, lp_im) in enumerate(zip(lp_sc_re, lp_sc_im)):
-        print(f"i: {i}, re: {lp_re}, im: {lp_im}")
-
-    # compute the true result: expmv_true_i = exp(\lambda_i)*v_i
-    # expmv_true = np.asarray(((np.exp(d_diag)-1.0) / d_diag) * v)
-    expmv_true = np.asarray(np.exp(d_diag) * v_re)
-
-    # compute the errors
-    diff_grid = np.abs((expmv.flatten() - expmv_true.flatten()))
-
-    # plot the errors on the complex plane
-    Z = diff_grid.reshape(zr_grid.shape)
-
-    xscale = "linear"
-    plt.figure()
-    if "log" in xscale:
-        pcm = plt.pcolor(
-                  -np.real(zs_grid.reshape(zr_grid.shape))+1,
-                   np.imag(zs_grid.reshape(zr_grid.shape)), Z,
-                   norm=colors.LogNorm(vmin=1e-14, vmax=100.0),
-                   shading='auto')
-        plt.scatter(-eigdtJ.real + 1., eigdtJ.imag, color='lightblue', marker='.',
-                    label="Jacobian spectrum")
-        plt.scatter(-np.real(lp_sc_re)+1, lp_sc_im,
-                    color='tab:red', marker='x', label="Leja points")
-        if krylov_reuse:
-            plt.scatter(-np.real(lp_sc_re[0:spec_iter])+1, lp_sc_im[0:spec_iter],
-                        color='tab:blue', marker='x', label=r"Ritz values")
-        # plt.xscale(xscale)
-        plt.xlabel("negative real + 1")
-    else:
-        pcm = plt.pcolor(
-                   np.real(zs_grid.reshape(zr_grid.shape)),
-                   np.imag(zs_grid.reshape(zr_grid.shape)), Z,
-                   norm=colors.LogNorm(vmin=1e-14, vmax=100.0),
-                   shading='auto')
-        plt.scatter(eigdtJ.real, eigdtJ.imag, color='lightblue', marker='.',
-                    label="Jacobian spectrum")
-        plt.scatter(np.real(lp_sc_re), lp_sc_im,
-                    color='tab:red', marker='x', label="Leja points")
-        if krylov_reuse:
-            plt.scatter(np.real(lp_sc_re[0:spec_iter]), lp_sc_im[0:spec_iter],
-                        color='tab:blue', marker='x', label=r"Ritz values")
-        plt.xlabel("real")
-    plt.ylabel("imaginary")
-    plt.colorbar(pcm)
-    plt.legend(fancybox=True, framealpha=0.5, loc='lower right')
-    plt.tight_layout()
-    plt.savefig(outdir + "leja_rs_approx_err_contour_m_%d.png" % m, dpi=200)
-    plt.close()
-
-
-def plot_leja_conv_detail(
-        ode_sys, y, t, dt, outdir="./",
-        n_leja_list=[4, 8, 12, 24, 36, 50, 76, 100],
-        **kwargs):
-    """
-    Plots leja polynomial convergence details
-    """
-    import matplotlib.pyplot as plt
-    dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
-    eigdtJ = np.linalg.eig(dtJ)[0]
-    a = kwargs.get("leja_a", None)
-    a = np.min(eigdtJ.real) if a is None else a
-    b = 0.0
-    c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
-    # differnet leja polynomial parameters
-    leja_plist = {
-                  r"$\mathrm{Leja}_{CLaPM}\ dd_{ts}$": {"a": a, "c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
-                  r"$\mathrm{Leja}_{ReLPM}\ dd_{ts}$": {"a": a, "c": 0., "leja_n_zeros": 0, "dd_method": "taylor"},
-                  r"$\mathrm{Taylor}\ dd_{ts}$": {"a": 1e-8, "c": 0., "leja_n_zeros": 0, "dd_method": "taylor"},
-                  }
-    err_dict = {}
-    for key, leja_p in leja_plist.items():
-        l1_err_list, l2_err_list = [], []
-        for n_leja in n_leja_list:
-            i, l1_expmv_err, l2_expmv_err = plot_leja_conjugate_ellipse_error(
-                    a=leja_p["a"], b=b, c=leja_p["c"], eigJ=eigdtJ, leja_n_zeros=leja_p["leja_n_zeros"],
-                    v=y, dd_method=leja_p['dd_method'],
-                    n_leja=n_leja, leja_tol=1e-30, dirname=outdir)
-            l1_err_list.append((i, l1_expmv_err))
-            l2_err_list.append((i, l2_expmv_err))
-            if l1_expmv_err < 1e-12:
-                break
-        err_dict[key] = (np.asarray(l1_err_list), np.asarray(l2_err_list))
-    # plot expm err as fn of number of leja points
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-    ax1.set_yscale("log")
-    ax2.set_yscale("log")
-    ls_cycler = cycle(['-', '--'])
-    for key, (l1_err_list, l2_err_list) in err_dict.items():
-        ls = next(ls_cycler)
-        ax1.plot(l1_err_list[:, 0], l1_err_list[:, 1], alpha=1.0, ls=ls, label=key)
-        ax2.plot(l2_err_list[:, 0], l2_err_list[:, 1], alpha=1.0, ls=ls, label=key)
-    ax1.grid(ls='--')
-    ax2.grid(ls='--')
-    ax1.set_ylabel(r"$|e^{A} v - p_{leja}|_\infty$ err")
-    ax2.set_ylabel(r"$||e^{A} v - p_{leja}||_2$ err")
-    ax1.set_xlabel("N leja points")
-    ax2.set_xlabel("N leja points")
-    plt.tight_layout()
-    plt.legend()
-    plt.savefig(outdir + "/leja_converge.png", dpi=200)
-    plt.close()
 
 def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu=0.002, **kwargs):
     # create the mesh
@@ -403,8 +245,8 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=300, iom=4,
-            tol=1e-12, spec_iter=40, spec_method="arnoldi",
+            max_krylov_dim=300, iom=8,
+            tol=1e-12, spec_iter=24, spec_method="arnoldi",
             tol_lin=1e-10, tol_nlin=1e-8,
             osteps=500, **kwargs
             )
