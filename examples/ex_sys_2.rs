@@ -2,7 +2,7 @@
 /// showing use of BDF, RK, and EPIRK time integrators
 use faer::prelude::*;
 use ormatex::ode_sys::*;
-use ormatex::ode_bdf;
+use ormatex::ode_implicit;
 use ormatex::ode_rk;
 use ormatex::ode_epirk;
 use ormatex::matexp_krylov;
@@ -26,7 +26,7 @@ pub fn main() {
         ];
 
     // setup the integrator
-    // let mut sys_solver = ode_bdf::BdfIntegrator::new(0.0, y0.as_ref(), 2);
+    // let mut sys_solver = ode_implicit::BdfIntegrator::new(0.0, y0.as_ref(), 2);
     // let mut sys_solver = ode_rk::RkIntegrator::new(0.0, y0.as_ref(), 2);
     let iom = 2;
     let krylov_dim = 3;

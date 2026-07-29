@@ -41,7 +41,7 @@ kuva = {version="0.1", optional=true}
 pyo3 = {version="=0.26", features = ["extension-module"], optional=true}
 numpy = {version="0.26", optional=true}
 ndarray = {version=">=0.16", features=["rayon"], optional=true}
-faer-ext = {version=">=0.7.1", features=["ndarray", "numpy"], optional=true}
+faer-ext = {version="0.7.0", features=["ndarray", "numpy"], optional=true}
 
 [tool.maturin]
 module-name = "ormatex"

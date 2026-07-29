@@ -34,14 +34,16 @@ from ormatex_py.matexp_leja import plot_leja_conjugate_ellipse_error
 from ormatex_py.progression.species_source_sink import mxf_liq_vapor_bubble_ig, mxf_arrhenius, mxf_liq_vapor_nonlin
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM, torus_distance
 from ormatex_py.progression.bateman_sys import gen_bateman_matrix, gen_transmute_matrix, analytic_bateman_single_parent
+from ormatex_py.progression.plot_helpers import plot_leja_conv_detail_rs, plot_leja_conv_detail
 from ormatex_py import integrate_wrapper
 
+try:
+    from ormatex_py.ormatex import complex_diag_leja_phikv_static_rs, complex_diag_leja_phikv_fitted_rs
+    HAS_ORMATEX_RUST = True
+except ImportError:
+    HAS_ORMATEX_RUST = False
+
 keymap = ["c_0", "c_1", "c_2"]
-# decay_lib = {
-#     'c_0':  ('c_1', 1.0e-1*10),
-#     'c_1':  ('c_2', 1.0e1*10),
-#     'c_2':  ('none', 1.0e-3*10),
-# }
 decay_lib = {
     'c_0':  ('c_1', 1.0e-1),
     'c_1':  ('c_2', 1.0e1),
@@ -109,11 +111,30 @@ class RAD_SEM(OdeSplitSys):
 def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplot"):
     """
     Plots eigvals of the scaled system Jacobian
+    Writes Jacobian and y vector to Matrix Market format files for post-processing
     """
     import matplotlib.pyplot as plt
-    dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
+    from scipy.io import mmwrite
+    import scipy.sparse as sp
+
+    jac = np.asarray(ode_sys.fjac(t, y).dense())
+    dtJ = np.asarray(dt*jac)
     print("dt*J", dtJ)
     eigdtJ = np.linalg.eig(dtJ)[0]
+
+    # Write Jacobian to Matrix Market format
+    # Convert to sparse matrix for more efficient storage
+    jac_sparse = sp.csr_matrix(jac)
+    jac_mmfile = figname + "_jacobian.mtx"
+    mmwrite(jac_mmfile, jac_sparse, precision=16)
+    print(f"Jacobian written to: {jac_mmfile}")
+
+    # Write y vector to Matrix Market format
+    # Reshape as column vector for Matrix Market format
+    y_sparse = sp.csr_matrix(np.asarray(y).reshape(-1, 1))
+    y_mmfile = figname + "_y_vector.mtx"
+    mmwrite(y_mmfile, y_sparse, precision=16)
+    print(f"y vector written to: {y_mmfile}")
 
     plt.figure()
     plt.scatter(-eigdtJ.real+1., eigdtJ.imag)
@@ -131,58 +152,6 @@ def plot_dt_jac_spec(ode_sys, y, t=0.0, dt=1.0, figname="reac_adv_diff_s3_eigplo
     print("CFL: %0.4f/%0.4f" % (dtJeig_max, dtJnorm))
     return dtJeig_max, dtJeig_min
 
-def plot_leja_conv_detail(
-        ode_sys, y, t, dt, outdir="./",
-        n_leja_list=[4, 8, 12, 24, 36, 50, 76, 100],
-        **kwargs):
-    """
-    Plots leja polynomial convergence details
-    """
-    import matplotlib.pyplot as plt
-    dtJ = np.asarray(dt*ode_sys.fjac(t, y).dense())
-    eigdtJ = np.linalg.eig(dtJ)[0]
-    a = kwargs.get("leja_a", None)
-    a = np.min(eigdtJ.real) if a is None else a
-    b = 0.0
-    c = kwargs.get("leja_c", np.max(np.abs(eigdtJ.imag)))
-    # differnet leja polynomial parameters
-    leja_plist = {
-                  r"$\mathrm{Leja}_{CLaPM}\ dd_{ts}$": {"a": a, "c": c, "leja_n_zeros": 0, "dd_method": "taylor"},
-                  r"$\mathrm{Leja}_{ReLPM}\ dd_{ts}$": {"a": a, "c": 0., "leja_n_zeros": 0, "dd_method": "taylor"},
-                  r"$\mathrm{Taylor}\ dd_{ts}$": {"a": 1e-8, "c": 0., "leja_n_zeros": 0, "dd_method": "taylor"},
-                  }
-    err_dict = {}
-    for key, leja_p in leja_plist.items():
-        l1_err_list, l2_err_list = [], []
-        for n_leja in n_leja_list:
-            i, l1_expmv_err, l2_expmv_err = plot_leja_conjugate_ellipse_error(
-                    a=leja_p["a"], b=b, c=leja_p["c"], eigJ=eigdtJ, leja_n_zeros=leja_p["leja_n_zeros"],
-                    v=y, dd_method=leja_p['dd_method'],
-                    n_leja=n_leja, leja_tol=1e-30, dirname=outdir)
-            l1_err_list.append((i, l1_expmv_err))
-            l2_err_list.append((i, l2_expmv_err))
-            if l1_expmv_err < 1e-12:
-                break
-        err_dict[key] = (np.asarray(l1_err_list), np.asarray(l2_err_list))
-    # plot expm err as fn of number of leja points
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-    ax1.set_yscale("log")
-    ax2.set_yscale("log")
-    ls_cycler = cycle(['-', '--'])
-    for key, (l1_err_list, l2_err_list) in err_dict.items():
-        ls = next(ls_cycler)
-        ax1.plot(l1_err_list[:, 0], l1_err_list[:, 1], alpha=1.0, ls=ls, label=key)
-        ax2.plot(l2_err_list[:, 0], l2_err_list[:, 1], alpha=1.0, ls=ls, label=key)
-    ax1.grid(ls='--')
-    ax2.grid(ls='--')
-    ax1.set_ylabel(r"$|e^{A} v - p_{leja}|_\infty$ err")
-    ax2.set_ylabel(r"$||e^{A} v - p_{leja}||_2$ err")
-    ax1.set_xlabel("N leja points")
-    ax2.set_xlabel("N leja points")
-    plt.tight_layout()
-    plt.legend()
-    plt.savefig(outdir + "/leja_converge.png", dpi=200)
-    plt.close()
 
 def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu=0.002, **kwargs):
     # create the mesh
@@ -276,10 +245,10 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
-            max_krylov_dim=300, iom=2,
-            phikv_method="leja",
-            tol=1e-12, spec_iter=28, spec_method="arnoldi",
-            krylov_reuse=False, osteps=500, **kwargs
+            max_krylov_dim=300, iom=8,
+            tol=1e-12, spec_iter=24, spec_method="arnoldi",
+            tol_lin=1e-10, tol_nlin=1e-8,
+            osteps=500, **kwargs
             )
     t_res, y_res = res.t_res, res.y_res
 
@@ -319,6 +288,8 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
             mae_rl = np.mean(np.abs(diff_rl))
             mae_list.append(mae)
             mae_rl_list.append(mae_rl)
+            if plot_idx == -1:
+                print(r"t_final. species: %d, MAE: %0.3e, dt=%0.2e" % (n, mae, dt))
             ax[n].set_title(r"%s, MAE: %0.3e, $\Delta$t=%0.2e" % (method_str, mae, dt))
         ax[0].set_ylabel("Species 0 [mol/cc]")
         ax[1].set_ylabel("Species 1 [mol/cc]")
@@ -339,8 +310,10 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
         plot_dt_jac_spec(ode_sys, y_res[-1], 0.0, dt, figname="reac_adv_diff_s3_eigplot")
 
         # plot the leja polynomial matexp-vec approx
-        if "leja" in method and kwargs.get("leja_plot", False):
+        if "leja" in method and "rs" not in method and kwargs.get("leja_plot", False):
             plot_leja_conv_detail(ode_sys, y_res[-1], t, dt, outdir=outdir, **kwargs)
+        elif "leja" in args.phikv_method and kwargs.get("leja_plot", False):
+            plot_leja_conv_detail_rs(ode_sys, y_res[-1], t, dt, outdir=outdir, **kwargs)
 
     print("=== Species MAEs at t=%0.4e ===" % t_res[-1])
     [print("%0.4e" % a, end=', ') for a in mae_list]
@@ -373,9 +346,11 @@ if __name__ == "__main__":
     parser.add_argument("-nu", help="diffusion coeff", type=float, default=1e-8)
     parser.add_argument("-tf", help="final time", type=float, default=1.0)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
+    parser.add_argument("-krylov_reuse", help="Recycle krylov vectors", action='store_true', default=False)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
+    parser.add_argument("-phikv_method", help="phi-function-vec prod method", type=str, default="leja")
     parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
-    parser.add_argument("-max_substeps", help="divided difference method", type=int, default=0)
+    parser.add_argument("-max_substeps", help="max number of substeps", type=int, default=0)
     parser.add_argument("-leja_n_zeros", help="number of zeros prepended to leja sequence", type=int, default=1)
     parser.add_argument("-nojit", help="Disable jax jit", default=False, action='store_true')
     args = parser.parse_args()
@@ -395,6 +370,7 @@ if __name__ == "__main__":
             for dt in dts:
                 mae, mae_rl = main(dt, method, True, args.mr, args.p,
                                    tf=args.tf, pfd_method=pfd_method, nu=args.nu,
+                                   phikv_method=args.phikv_method,
                                    leja_a=args.leja_a, leja_c=args.leja_c,
                                    leja_substep=args.leja_substep, leja_tol=args.leja_tol,
                                    leja_n_zeros=args.leja_n_zeros, leja_plot=args.leja_plot,
@@ -436,8 +412,9 @@ if __name__ == "__main__":
     else:
         main(args.dt, args.method, args.per, args.mr, args.p,
              tf=args.tf, jac_plot=True, nu=args.nu,
+             phikv_method=args.phikv_method,
              leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep,
              leja_tol=args.leja_tol, leja_n_zeros=args.leja_n_zeros,
-             leja_plot=args.leja_plot,
+             leja_plot=args.leja_plot, krylov_reuse=args.krylov_reuse,
              dd_method=args.dd_method, max_substeps=args.max_substeps
              )

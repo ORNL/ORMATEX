@@ -1,6 +1,7 @@
 pub mod ode_sys;
 pub mod matexp_traits;
-pub mod ode_bdf;
+pub mod tableau_implicit;
+pub mod ode_implicit;
 pub mod ode_rk;
 pub mod ode_epirk;
 pub mod newton;

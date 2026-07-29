@@ -48,11 +48,15 @@ use std::rc::Rc;
 
 use crate::ode_sys::*;
 use crate::logger::init_logger;
-use crate::ode_bdf;
+use crate::ode_implicit;
+use crate::tableau_implicit::ImplicitBT;
 use crate::ode_rk;
 use crate::ode_epirk;
 use crate::matexp_krylov;
 use crate::matexp_leja;
+use crate::matexp_leja::{
+    complex_diag_leja_phikv_static,
+    complex_diag_leja_phikv_fitted};
 use crate::matexp_cauchy;
 use crate::matexp_pade::{PadeExpm, phi_ext};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
@@ -63,14 +67,13 @@ use crate::arnoldi::arnoldi_lop;
 #[pyclass]
 pub struct PySysWrapped {
     // alias of PyObject
-    // pub py_sys: Py<PyAny>,
-    pub py_sys: PyObject,
+    pub py_sys: Py<PyAny>,
 }
 
 #[pymethods]
 impl PySysWrapped {
     #[new]
-    pub fn new(py_sys: PyObject) -> Self {
+    pub fn new(py_sys: Py<PyAny>) -> Self {
         // let gil = Python::acquire_gil();
         Self {
             py_sys,
@@ -83,13 +86,13 @@ impl PySysWrapped {
 pub struct PyJaxJacLinOp {
     /// inner linop def in python
     /// see omatex_py.ode_sys.LinOp for def
-    py_linop: PyObject,
+    py_linop: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyJaxJacLinOp {
     #[new]
-    pub fn new(py_linop: PyObject) -> Self {
+    pub fn new(py_linop: Py<PyAny>) -> Self {
         // let gil = Python::acquire_gil();
         Self {
             py_linop,
@@ -210,21 +213,37 @@ fn select_solver<'a, T: LinOpPhikvEvaluator + 'a>(
     y0_mat: MatRef<'_, f64>,
     method: String,
     tol_fdt: f64,
+    tol_lin: f64,
+    tol_nlin: f64,
     matexp_m: T,
     )
     -> Rc < RefCell<dyn IntegrateSys<'a, TimeType=f64, SysStateType=Mat<f64>> + 'a> >
 {
     // backward euler
     if method.as_str() == "bdf1" || method.as_str() == "backeuler" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 1)))
+        return Rc::new( RefCell::new(ode_implicit::BdfIntegrator::new(t0, y0_mat, 1, tol_lin, tol_nlin)))
     }
     // backward difference formula 2
     else if method.as_str() == "bdf2" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 2)))
+        return Rc::new( RefCell::new(ode_implicit::BdfIntegrator::new(t0, y0_mat, 2, tol_lin, tol_nlin)))
     }
     // crank-nicolson
     else if method.as_str() == "cn" {
-        return Rc::new( RefCell::new(ode_bdf::BdfIntegrator::new(t0, y0_mat, 3)))
+        return Rc::new(RefCell::new(
+                ode_implicit::DirkIntegrator::new(t0, y0_mat, ImplicitBT::crank_nicolson(), tol_lin, tol_nlin)
+                ))
+    }
+    // sdirk32
+    else if method.as_str() == "sdirk32" {
+        return Rc::new(RefCell::new(
+                ode_implicit::DirkIntegrator::new(t0, y0_mat, ImplicitBT::sdirk32(), tol_lin, tol_nlin)
+                ))
+    }
+    // sdirk33
+    else if method.as_str() == "sdirk33" {
+        return Rc::new(RefCell::new(
+                ode_implicit::DirkIntegrator::new(t0, y0_mat, ImplicitBT::sdirk33(), tol_lin, tol_nlin)
+                ))
     }
     // forward euler
     else if method.as_str() == "rk1" || method.as_str() == "forwardeuler" {
@@ -266,7 +285,7 @@ fn integrate_wrapper_rs<'py>(
 {
     // process kwargs
     let kd: pyo3::Bound<'_, PyDict> = kwds.unwrap_or(PyDict::new(py));
-    let kd_hash: HashMap<String, PyObject> = kd.extract().unwrap_or(HashMap::new());
+    let kd_hash: HashMap<String, Py<PyAny>> = kd.extract().unwrap_or(HashMap::new());
 
     // stepper settings
     let method: String = get_val_or_default(py, &kd_hash, String::from("method"), String::from("epi2"));
@@ -279,6 +298,9 @@ fn integrate_wrapper_rs<'py>(
     let tol: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
     let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol_fdt"), 1e-8);
     let osteps: usize = get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
+    // linear and nonlinear solver settings
+    let tol_lin: f64 = get_val_or_default(py, &kd_hash, String::from("tol_lin"), 1e-8);
+    let tol_nlin: f64 = get_val_or_default(py, &kd_hash, String::from("tol_nlin"), 1e-8);
     // jacobian spectrum analysis settings
     let leja_a: f64 = get_val_or_default(py, &kd_hash, String::from("leja_a"), -1.0);
     let leja_b: f64 = get_val_or_default(py, &kd_hash, String::from("leja_b"), 0.0);
@@ -286,6 +308,7 @@ fn integrate_wrapper_rs<'py>(
     let spec_tol: f64 = get_val_or_default(py, &kd_hash, String::from("spec_tol"), 1.0e-8);
     let spec_iter: usize = get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
     let spec_method: String = get_val_or_default(py, &kd_hash, String::from("spec_method"), String::from("arnoldi"));
+    let spec_saftey_factor: f64 = get_val_or_default(py, &kd_hash, String::from("spec_saftey_factor"), 1.05);
     let dd_method: String = get_val_or_default(py, &kd_hash, String::from("dd_method"), String::from("dd_phi"));
     let krylov_reuse: bool = get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), false);
     // optional logging settings
@@ -312,23 +335,22 @@ fn integrate_wrapper_rs<'py>(
                     let leja_ellipse_adapter =
                         matexp_leja::LejaEllipseAdapterStatic::new(
                         leja_a, leja_b, leja_c);
-                    // adaptive specturm parameter updates
                     matexp_leja::LejaPhiEval::new(
                         lp, std::cmp::min(m, 800), tol, "clapm", dd_method.as_str(),
                         krylov_reuse, Box::new(leja_ellipse_adapter))
                 },
                 _ => {
+                    // adaptive specturm parameter updates
                     let leja_ellipse_adapter =
                         matexp_leja::LejaEllipseAdapterArnoldiIOM::new(
-                        leja_a, leja_b, leja_c, spec_tol, spec_iter, iom, 1.0);
-                    // adaptive specturm parameter updates
+                        leja_a, leja_b, leja_c, spec_tol, spec_iter, iom, spec_saftey_factor);
                     matexp_leja::LejaPhiEval::new(
                         lp, std::cmp::min(m, 800), tol, "clapm", dd_method.as_str(),
                         krylov_reuse, Box::new(leja_ellipse_adapter))
                 }
             };
             matexp_m.set_max_substeps(max_substeps);
-            select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
+            select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
         },
         "taylor" => {
             let lp = matexp_leja::LejaPoints::new(vec![0.0; m], vec![0.0; m]);
@@ -339,12 +361,12 @@ fn integrate_wrapper_rs<'py>(
                 matexp_leja::LejaPhiEval::new(
                     lp, std::cmp::min(m, 800), tol, "taylor", dd_method.as_str(),
                     krylov_reuse, Box::new(leja_ellipse_adapter));
-            select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
+            select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
         },
         // krylov is default
         _ => {
             let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, std::cmp::min(100, m), m, tol, Some(iom));
-            select_solver(t0, y0_mat, method, tol_fdt, matexp_m)
+            select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
         },
     };
 
@@ -411,7 +433,7 @@ fn phi_k_rs<'py>(
 #[pyfunction]
 fn arnoldi_rs<'py>(
     py: Python<'py>,
-    py_linop: PyObject,
+    py_linop: Py<PyAny>,
     a_lo_scale: f64,
     b: PyReadonlyArray2<f64>,
     m: usize,
@@ -436,6 +458,93 @@ fn arnoldi_rs<'py>(
         q_ndarray.into_pyarray(py),
         h_ndarray.into_pyarray(py),
         bkdwn
+    )
+}
+
+#[pyfunction]
+fn complex_diag_leja_phikv_static_rs<'py>(
+    py: Python<'py>,
+    a: f64, b: f64, c: f64,
+    dt: f64,
+    d_diag_re: PyReadonlyArray1<f64>,
+    d_diag_im: PyReadonlyArray1<f64>,
+    v_re: PyReadonlyArray1<f64>,
+    v_im: PyReadonlyArray1<f64>,
+    k: usize,
+    m: usize,
+    )
+    -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>,
+        Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>)
+{
+    // convert vecs into fear col
+    let v_re_col = v_re.into_faer();
+    let v_im_col = v_im.into_faer();
+    let d_diag_re_col = d_diag_re.into_faer();
+    let d_diag_im_col = d_diag_im.into_faer();
+
+    let (phikv_re, phikv_im, lp_sc_re, lp_sc_im) = complex_diag_leja_phikv_static(
+        a, b, c, dt, d_diag_re_col, d_diag_im_col, v_re_col, v_im_col, k, m);
+
+    // convert output to numpy
+    let phikv_re_ndarray = phikv_re.as_mat().as_ref().into_ndarray().to_owned();
+    let phikv_im_ndarray = phikv_im.as_mat().as_ref().into_ndarray().to_owned();
+    let lp_sc_re_ndarray = lp_sc_re.as_mat().as_ref().into_ndarray().to_owned();
+    let lp_sc_im_ndarray = lp_sc_im.as_mat().as_ref().into_ndarray().to_owned();
+    (
+        phikv_re_ndarray.into_pyarray(py),
+        phikv_im_ndarray.into_pyarray(py),
+        lp_sc_re_ndarray.into_pyarray(py),
+        lp_sc_im_ndarray.into_pyarray(py),
+    )
+}
+
+#[pyfunction]
+fn complex_diag_leja_phikv_fitted_rs<'py>(
+    py: Python<'py>,
+    a: PyReadonlyArray2<f64>,
+    b: PyReadonlyArray2<f64>,
+    dt: f64,
+    d_diag_re: PyReadonlyArray1<f64>,
+    d_diag_im: PyReadonlyArray1<f64>,
+    v_re: PyReadonlyArray1<f64>,
+    v_im: PyReadonlyArray1<f64>,
+    k: usize,
+    m: usize,
+    iom: usize,
+    n_ritz: usize,
+    krylov_reuse: bool,
+    spec_saftey_factor: f64,
+    )
+    -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>,
+        Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>)
+{
+    // create wrapper around python linop
+    let a_mat = a.into_faer();
+
+    // convert b vec into fear mat
+    let b_mat = b.into_faer();
+
+    // convert vecs into fear col
+    let v_re_col = v_re.into_faer();
+    let v_im_col = v_im.into_faer();
+    let d_diag_re_col = d_diag_re.into_faer();
+    let d_diag_im_col = d_diag_im.into_faer();
+
+    let (phikv_re, phikv_im, lp_sc_re, lp_sc_im) = complex_diag_leja_phikv_fitted(
+        &a_mat, b_mat.as_ref(),
+        dt, d_diag_re_col, d_diag_im_col, v_re_col, v_im_col, k, m, iom,
+        n_ritz, krylov_reuse, Some(spec_saftey_factor));
+
+    // convert output to numpy
+    let phikv_re_ndarray = phikv_re.as_mat().as_ref().into_ndarray().to_owned();
+    let phikv_im_ndarray = phikv_im.as_mat().as_ref().into_ndarray().to_owned();
+    let lp_sc_re_ndarray = lp_sc_re.as_mat().as_ref().into_ndarray().to_owned();
+    let lp_sc_im_ndarray = lp_sc_im.as_mat().as_ref().into_ndarray().to_owned();
+    (
+        phikv_re_ndarray.into_pyarray(py),
+        phikv_im_ndarray.into_pyarray(py),
+        lp_sc_re_ndarray.into_pyarray(py),
+        lp_sc_im_ndarray.into_pyarray(py),
     )
 }
 
@@ -490,6 +599,12 @@ mod ormatex {
 
     #[pymodule_export]
     use super::arnoldi_rs;
+
+    #[pymodule_export]
+    use super::complex_diag_leja_phikv_static_rs;
+
+    #[pymodule_export]
+    use super::complex_diag_leja_phikv_fitted_rs;
 
     #[pymodule_export]
     use super::phi_k_rs;

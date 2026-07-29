@@ -162,8 +162,8 @@ where
             vb2.as_ref(),
         ];
         let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
-        let (_v, _n) = &ext_a_lo.get_v(&vb);
-        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 2);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 2,
+            Some((&ext_a_lo, &vb)));
         let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result
@@ -186,7 +186,15 @@ where
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
-        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 0);
+
+        // apply_prepare with a k=3 proxy using fy0_dt as stand-in for the phi_3 vector
+        // (the real phi_3 vector r_2 is not yet available).  fy0_dt gives a reasonable
+        // Arnoldi starting vector; the stored_tay path is not used by apply_phi_k.
+        let zero_n = faer::Mat::zeros(y0.nrows(), 1);
+        let vb_prep = vec![zero_n.as_ref(), fy0_dt.as_ref(), fy0_dt.as_ref(), fy0_dt.as_ref()];
+        let ext_a_prep = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb_prep);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 3,
+            Some((&ext_a_prep, &vb_prep)));
 
         // correction for nonautonomous case
         let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
@@ -248,8 +256,8 @@ where
             vb2.as_ref(),
         ];
         let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
-        let (_v, _n) = &ext_a_lo.get_v(&vb);
-        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 2);
+        self.expm.apply_prepare(sys_jac_lop.as_ref(), dt, y0.as_ref(), 2,
+            Some((&ext_a_lo, &vb)));
         let y_new = y0.as_ref() + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
 
         // return result
@@ -265,7 +273,9 @@ where
     type SysStateType = Mat<f64>;
 
     fn step<'b>(&mut self, sys: &'b dyn OdeSys<'b>,  dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
-        match self.method.as_str() {
+        println!("\nEPI step, t: {:?}, dt: {:?}", self.t, dt);
+        let clock = std::time::Instant::now();
+        let res = match self.method.as_str() {
             "epi2" | "exprb2" => {
                 self.step_order_2(sys, dt)
             },
@@ -280,7 +290,9 @@ where
                 self.step_exprb32(sys, dt)
             },
             _ => panic!("bad method"),
-       }
+        };
+        println!("EPI step time (s): {}", clock.elapsed().as_secs_f64());
+        res
     }
 
     fn time(&self) -> Self::TimeType {
