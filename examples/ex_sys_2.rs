@@ -30,8 +30,10 @@ pub fn main() {
     // let mut sys_solver = ode_rk::RkIntegrator::new(0.0, y0.as_ref(), 2);
     let iom = 2;
     let krylov_dim = 3;
+    let m = 3;
+    let tol = 1e-12;
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
-    let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, Some(iom));
+    let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, m, krylov_dim, tol, Some(iom));
     let mut sys_solver = ode_epirk::EpirkIntegrator::<matexp_krylov::KrylovExpm>::new(
         0.0, y0.as_ref(), "epi2".to_string(), matexp_m).with_opt(String::from("tol_fdt"), 1e-8);
 
