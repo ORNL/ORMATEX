@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+title: ORMATEX
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: William
+    family-names: Gurecky
+    email: gureckywl@ornl.gov
+    affiliation: Oak Ridge National Laboratory
+    orcid: 'https://orcid.org/0000-0001-9579-5042'
+  - given-names: Konstantin
+    family-names: Pieper
+    affiliation: Oak Ridge National Laboratory
+    orcid: 'https://orcid.org/0000-0002-4982-2588'
+    email: PIEPERK@ORNL.GOV
+identifiers:
+  - type: doi
+    value: 10.11578/dc.20250124.7
+    description: ORMATEX
+repository-code: 'https://github.com/ORNL/ORMATEX'
+keywords:
+  - matrix exponential
+  - rust
+  - jax
+  - time integration
+  - ordinary differential equations
+  - odes
+  - pdes
+  - exponential time integration
+license: Apache-2.0

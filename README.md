@@ -7,6 +7,15 @@ Utilizing these methods, ORMATEX implements performant exponential integrators f
 
 ORMATEX is a mixed Rust and Python package that provides an extensible foundation to construct advanced exponential integrators.
 
+## Citation
+
+If you find this software useful in your work, please cite:
+
+    Gurecky, William, and Pieper, Konstantin. ORMATEX. Computer Software.
+    https://github.com/ORNL/ORMATEX. USDOE. 24 Jan. 2025. Web. doi:10.11578/dc.20250124.7.
+
+## Available Exponential Time Integration Methods
+
 The current set of implemented and planned time integration methods in each language:
 
 ### Rust
@@ -27,7 +36,7 @@ Classic integrators:
 - [x] BDF2
 - [x] Crank-Nicolson
 - [ ] DIRK
-- [ ] SDIRK
+- [x] SDIRK
 
 
 ### Python
