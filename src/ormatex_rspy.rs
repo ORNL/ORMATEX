@@ -305,7 +305,7 @@ fn integrate_wrapper_rs<'py>(
     // setup the time integrator
     let solver = match phikv_method.as_str() {
         "leja" => {
-            let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, m+2);
+            let lp = matexp_leja::LejaPoints::new_from_fn("leja_circle").slice(0, m+2);
             let mut matexp_m = match spec_method.as_str() {
                 "none" => {
                     // user specified spectrum parameters
