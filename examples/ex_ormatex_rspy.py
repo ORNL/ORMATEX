@@ -44,16 +44,33 @@ class LotkaVolterra(OdeSys):
         res = jnp.asarray([prey_t, pred_t])
         return jax.device_get(res).flatten()
 
+    def fjac_dense(self, t, x, **kwargs):
+        # helper method to create a dense jacobian of the system RHS
+        # du/dt = F(u, t)
+        # returns the jacobian matrix J := dF/du|_(t,u)
+        # (the jacobian evaluated at the inputs t, u)
+        # Note: if you have a custom _fjac, this method may not be needed,
+        # or you might just need: np.asarray(self._fjac(t, x, **kwargs))
+        return np.asarray(self._fjac(t, x, **kwargs)._dense())
+
+
 def run_model(dt, nsteps, method="exprb2_rs", tol_fdt=1.0e-6, ft_scale=1.0, phikv_method="krylov"):
     # Step the system forward
     t0 = 0.0
     y0 = np.array([0.1, 0.2])
-    res = integrate(LotkaVolterra(ft_scale=ft_scale), y0, t0, dt, nsteps,
+    sys = LotkaVolterra(ft_scale=ft_scale)
+    res = integrate(sys, y0, t0, dt, nsteps,
                     method=method, m=20, tol_fdt=tol_fdt, phikv_method=phikv_method)
     y0 = jnp.array(y0.flatten())
     # Check against dopri5 in diffrax
     res_expected = integrate(LotkaVolterra(ft_scale=ft_scale), y0, t0, dt, nsteps,
                              method="dopri5")
+
+    # Compute the dense jacobian at the final time
+    np_dense_jac = sys.fjac_dense(res.t[-1], res.y[-1])
+    print("System jacobian at final time and final state: ")
+    print(np_dense_jac)
+
     return np.asarray(res.t), np.asarray(res.y), res_expected.t, res_expected.y
 
 if __name__ == "__main__":

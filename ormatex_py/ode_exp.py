@@ -204,7 +204,7 @@ class ExpRBIntegrator(IntegrateSys):
                                       self.max_krylov_dim, self.iom)
 
         # TODO: error estimate by comparing y_2 and y_new?
-        y_err = -1.0
+        y_err = jnp.linalg.norm(y_2 - y_new, ord=jnp.inf)
 
         return StepResult(t+dt, dt, y_new, y_err)
 

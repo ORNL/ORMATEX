@@ -55,11 +55,52 @@ class IntegrateResult:
         return self.callback_res
 
 
+class TimeStepController:
+    """Error-based time-step controller for steppers with an error estimate."""
+
+    def __init__(self, atol=1.0e-6, rtol=1.0e-3, safety=0.9,
+                 min_factor=0.2, max_factor=5.0, min_dt=1.0e-14,
+                 max_dt=np.inf):
+        if atol < 0.0 or rtol < 0.0 or (atol == 0.0 and rtol == 0.0):
+            raise ValueError("atol and rtol must not both be zero")
+        if not 0.0 < safety <= 1.0:
+            raise ValueError("safety must be in (0, 1]")
+        if min_factor <= 0.0 or max_factor < min_factor:
+            raise ValueError("invalid step-size factor limits")
+        if min_dt <= 0.0 or max_dt < min_dt:
+            raise ValueError("invalid step-size limits")
+
+        self.atol = atol
+        self.rtol = rtol
+        self.safety = safety
+        self.min_factor = min_factor
+        self.max_factor = max_factor
+        self.min_dt = min_dt
+        self.max_dt = max_dt
+
+    def __call__(self, dt, err, order, y):
+        """Return ``(accepted, next_dt)`` for an estimated step error."""
+        y_norm = float(jnp.linalg.norm(y, ord=jnp.inf))
+        tolerance = self.atol + self.rtol * y_norm
+        error_ratio = float(err) / tolerance
+
+        accepted = error_ratio <= 1.0
+        if error_ratio == 0.0:
+            factor = self.max_factor
+        else:
+            factor = self.safety * error_ratio ** (-1.0 / (order + 1))
+
+        factor = np.clip(factor, self.min_factor, self.max_factor)
+        next_dt = np.clip(abs(dt) * factor, self.min_dt, self.max_dt)
+        return accepted, np.copysign(next_dt, dt)
+
+
 def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     """
     High level interface to all time integration methods in ORMATEX.
     """
     tic = time.perf_counter()
+    step_controller = kwargs.pop("step_controller", None)
     # available ormatex rust integrators
     is_rs = method in ["exprb2_rs", "exprb3_rs", "epi2_rs", "epi3_rs",
                        "bdf2_rs", "bdf1_rs", "backeuler_rs", "cn_rs",
@@ -82,7 +123,8 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
             sys_int = RKIntegrator(ode_sys, t0, y0, method=method, **kwargs)
 
         t_res, y_res, c_res = integrate_ormatex(sys_int, y0, t0, dt, nsteps, method=method,
-                                         **kwargs)
+                                          step_controller=step_controller,
+                                          **kwargs)
         #wait for computation of last step to finish
         y_res[-1].block_until_ready()
     elif is_rs:
@@ -167,30 +209,68 @@ def integrate_diffrax(ode_sys, y0, t0, dt, nsteps, method="implicit_euler", **kw
     return jnp.hstack((jnp.asarray([t0]), res.ts)), jnp.vstack((y0, res.ys))
 
 
-def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2", **kwargs):
+def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2",
+                      step_controller=None, **kwargs):
     """
-    Uses ormatex exponential integrators to step adv diff system forward
+    Uses ormatex exponential integrators to step system forward
     """
     t_res, y_res = [t0,], [y0,]
     callback_before_step = kwargs.get("callback_before_step", None)
     callback_after_step_accept = kwargs.get("callback_after_step_accept", None)
     callback_after_step_reject = kwargs.get("callback_after_step_reject", None)
-    callback_res = {"callback_before_step": [], "callback_after_step_accept": []}
-    for i in range(nsteps):
-        if callable(callback_before_step):
-            cb_out = callback_before_step(sys_int.sys, t_res[-1], y_res[-1])
-            callback_res["callback_before_step"].append(cb_out)
-            res = sys_int.step(dt, frhs_kwargs=cb_out)
-        else:
-            res = sys_int.step(dt)
-        # log the results for plotting
-        t_res.append(res.t)
-        y_res.append(res.y)
-        # this would be where you could reject a step, if the
-        # estimated err was too large
-        sys_int.accept_step(res)
-        # callbacks
-        if callable(callback_after_step_accept):
-            callback_res["callback_after_step_accept"].append(
-                    callback_after_step_accept(sys_int.sys, t_res[-1], y_res[-1]))
+    callback_res = {"callback_before_step": [],
+                    "callback_after_step_accept": [],
+                    "callback_after_step_reject": [],}
+
+    if dt <= 0.0:
+        raise ValueError("dt must be positive")
+    if nsteps <= 0:
+        raise ValueError("nsteps must be positive")
+
+    adaptive = step_controller is not None
+    current_dt = dt
+    final_time = t0 + nsteps * dt
+    step_count = 0
+
+    while (step_count < nsteps if not adaptive else t_res[-1] < final_time):
+        if adaptive:
+            current_dt = min(current_dt, final_time - t_res[-1])
+
+        while True:
+            if callable(callback_before_step):
+                cb_out = callback_before_step(sys_int.sys, t_res[-1], y_res[-1])
+                callback_res["callback_before_step"].append(cb_out)
+                res = sys_int.step(current_dt, frhs_kwargs=cb_out)
+            else:
+                res = sys_int.step(current_dt)
+
+            # A negative error marks steppers without an error estimate.
+            if not adaptive or res.err < 0.0:
+                accepted, next_dt = True, current_dt
+            else:
+                accepted, next_dt = step_controller(
+                    current_dt, res.err, sys_int.order, res.y)
+
+            if accepted:
+                t_res.append(res.t)
+                y_res.append(res.y)
+                sys_int.accept_step(res)
+                step_count += 1
+                current_dt = next_dt
+
+                if callable(callback_after_step_accept):
+                    callback_res["callback_after_step_accept"].append(
+                        callback_after_step_accept(sys_int.sys, res.t, res.y))
+                break
+
+            if callable(callback_after_step_reject):
+                callback_res["callback_after_step_reject"].append(
+                    callback_after_step_reject(
+                        sys_int.sys, t_res[-1], y_res[-1]))
+
+            if abs(next_dt) >= abs(current_dt):
+                raise RuntimeError(
+                    "time-step controller rejected a step without reducing dt")
+            current_dt = next_dt
+
     return t_res, y_res, callback_res
