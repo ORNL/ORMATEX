@@ -51,7 +51,7 @@ class LotkaVolterra(OdeSys):
         # (the jacobian evaluated at the inputs t, u)
         # Note: if you have a custom _fjac, this method may not be needed,
         # or you might just need: np.asarray(self._fjac(t, x, **kwargs))
-        return np.asarray(self._fjac(t, x, **kwargs)._dense())
+        return np.asarray(self._fjac(t, x, **kwargs).dense())
 
 
 def run_model(dt, nsteps, method="exprb2_rs", tol_fdt=1.0e-6, ft_scale=1.0, phikv_method="krylov"):
