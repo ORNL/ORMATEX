@@ -367,8 +367,6 @@ class ExpRBIntegrator(IntegrateSys):
         J = sys_jac_lop.dense()
         Jdt = dt*J
 
-        # phi2_v is nonzero for nonautonomous systems
-        # phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt)
         # check for nonautonomous system
         phi2J_fytt = 0.
         if self.tol_fdt >= 0.:
