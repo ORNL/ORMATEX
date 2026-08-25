@@ -37,7 +37,8 @@ except ImportError:
 class ExpRBIntegrator(IntegrateSys):
 
     _valid_methods = {"exprb2": 2, "exprb3": 3, "pexprb4": 4, "epi2": 2, "epi3": 3,
-                      "exprb2_dense": 2, "exprb2_pfd": 2, "exp_pfd": 1,
+                      "exprb3_pfd": 3, "exprb2_pfd": 2, "exp_pfd": 1,
+                      "exprb2_dense": 2,
                       "exprb2_pfd_rs": 2, "exp_pfd_rs": 1}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
@@ -92,8 +93,11 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)+
-            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)+
+                dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
         doi: https://doi.org/10.1137/080717717
         """
@@ -295,7 +299,10 @@ class ExpRBIntegrator(IntegrateSys):
         r"""
         Exponential Euler,
         computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
         """
         t = self.t
         yt = self.y_hist[0]
@@ -307,7 +314,11 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
+
         where J is the dense Jacobian matrix and varphi is computed
         using partial fraction decomposition
         """
@@ -333,6 +344,53 @@ class ExpRBIntegrator(IntegrateSys):
         y_new = yt + dt * (phi1J_fyt + dt * phi2J_fytt)
 
         y_err = -1.
+        return StepResult(t+dt, dt, y_new, y_err)
+
+    def _step_exprb3_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
+        r"""
+        Computes the solution update by:
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+                2*dt*\varphi_3(dt*J_t)R_2 +
+                dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        Using a partial fraction decomposition for $`\varphi`$.
+        """
+        t = self.t
+        yt = self.y_hist[0] # y_t
+
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        fyt = sys_jac_lop._frhs_cached()
+        fytt = sys_jac_lop._fdt()
+        J = sys_jac_lop.dense()
+        Jdt = dt*J
+
+        # phi2_v is nonzero for nonautonomous systems
+        # phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt)
+        # check for nonautonomous system
+        phi2J_fytt = 0.
+        if self.tol_fdt >= 0.:
+            # deriv of rhs wrt time at current time
+            if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
+                phi2J_fytt = f_phi_k_pfd(Jdt, fytt, 2, self.pfd_method)
+
+        # 2nd stage
+        t_2 = t + dt
+        phi1J_fyt = f_phi_k_pfd(Jdt, fyt, 1, self.pfd_method)
+        y_2 = yt + dt * phi1J_fyt + (dt**2.0) * phi2J_fytt
+        sys_jac_lop_y2 = self.sys.fjac(t_2, y_2, frhs_kwargs=frhs_kwargs)
+        frhs_yr = sys_jac_lop_y2._frhs_cached()
+        r_2 =  frhs_yr - fyt - J@(y_2-yt) - fytt*dt
+
+        # compute final update
+        phi3J_r2 = f_phi_k_pfd(Jdt, r_2, 3, self.pfd_method)
+        y_new = y_2 + 2.0 * dt * phi3J_r2
+
+        # TODO: error estimate by comparing y_2 and y_new?
+        y_err = jnp.linalg.norm(y_2 - y_new, ord=jnp.inf)
+
         return StepResult(t+dt, dt, y_new, y_err)
 
     def _step_exprb2_pfd_rs(self, dt: float) -> StepResult:
@@ -417,6 +475,8 @@ class ExpRBIntegrator(IntegrateSys):
             return self._step_exprb2_dense(dt)
         elif self.method == "exprb2_pfd":
             return self._step_exprb2_pfd(dt, frhs_kwargs)
+        elif self.method == "exprb3_pfd":
+            return self._step_exprb3_pfd(dt, frhs_kwargs)
         elif self.method == "exp_pfd":
             return self._step_exp_pfd(dt, frhs_kwargs)
         elif self.method == "exprb2_pfd_rs" and HAS_ORMATEX_RUST:
