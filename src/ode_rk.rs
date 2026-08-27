@@ -114,7 +114,7 @@ impl RkIntegrator
             for j in 0..i+1 {
                 y_delta = y_delta.as_ref() + faer::Scale(dt * self.bt.a[i][j]) * k[j].as_ref();
             }
-            let k_i = sys.frhs(t + (dt * self.bt.c[i]), y_delta.as_ref());
+            let k_i = sys.frhs(t + (dt * self.bt.c[i + 1]), y_delta.as_ref());
             k.push(k_i);
         }
         let mut acc = y0.to_owned();
@@ -161,9 +161,22 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
 #[cfg(test)]
 mod test_rk {
     use crate::test_common::*;
+    use faer::matrix_free::LinOp;
 
     // bring everything from above (parent) module into scope
     use super::*;
+
+    struct NonAutonomousSys;
+
+    impl<'a> OdeSys<'a> for NonAutonomousSys {
+        fn frhs(&self, t: f64, x: MatRef<f64>) -> Mat<f64> {
+            faer::Scale(t) * x
+        }
+
+        fn fjac<'b>(&'a self, t: f64, x: MatRef<'b, f64>) -> Box<dyn LinOp<f64> + 'a> {
+            Box::new(get_fd_jac(self, t, x))
+        }
+    }
 
     #[test]
     fn test_rk1() {
@@ -238,6 +251,33 @@ mod test_rk {
             sys_solver.accept_step(y_new);
             t += dt;
         }
+    }
+
+    #[test]
+    fn test_rk4_nonautonomous_convergence() {
+        fn integrate(n_steps: usize) -> f64 {
+            let sys = NonAutonomousSys;
+            let y0 = faer::mat![[1.0_f64]];
+            let mut solver = RkIntegrator::new(0.0, y0.as_ref(), 4);
+            let dt = 1.0 / n_steps as f64;
+
+            for _ in 0..n_steps {
+                let result = solver.step(&sys, dt).unwrap();
+                solver.accept_step(result);
+            }
+
+            solver.state()[(0, 0)]
+        }
+
+        let exact = 0.5_f64.exp();
+        let error_4 = (integrate(4) - exact).abs();
+        let error_8 = (integrate(8) - exact).abs();
+        let error_16 = (integrate(16) - exact).abs();
+        let order_4_to_8 = (error_4 / error_8).log2();
+        let order_8_to_16 = (error_8 / error_16).log2();
+
+        assert!(order_4_to_8 > 3.5, "observed order: {order_4_to_8}");
+        assert!(order_8_to_16 > 3.5, "observed order: {order_8_to_16}");
     }
 
 }
