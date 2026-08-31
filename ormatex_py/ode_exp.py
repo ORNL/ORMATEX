@@ -22,6 +22,7 @@ import numpy as np
 
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
+import warnings
 
 from ormatex_py.phi_evaluator import PhiEvaluator
 
@@ -37,45 +38,46 @@ try:
 except ImportError:
     HAS_ORMATEX_RUST = False
 
+
+@IntegrateSys.populate_valid_methods
 class ExpRBIntegrator(IntegrateSys):
 
-    _valid_methods = {
-        "exprb2": 2,
-        "exprb3": 3,
-        "pexprb4": 4,
-        "epi2": 2,
-        "epi3": 3,
-        "exprb2_dense": 2,
-        "exprb2_pfd": 2,
-        "exprb3_pfd": 3,
-        "exp_pfd": 1,
-        "exprb2_pfd_rs": 2,
-        "exp_pfd_rs": 1
+    _deprecated_methods = {
+        "exprb2_dense": "dense",
+        "exprb2_pfd": "pfd",
+        "exp_pfd": "pfd",
+        "exprb2_pfd_rs": "pfd_rs",
+        "exp_pfd_rs": "pdf_rs",
     }
+
+    # initialize valid methods with deprecated versions
+    # the actual non-deprecated methods are populated using the class decorator
+    _valid_methods = IntegrateSys._valid_methods | _deprecated_methods
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", phi_method=None, **kwargs):
         # Exponential integration method
         self.method = method
-        if not self.method in self._valid_methods.keys():
+        if self.method not in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
 
-        # construct PhiEvaluator
-        method_phi_dict = {
-            "exprb2": "krylov",
-            "exprb3": "krylov",
-            "pexprb4": "krylov",
-            "epi2": "kiops",
-            "epi3": "kiops",
-            "exprb2_dense": "dense",
-            "exprb2_pfd": "pfd",
-            "exprb2_pfd_rs": "pfd_rs",
-            "exp_pfd_rs": "pfd_rs"
-        }
-        phi_method = phi_method if phi_method is not None else method_phi_dict[method]
-        self.Phi = PhiEvaluator(None, method=phi_method, **kwargs)
+        # handle deprecated methods
+        if self.method in self._deprecated_methods.keys():
+            replacement_method = self.method.split("_", maxsplit=1)[0]
+            warnings.warn(f"{self.method} is deprecated, please use {replacement_method}.")
+            self.phi_method = self._deprecated_methods[self.method]
+            if phi_method is not None:
+                warnings.warn(f"Using hardcoded {self.phi_method} not {phi_method=}.")
+            self.method = replacement_method
+        else:
+            # ensure that a phi_evaluator default is set
+            self.phi_method = phi_method or self._valid_methods[self.method].default_phi
 
-        order = self._valid_methods[self.method]
-        super().__init__(sys, t0, y0, order, method, **kwargs)
+        # construct PhiEvaluator
+        self.phi_method = self.phi_method or "krylov"
+        self.Phi = PhiEvaluator(None, method=self.phi_method, **kwargs)
+
+        order = self._valid_methods[self.method].order
+        super().__init__(sys, t0, y0, order, self.method, **kwargs)
 
         # tolerence to detect nonautonomous systems, a negative value disables this check
         self.tol_fdt = kwargs.get("tol_fdt", 0.)
@@ -99,6 +101,7 @@ class ExpRBIntegrator(IntegrateSys):
         jac_yd = sys_jac_lop_yt(yr - yt)
         return frhs_yr - frhs_yt - jac_yd - v*dt
 
+    @IntegrateSys.register_method(["exprb2", "epi2"], 2)
     def _step_exprb2(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Exponential Euler, computes the solution update by:
@@ -135,6 +138,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    @IntegrateSys.register_method(["epi3"], 2)
     def _step_epi3(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Exponential Propagation Integrator 3, computes the solution update by:
@@ -169,6 +173,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    @IntegrateSys.register_method(["exprb3"], 3)
     def _step_exprb3(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Exponential Rosenbrock 3, computes the solution update by:
@@ -215,6 +220,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    @IntegrateSys.register_method(["exprb4", "pexprb4"], 4)
     def _step_pexprb4(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Computes the solution update by:
@@ -294,12 +300,13 @@ class ExpRBIntegrator(IntegrateSys):
         #b2_b3 = kiops_fixedsteps(
         #    sys_jac_lop, dt, [vb0, vb0, vb0, dt*(16.0*r_2-2.0*r_3), dt*(-48.0*r_2+12.0*r_3)],
         #    max_krylov_dim=self.max_krylov_dim, iom=self.iom)
-        b2_b3 = dt * self.Phi.eval_phis((3, 4), dt, (16.0*r_2-2.0*r_3, -48.0*r_2+12.0*r_3))
-        y_new = y_3 + b2_b3
+        b2_b3 = self.Phi.eval_phis((3, 4), dt, (16.0*r_2-2.0*r_3, -48.0*r_2+12.0*r_3))
+        y_new = y_3 + dt * b2_b3
 
         y_err = -1.0
         return StepResult(t+dt, dt, y_new, y_err)
 
+    @IntegrateSys.register_method(["exprb3_pfd"], 3)
     def _step_exprb3_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Computes the solution update by:
@@ -353,6 +360,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    @IntegrateSys.register_method(["exp"], 1)
     def _step_exp(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Computes the solution update by:
@@ -375,66 +383,25 @@ class ExpRBIntegrator(IntegrateSys):
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_exp_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
-        r"""
-        Computes the solution update by:
-        y_{t+1} = \varphi_0(dt*L)*y0
-        where L is a dense matrix and computing varphi
-        using cauchy contour integral approach with quadrature rule
-        NOTE: Only useful for pure linear systems
-        """
-        t = self.t
-        yt = self.y_hist[0]
-        J = np.asarray(self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs).dense())
-
-        phi0J_yt = f_phi_k_pfd(J*dt, yt, 0, self.pfd_method)
-        y_new = jnp.asarray(phi0J_yt.flatten())
-        y_err = -1.
-        return StepResult(t+dt, dt, y_new, y_err)
-
-    def step(self, dt: float, frhs_kwargs: dict={}) -> StepResult:
-        if self.method == "exprb2":
-            return self._step_exprb2(dt, frhs_kwargs)
-        elif self.method == "exprb3":
-            return self._step_exprb3(dt, frhs_kwargs)
-        elif self.method == "pexprb4":
-            return self._step_pexprb4(dt, frhs_kwargs)
-        elif self.method == "epi2":
-            return self._step_exprb2(dt, frhs_kwargs)
-        elif self.method == "epi3":
-            if len(self.y_hist) >= 2:
-                return self._step_epi3(dt, frhs_kwargs)
-            else:
-                return self._step_exprb3(dt, frhs_kwargs)
-        elif self.method == "exprb2_dense":
-            return self._step_exprb2(dt, frhs_kwargs)
-        elif self.method == "exprb2_pfd":
-            return self._step_exprb2(dt, frhs_kwargs)
-        elif self.method == "exprb3_pfd":
-            return self._step_exprb3_pfd(dt, frhs_kwargs)
-        elif self.method == "exprb2_pfd_rs" and HAS_ORMATEX_RUST:
-            return self._step_exprb2(dt, frhs_kwargs)
-        elif self.method == "exp_pfd_rs" and HAS_ORMATEX_RUST:
-            return self._step_exp(dt, frhs_kwargs)
+    def step(self, dt: float, frhs_kwargs: dict = {}) -> StepResult:
+        if len(self.y_hist) < 2 and self.method == "epi3":
+            return self._valid_methods["exprb3"](self, dt, frhs_kwargs)
         else:
-            raise NotImplementedError
-
-    def accept_step(self, s: StepResult):
-        self.t = s.t
-        self.t_hist.appendleft(s.t)
-        self.y_hist.appendleft(s.y)
+            return self._valid_methods[self.method](self, dt, frhs_kwargs)
 
 
+@IntegrateSys.populate_valid_methods
 class ExpLejaIntegrator(IntegrateSys):
 
-    _valid_methods = {"epi2_leja_re": 2, "epi2_leja_im": 2, "epi3_leja_im": 3}
+    # new class list of valid methods
+    _valid_methods = {}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2_leja", **kwargs):
         # Exponential integration method
         self.method = method
         if method not in self._valid_methods.keys():
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
-        order = self._valid_methods[self.method]
+        order = self._valid_methods[self.method].order
         # Relative tol for leja polynomial approx
         self.leja_tol = kwargs.get("leja_tol", 1e-15)
         # Optional max magnitude of real component of eigs(J*dt)
@@ -459,6 +426,7 @@ class ExpLejaIntegrator(IntegrateSys):
                 gen_leja_fast(a=-2, b=2, n=self.n_leja))
         super().__init__(sys, t0, y0, order, method, **kwargs)
 
+    @IntegrateSys.register_method(["epi2_leja_re"], 2)
     def _step_epi_re(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Computes the solution update by:
@@ -523,7 +491,8 @@ class ExpLejaIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_epi_im(self, dt: float, frhs_kwargs: dict, order:int =2) -> StepResult:
+    @IntegrateSys.register_method(["epi2_leja_im", "epi3_leja_im"], 3)
+    def _step_epi_im(self, dt: float, frhs_kwargs: dict, order: int = 2) -> StepResult:
         """
         Computes the solution update by:
 
@@ -598,41 +567,33 @@ class ExpLejaIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def step(self, dt: float, frhs_kwargs: dict={}) -> StepResult:
-        if self.method == "epi2_leja_re":
-            return self._step_epi_re(dt, frhs_kwargs)
-        elif self.method == "epi2_leja_im":
-            return self._step_epi_im(dt, frhs_kwargs)
-        elif self.method == "epi3_leja_im":
+    def step(self, dt: float, frhs_kwargs: dict = {}) -> StepResult:
+        if self.method == "epi3_leja_im":
             if len(self.y_hist) >= 2:
                 return self._step_epi_im(dt, frhs_kwargs, order=3)
             else:
                 return self._step_epi_im(dt, frhs_kwargs, order=2)
         else:
-            raise NotImplementedError
-
-    def accept_step(self, s: StepResult):
-        self.t = s.t
-        self.t_hist.appendleft(s.t)
-        self.y_hist.appendleft(s.y)
+            return self._valid_methods[self.method](self, dt, frhs_kwargs)
 
 
+@IntegrateSys.populate_valid_methods
 class ExpSplitIntegrator(IntegrateSys):
 
-    _valid_methods = {"exp1": 1, "exp2": 2, "exp3": 3,
-                      "exp1_dense": 1, "exp2_dense": 2, "exp3_dense": 3}
+    # new class list of valid methods
+    _valid_methods = {}
 
     def __init__(self, sys: OdeSplitSys, t0: float, y0: jax.Array, method="exp3", **kwargs):
         self.method = method
         if not self.method in self._valid_methods.keys():
             raise AttributeError
-        order = self._valid_methods[self.method]
+        order = self._valid_methods[self.method].order
         super().__init__(sys, t0, y0, order, method, **kwargs)
 
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
         self.iom = kwargs.get("iom", 200)
 
-        #TODO: used to check if dense phiL matrices need updating
+        # TODO: used to check if dense phiL matrices need updating
         self._cached_dt = None
 
     def reset_ic(self, t0: float, y0: jax.Array):
@@ -644,13 +605,12 @@ class ExpSplitIntegrator(IntegrateSys):
         """
         Computes remainder R(yr) = frhs(yr) - frhs(yt) - L*(yr-yt)
         """
-        t = self.t_hist[0]
         yt = self.y_hist[0]
-        dt = tr - t
         frhs_yr = self.sys.frhs(tr, yr)
         L_yd = sys_lop(yr - yt)
         return frhs_yr - frhs_yt - L_yd
 
+    @IntegrateSys.register_method(["exp1"], 1)
     def _step_exp1(self, dt: float) -> StepResult:
         """
         Exponential Euler,
@@ -668,6 +628,7 @@ class ExpSplitIntegrator(IntegrateSys):
         y_err = -1.
         return StepResult(t+dt, dt, y_new, y_err)
 
+    @IntegrateSys.register_method(["exp2"], 2)
     def _step_exp2(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
@@ -699,6 +660,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
+    @IntegrateSys.register_method(["exp3"], 3)
     def _step_exp3(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
@@ -737,7 +699,6 @@ class ExpSplitIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-
     def _update_dense_phiLs(self, dt: float, cks: list[tuple[float,list[int]]]):
         if not (self._cached_dt and self._cached_dt == dt):
             # TODO: L is only evaluated the first step (t0, y0) or if dt changes.
@@ -765,6 +726,7 @@ class ExpSplitIntegrator(IntegrateSys):
         y_err = -1.
         return y_new, y_err
 
+    @IntegrateSys.register_method(["exp1_dense"], 1)
     def _step_exp1_dense(self, dt: float) -> StepResult:
         """
         Exponential Euler,
@@ -797,6 +759,7 @@ class ExpSplitIntegrator(IntegrateSys):
         y_err = -1.0
         return y_new, y_err
 
+    @IntegrateSys.register_method(["exp2_dense"], 2)
     def _step_exp2_dense(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
@@ -840,6 +803,7 @@ class ExpSplitIntegrator(IntegrateSys):
 
         return y_new, y_err
 
+    @IntegrateSys.register_method(["exp3_dense"], 3)
     def _step_exp3_dense(self, dt: float) -> StepResult:
         """
         Computes the solution update by:
@@ -861,23 +825,5 @@ class ExpSplitIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def step(self, dt: float, frhs_kwargs: dict={}) -> StepResult:
-        if self.method == "exp1":
-            return self._step_exp1(dt)
-        elif self.method == "exp2":
-            return self._step_exp2(dt)
-        elif self.method == "exp3":
-            return self._step_exp3(dt)
-        elif self.method == "exp1_dense":
-            return self._step_exp1_dense(dt)
-        elif self.method == "exp2_dense":
-            return self._step_exp2_dense(dt)
-        elif self.method == "exp3_dense":
-            return self._step_exp3_dense(dt)
-        else:
-            raise NotImplementedError
-
-    def accept_step(self, s: StepResult):
-        self.t = s.t
-        self.t_hist.appendleft(s.t)
-        self.y_hist.appendleft(s.y)
+    def step(self, dt: float, frhs_kwargs: dict = {}) -> StepResult:
+        return self._valid_methods[self.method](self, dt)

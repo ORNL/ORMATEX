@@ -25,7 +25,9 @@ from discussion here:  https://github.com/jax-ml/jax/discussions/10598
 """
 from abc import ABCMeta
 from abc import abstractmethod, abstractproperty
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from typing import Optional
+import inspect
 import numpy as np
 from functools import partial
 from collections import deque
@@ -521,6 +523,25 @@ class IntegrateSys(metaclass=ABCMeta):
     # list of valid methods
     _valid_methods = {}
 
+    # decorator to annotate new valid methods
+    def register_method(names: Iterable[str], order: int, default_phi: Optional[str] = None):
+        def method_decorator(func):
+            func._is_valid_method = True
+            func.names = names
+            func.order = order
+            func.default_phi = default_phi
+            return func
+        return method_decorator
+
+    # class decorator to build _valid_methods
+    def populate_valid_methods(cls):
+        def is_valid_method(member):
+            return hasattr(member, "_is_valid_method")
+        for _, method_fun in inspect.getmembers(cls, is_valid_method):
+            for name in method_fun.names:
+                cls._valid_methods[name] = method_fun
+        return cls
+
     # defines the rhs of the system of odes
     sys: OdeSys
     # current time
@@ -561,7 +582,7 @@ class IntegrateSys(metaclass=ABCMeta):
 
     def accept_step(self, s: StepResult):
         """
-        default implementation, maybe overridden
+        default implementation, may be overridden
 
         Args:
             s: Step result

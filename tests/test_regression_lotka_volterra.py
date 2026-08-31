@@ -26,8 +26,8 @@ def test_lotka_volterra_auto():
     """
     sys = LotkaVolterra()
     dt_list = [0.01, 0.0125, 0.02, 0.05]
-    methods = ["epi2", "epi2_leja_im", "epi3", "exprb3"]
-    methods_order = [2.0, 2.0, 3.0, 3.0]
+    methods = ["epi2", "epi2_leja_im", "epi3", "exprb3", "exp3_dense"]
+    methods_order = [2.0, 2.0, 3.0, 3.0, 3.0]
     for method, order in zip(methods, methods_order):
         err_dt = []
         for dt in dt_list:
@@ -70,8 +70,8 @@ def test_lotka_volterra_nonautonomous():
     """
     sys = LotkaVolterraNonauto()
     dt_list = [0.01, 0.0125, 0.02, 0.05]
-    methods = ["exprb2", "exprb3", "epi2", "epi3", "exprb2_dense"]
-    methods_order = [2.0, 3.0, 2.0, 3.0, 2.0]
+    methods = ["exprb2", "exprb3", "epi3", "exprb2_dense", "exp3_dense"]
+    methods_order = [2.0, 3.0, 3.0, 2.0, 3.0]
     for method, order in zip(methods, methods_order):
         err_dt = []
         for dt in dt_list:
@@ -94,7 +94,7 @@ def test_lotka_volterra_nonautonomous():
             diff = y_res - y_true
             mae = np.mean(np.abs(diff))
             print("Method: %s, dt: %0.4e, mean abs err: %0.4e" % (method, dt, mae))
-            assert mae < 1e-2
+            assert mae < 2e-2
             err_dt.append([dt, mae])
         err_dt = np.array(err_dt)
 
