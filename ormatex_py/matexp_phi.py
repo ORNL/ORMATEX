@@ -234,7 +234,7 @@ class PhiEvaluator_PFD_Dense(eqx.Module):
         self.lu = compute_pfd_lu(z, method)
         self.method = method
 
-    @eqx.filter_jit
+    @partial(jax.jit, static_argnums=(2,))
     def apply(self, b: tuple[jax.Array], k: tuple[int]) -> jax.Array:
         # validate arguments and build tmp arrays
         B = jnp.asarray(b).transpose()
@@ -246,15 +246,12 @@ class PhiEvaluator_PFD_Dense(eqx.Module):
         assert len(k) == M
 
         # poles and coefficients for partial fraction decomp.
-        _, _, c0 = pfd_dict[self.method]
+        ps, cs, c0 = pfd_dict[self.method]
         k = jnp.asarray(k)
 
         # correction for phi0
         bs = jnp.where(k == 0, 1.0, 0.0)
         B0 = (c0 * bs * B)
-
-        # poles and coefficients for partial fraction decomp.
-        ps, cs, _ = pfd_dict[self.method]
 
         phi_kb = jnp.zeros(B.shape) + B0
         for p, c, lu, piv in zip(ps, cs, self.lu[0], self.lu[1]):
