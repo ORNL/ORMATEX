@@ -224,6 +224,8 @@ class AdDiffSEM:
         # provide jax arrays
         jMl = jnp.asarray(Ml)
         jA = jsp.BCOO.from_scipy_sparse(A)
+        #jA_sorted = jA.sort_indices()
+        #jA = jsp.BCSR.from_bcoo(jA_sorted)
         jb = jnp.asarray(b)
 
         return jA, jMl, jb

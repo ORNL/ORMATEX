@@ -78,7 +78,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("-method", help="Integration method. Valid methods are: "
-                        "exprb2_rs, exprb3_rs, epi3_rs, exprb2, exprb3, epi3. "
+                        "exprb2_rs, exprb3_rs, epi3_rs, exprb3_pfd, exprb2, exprb3, epi3. "
                         "Methods ending in _rs are rust impl. Others are python/JAX impl.",
                         type=str, default="epi3_rs")
     parser.add_argument("-phikv_method", help="PhiEvaluator method. Valid methods are: "

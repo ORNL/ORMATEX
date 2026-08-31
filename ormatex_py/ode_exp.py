@@ -25,7 +25,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd
+from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd, \
+        PhiEvaluator_PFD_Dense
 from ormatex_py.matexp_leja import gen_leja_fast, gen_leja_conjugate, build_a_tilde, \
         leja_shift_scale, real_leja_expmv_substep, complex_conj_leja_expmv_substep
 try:
@@ -367,26 +368,34 @@ class ExpRBIntegrator(IntegrateSys):
         J = sys_jac_lop.dense()
         Jdt = dt*J
 
+        # precompute LU decomposition of scaled jacobian for each pole, p
+        # LU(J*dt-p*I)
+        pfd_lu = PhiEvaluator_PFD_Dense(Jdt, self.pfd_method)
+
+        # 1st stage
+        # prepare PhiEvaluator arguments
+        s1_k = (1,)         # Phi function order
+        s1_b = (dt * fyt,)  # Phi RHS
+
         # check for nonautonomous system
-        phi2J_fytt = 0.
         if self.tol_fdt >= 0.:
             # deriv of rhs wrt time at current time
             if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-                phi2J_fytt = f_phi_k_pfd(Jdt, fytt, 2, self.pfd_method)
+                # build additional RHS
+                s1_k = (1, 2,)
+                s1_b = (s1_b[0], (dt**2.0)*fytt,)
+
+        s1_update = pfd_lu.apply(s1_b, s1_k)
+        y_2 = yt + s1_update
 
         # 2nd stage
         t_2 = t + dt
-        phi1J_fyt = f_phi_k_pfd(Jdt, fyt, 1, self.pfd_method)
-        y_2 = yt + dt * phi1J_fyt + (dt**2.0) * phi2J_fytt
-        sys_jac_lop_y2 = self.sys.fjac(t_2, y_2, frhs_kwargs=frhs_kwargs)
-        frhs_yr = sys_jac_lop_y2._frhs_cached()
-        r_2 =  frhs_yr - fyt - J@(y_2-yt) - fytt*dt
+        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, fytt)
+        s2_k, s2_b = (3,), (2.0*dt*r_2,)
+        s2_update = pfd_lu.apply(s2_b, s2_k)
 
         # compute final update
-        phi3J_r2 = f_phi_k_pfd(Jdt, r_2, 3, self.pfd_method)
-        y_new = y_2 + 2.0 * dt * phi3J_r2
-
-        # TODO: error estimate by comparing y_2 and y_new?
+        y_new = y_2 + s2_update
         y_err = jnp.linalg.norm(y_2 - y_new, ord=jnp.inf)
 
         return StepResult(t+dt, dt, y_new, y_err)

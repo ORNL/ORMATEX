@@ -19,6 +19,7 @@ Implements the phi-functions
 from functools import partial
 import numpy as np
 import jax
+import equinox as eqx
 from jax import numpy as jnp
 import warnings
 from ormatex_py.matexp_phi_pfd_dict import pfd_dict
@@ -214,13 +215,82 @@ def f_phi_k_appl(z: jax.Array, b: jax.Array, k: int) -> jax.Array:
     return phi_kb
 
 
+class PhiEvaluator_PFD_Dense(eqx.Module):
+    """
+    Computes linear combinations of phi-function-vector products of the form
+
+    .. math::
+
+        \varphi_0(Z)*b_0 + ... + \varphi_k(Z)*b_k
+
+    using partial fraction decomposition.
+    """
+    # lu decomposition lu and pivots
+    lu: tuple[jax.Array, jax.Array]
+    # PFD method
+    method: str = eqx.field(static=True)
+
+    def __init__(self, z: jax.Array, method: str):
+        self.lu = compute_pfd_lu(z, method)
+        self.method = method
+
+    @eqx.filter_jit
+    def apply(self, b: tuple[jax.Array], k: tuple[int]) -> jax.Array:
+        # validate arguments and build tmp arrays
+        B = jnp.asarray(b).transpose()
+        N, N1 = self.lu[0][0].shape
+        assert N == N1
+        # multiple rhs case
+        N2, M = B.shape
+        assert N2 == N
+        assert len(k) == M
+
+        # poles and coefficients for partial fraction decomp.
+        _, _, c0 = pfd_dict[self.method]
+        k = jnp.asarray(k)
+
+        # correction for phi0
+        bs = jnp.where(k == 0, 1.0, 0.0)
+        B0 = (c0 * bs * B)
+
+        # poles and coefficients for partial fraction decomp.
+        ps, cs, _ = pfd_dict[self.method]
+
+        phi_kb = jnp.zeros(B.shape) + B0
+        for p, c, lu, piv in zip(ps, cs, self.lu[0], self.lu[1]):
+            p_k = jnp.power(p, k)
+            phi_kb += jnp.real((2. * c / p_k) * jax.scipy.linalg.lu_solve((lu, piv), B))
+
+        return jnp.sum(phi_kb, axis=1)
+
+
+@partial(jax.jit, static_argnums=(1,))
+def compute_pfd_lu(z: jax.Array, method: str):
+    """
+    Precompute LU factors for partial fraction decomposition phi_k_pfd
+    """
+    ps, _, _ = pfd_dict[method]
+    N, N1 = z.shape
+    assert N == N1
+    Id = jnp.eye(N)
+
+    def gen_lu_decomp(p):
+        # returns tuple: (lu, piv)
+        return jax.scipy.linalg.lu_factor(z - p*Id)
+
+    # vmap over all poles, collects results into large output array
+    vmap_lu_decomp = jax.vmap(gen_lu_decomp)
+    pfd_lu, pfd_piv = vmap_lu_decomp(jnp.asarray(ps).flatten())
+    return (pfd_lu, pfd_piv)
+
+
 @partial(jax.jit, static_argnums=(2, 3))
 def f_phi_k_pfd(z: jax.Array, b: jax.Array, k: int, method: str) -> jax.Array:
     """
     Computes phi_k(Z)B for dense Z and dense B, using a rational approximation
     and partial fraction expansion
     """
-    N, M, B = _validate_args_appl(z, b, k)
+    _N, _M, B = _validate_args_appl(z, b, k)
 
     # poles and coefficients for partial fraction decomp.
     ps, cs, c0 = pfd_dict[method]
