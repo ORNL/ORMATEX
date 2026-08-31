@@ -8,13 +8,12 @@ import numpy as np
 from abc import abstractmethod
 import equinox as eqx
 
-import string
 from functools import partial
 
 from ormatex_py.ode_sys import LinOp
 
-from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd, f_phi_ks_pfd, get_pfd_coeffs
+from ormatex_py.matexp_krylov import phi_linop, kiops_fixedsteps
+from ormatex_py.matexp_phi import f_phi_k_sq_all, f_phi_ks_pfd, get_pfd_coeffs
 try:
     import ormatex_py.ormatex as ormatex_rs
     HAS_ORMATEX_RUST = True
@@ -43,7 +42,7 @@ class PhiEvaluator():
 
         # Phi evaluation method
         self.method = method
-        if not self.method in self._valid_methods:
+        if self.method not in self._valid_methods:
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
 
         self.sys_lop = sys_lop
@@ -66,6 +65,12 @@ class PhiEvaluator():
         else:
             raise NotImplementedError
 
+        # TODO: fill out.
+        # if self.method == "taylor":
+        #    self.Phi = PhiEvaluatorTaylor(sys_lop, **self.init_kwargs)
+        # if self.method == "leja":
+        #    self.Phi = PhiEvaluatorLeja(sys_lop, **self.init_kwargs)
+
     def getEvaluator(self) -> PhiEvaluatorModule:
         return self.Phi
 
@@ -74,6 +79,9 @@ class PhiEvaluator():
         Evaluates a phi function application :math:`\varphi_k(\tau A) b` for k and b
         for the (intermediate) stepsize cdt (:math:`\tau = c*\Delta{t}`)
         """
+        if not isinstance(self.Phi, PhiEvaluatorModule):
+            msg = "PhiEvaluator: must call set_lop or provide valid linear operator in init."
+            raise ValueError(msg)
         return self.Phi.eval_phi(k, cdt, b)
 
     def eval_phis(self, ks, cdt, bs):
@@ -84,6 +92,9 @@ class PhiEvaluator():
         .. math::
             w(\tau) = \sum_{j} \varphi_{k_j}(\tau A) b_{j}
         """
+        if not isinstance(self.Phi, PhiEvaluatorModule):
+            msg = "PhiEvaluator: must call set_lop or provide valid linear operator in init."
+            raise ValueError(msg)
         return self.Phi.eval_phis(ks, cdt, bs)
 
 
@@ -134,7 +145,7 @@ class PhiEvaluatorKIOPS(PhiEvaluatorModule):
         rhs_list = [jnp.zeros(bs[0].shape)] * (maxk+1)
         for it, k in enumerate(ks):
             rhs_list[k] = rhs_list[k] + bs[it]
-        #TODO: write new kiops which takes vb already as a block to avoid extra copies from list
+        # TODO: write new kiops which takes vb already as a block to avoid extra copies from list
         result = kiops_fixedsteps(
             self.sys_lop, cdt, rhs_list,
             max_krylov_dim=self.max_krylov_dim, iom=self.iom)
@@ -158,13 +169,13 @@ class PhiEvaluatorPFD(PhiEvaluatorModule):
 
     @jax.jit
     def eval_phi(self, k, cdt, b):
-        #cdtJ = cdt * self.sys_lop.dense()
+        # cdtJ = cdt * self.sys_lop.dense()
         cdtJ = cdt * self.J
         return f_phi_ks_pfd(cdtJ, b, jnp.asarray(k), self.pfd_coeffs)
 
     @partial(jax.jit, static_argnames=('ks', ))
     def eval_phis(self, ks, cdt, bs):
-        #cdtJ = cdt * self.sys_lop.dense()
+        # cdtJ = cdt * self.sys_lop.dense()
         cdtJ = cdt * self.J
 
         Bs = jnp.stack(bs, axis=1)
@@ -188,7 +199,7 @@ class PhiEvaluatorDense(PhiEvaluatorModule):
 
     @partial(jax.jit, static_argnames=('ks', ))
     def eval_phis(self, ks, cdt, bs):
-        #cdtJ = cdt * self.sys_lop.dense()
+        # cdtJ = cdt * self.sys_lop.dense()
         cdtJ = cdt * self.J
         phiJs = f_phi_k_sq_all(cdtJ, max(ks))
 
@@ -197,7 +208,6 @@ class PhiEvaluatorDense(PhiEvaluatorModule):
             result += phiJs[k] @ bs[it]
 
         return result
-
 
 
 class PhiEvaluatorPFDRS(PhiEvaluatorModule):
@@ -221,13 +231,13 @@ class PhiEvaluatorPFDRS(PhiEvaluatorModule):
         self.J = np.asarray(self.sys_lop.dense())
 
     def eval_phi(self, k, cdt, b):
-        #J = np.asarray(self.sys_lop.dense())
+        # J = np.asarray(self.sys_lop.dense())
         J = self.J
         result = self.phikv_dense_rs.eval(J, cdt, np.asarray(b).reshape(-1,1), k).flatten()
         return jnp.asarray(result)
 
     def eval_phis(self, ks, cdt, bs):
-        #J = np.asarray(self.sys_lop.dense())
+        # J = np.asarray(self.sys_lop.dense())
         J = self.J
         result = np.zeros(bs[0].shape)
         for it, k in enumerate(ks):

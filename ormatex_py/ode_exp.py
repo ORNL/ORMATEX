@@ -39,10 +39,19 @@ except ImportError:
 
 class ExpRBIntegrator(IntegrateSys):
 
-    _valid_methods = {"exprb2": 2, "exprb3": 3, "pexprb4": 4, "epi2": 2, "epi3": 3,
-                      "exprb3_pfd": 3, "exprb2_pfd": 2, "exp_pfd": 1,
-                      "exprb2_dense": 2,
-                      "exprb2_pfd_rs": 2, "exp_pfd_rs": 1}
+    _valid_methods = {
+        "exprb2": 2,
+        "exprb3": 3,
+        "pexprb4": 4,
+        "epi2": 2,
+        "epi3": 3,
+        "exprb2_dense": 2,
+        "exprb2_pfd": 2,
+        "exprb3_pfd": 3,
+        "exp_pfd": 1,
+        "exprb2_pfd_rs": 2,
+        "exp_pfd_rs": 1
+    }
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", phi_method=None, **kwargs):
         # Exponential integration method
@@ -51,20 +60,26 @@ class ExpRBIntegrator(IntegrateSys):
             raise AttributeError(f"{self.method} not in {self._valid_methods}")
 
         # construct PhiEvaluator
-        method_phi_dict = {"exprb2": "krylov", "exprb3": "krylov", "epi2": "kiops", "epi3": "kiops",
-                           "exprb2_dense": "dense", "exprb2_pfd": "pfd",
-                           "exprb2_pfd_rs": "pfd_rs", "exp_pfd_rs": "pfd_rs"}
+        method_phi_dict = {
+            "exprb2": "krylov",
+            "exprb3": "krylov",
+            "pexprb4": "krylov",
+            "epi2": "kiops",
+            "epi3": "kiops",
+            "exprb2_dense": "dense",
+            "exprb2_pfd": "pfd",
+            "exprb2_pfd_rs": "pfd_rs",
+            "exp_pfd_rs": "pfd_rs"
+        }
         phi_method = phi_method if phi_method is not None else method_phi_dict[method]
         self.Phi = PhiEvaluator(None, method=phi_method, **kwargs)
-
-        # tolerence to detect nonautonomous systems, a negative value disables this check
-        self.tol_fdt = kwargs.get("tol_fdt", 0.)
 
         order = self._valid_methods[self.method]
         super().__init__(sys, t0, y0, order, method, **kwargs)
 
         # tolerence to detect nonautonomous systems, a negative value disables this check
         self.tol_fdt = kwargs.get("tol_fdt", 0.)
+
         # threads
         self.executor = ThreadPoolExecutor(max_workers=2)
 
@@ -84,7 +99,7 @@ class ExpRBIntegrator(IntegrateSys):
         jac_yd = sys_jac_lop_yt(yr - yt)
         return frhs_yr - frhs_yt - jac_yd - v*dt
 
-    def _step_exprb2(self, dt: float) -> StepResult:
+    def _step_exprb2(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Exponential Euler, computes the solution update by:
         .. math::
@@ -100,7 +115,7 @@ class ExpRBIntegrator(IntegrateSys):
         t = self.t
         yt = self.y_hist[0]
 
-        sys_jac_lop = self.sys.fjac(t, yt)
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
         self.Phi.set_lop(sys_jac_lop)
 
         fyt = sys_jac_lop._frhs_cached()
@@ -225,7 +240,16 @@ class ExpRBIntegrator(IntegrateSys):
         yt = self.y_hist[0] # y_t
 
         sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        self.Phi.set_lop(sys_jac_lop)
+
         fyt = sys_jac_lop._frhs_cached()
+
+        have_fytt = False
+        fytt = jnp.zeros(yt.shape)
+        if self.tol_fdt >= 0.:
+            # deriv of rhs wrt time at current time
+            fytt = sys_jac_lop._fdt()
+            have_fytt = jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt
 
         # butcher tableau coeffs
         c_2 = 0.5
@@ -234,21 +258,29 @@ class ExpRBIntegrator(IntegrateSys):
         # compute U_{n2}
         def f_u_n2():
             t_2 = t + c_2*dt
-            phi2_v_2, v_2 = self._phi2v_nonauto(sys_jac_lop, dt, c=c_2)
-            y_2 = yt \
-                + c_2*dt*phi_linop(sys_jac_lop, c_2*dt, fyt, 1, self.max_krylov_dim, self.iom) \
-                + phi2_v_2
-            r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=v_2)
+            #phi2_v_2, v_2 = self._phi2v_nonauto(sys_jac_lop, dt, c=c_2)
+            #y_2 = yt \
+            #    + c_2*dt*phi_linop(sys_jac_lop, c_2*dt, fyt, 1, self.max_krylov_dim, self.iom) \
+            #    + phi2_v_2
+            if have_fytt:
+                y_2 = yt + dt * self.Phi.eval_phis((1, 2), c_2*dt, (c_2*fyt, c_2**2*dt*fytt))
+            else:
+                y_2 = yt + dt * self.Phi.eval_phi(1, c_2*dt, c_2*fyt)
+            r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=fytt)
             return r_2
 
         # compute U_{n3}
         def f_u_n3():
             t_3 = t + c_3*dt
-            phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt, c=c_3)
-            y_3 = yt \
-                + c_3*dt*phi_linop(sys_jac_lop, c_3*dt, fyt, 1, self.max_krylov_dim, self.iom) \
-                + phi2_v
-            r_3 = self._remf(t_3, y_3, fyt, sys_jac_lop, v=v)
+            #phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt, c=c_3)
+            #y_3 = yt \
+            #    + c_3*dt*phi_linop(sys_jac_lop, c_3*dt, fyt, 1, self.max_krylov_dim, self.iom) \
+            #    + phi2_v
+            if have_fytt:
+                y_3 = yt + dt * self.Phi.eval_phis((1, 2), c_3*dt, (c_3*fyt, c_3**2*dt*fytt))
+            else:
+                y_3 = yt + dt * self.Phi.eval_phi(1, c_3*dt, c_3*fyt)
+            r_3 = self._remf(t_3, y_3, fyt, sys_jac_lop, v=fytt)
             return y_3, r_3
 
         # with ThreadPoolExecutor(max_workers=2) as executor:
@@ -258,45 +290,14 @@ class ExpRBIntegrator(IntegrateSys):
         y_3, r_3 = fut_f_u_n3.result()
 
         # compute final update
-        vb0 = jnp.zeros(yt.shape)
-        b2_b3 = kiops_fixedsteps(
-            sys_jac_lop, dt, [vb0, vb0, vb0, dt*(16.0*r_2-2.0*r_3), dt*(-48.0*r_2+12.0*r_3)],
-            max_krylov_dim=self.max_krylov_dim, iom=self.iom)
+        #vb0 = jnp.zeros(yt.shape)
+        #b2_b3 = kiops_fixedsteps(
+        #    sys_jac_lop, dt, [vb0, vb0, vb0, dt*(16.0*r_2-2.0*r_3), dt*(-48.0*r_2+12.0*r_3)],
+        #    max_krylov_dim=self.max_krylov_dim, iom=self.iom)
+        b2_b3 = dt * self.Phi.eval_phis((3, 4), dt, (16.0*r_2-2.0*r_3, -48.0*r_2+12.0*r_3))
         y_new = y_3 + b2_b3
 
         y_err = -1.0
-        return StepResult(t+dt, dt, y_new, y_err)
-
-    @jax.jit
-    def _step_exprb2_jit(t, yt, dt, sys):
-        print("jit-compiling exprb2_dense kernel")
-
-        sys_jac_lop = sys.fjac(t, yt)
-        fyt = sys_jac_lop._frhs_cached()
-        fytt = sys_jac_lop._fdt()
-        J = sys_jac_lop.dense()
-
-        phi1J, phi2J = f_phi_k_sq_all(dt*J, 2)[1:]
-
-        y_new = yt + dt * (phi1J @ fyt + dt * phi2J @ fytt)
-        # no error est. avail
-        y_err = -1.
-        return y_new, y_err
-
-    def _step_exprb2_dense(self, dt: float) -> StepResult:
-        r"""
-        Exponential Euler,
-        computes the solution update by:
-
-        .. math::
-
-            y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
-        """
-        t = self.t
-        yt = self.y_hist[0]
-
-        y_new, y_err = ExpRBIntegrator._step_exprb2_jit(t, yt, dt, self.sys)
-
         return StepResult(t+dt, dt, y_new, y_err)
 
     def _step_exprb3_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
@@ -352,7 +353,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         return StepResult(t+dt, dt, y_new, y_err)
 
-    def _step_exp(self, dt: float) -> StepResult:
+    def _step_exp(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Computes the solution update by:
             y_{t+1} = \varphi_0(dt*J)*y0
@@ -412,9 +413,9 @@ class ExpRBIntegrator(IntegrateSys):
         elif self.method == "exprb3_pfd":
             return self._step_exprb3_pfd(dt, frhs_kwargs)
         elif self.method == "exprb2_pfd_rs" and HAS_ORMATEX_RUST:
-            return self._step_exprb2_pfd_rs(dt, frhs_kwargs)
+            return self._step_exprb2(dt, frhs_kwargs)
         elif self.method == "exp_pfd_rs" and HAS_ORMATEX_RUST:
-            return self._step_exp_pfd_rs(dt, frhs_kwargs)
+            return self._step_exp(dt, frhs_kwargs)
         else:
             raise NotImplementedError
 
