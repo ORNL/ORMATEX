@@ -15,7 +15,7 @@ from ormatex_py.ode_sys import LinOp
 from ormatex_py.matexp_krylov import phi_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import (
     f_phi_k_sq_all,
-    f_phi_ks_pfd,
+    PhiEvaluator_PFD_Dense,
     get_pfd_coeffs
 )
 
@@ -290,34 +290,33 @@ class PhiEvaluatorLeja(PhiEvaluatorModule):
 
 class PhiEvaluatorPFD(PhiEvaluatorModule):
     sys_lop: LinOp
-    pfd_coeffs: tuple
     J: jax.Array
+    pfd_coeffs: tuple
+    pfd_method: str = eqx.field(static=True)
 
     def __init__(self, sys_lop, **kwargs):
 
         self.sys_lop = sys_lop
 
         # Partial fraction decomposition method
-        pfd_method = kwargs.get("pfd_method", "cram_16")
-        self.pfd_coeffs = get_pfd_coeffs(pfd_method)
+        self.pfd_method = kwargs.get("pfd_method", "cram_16")
+        self.pfd_coeffs = get_pfd_coeffs(self.pfd_method)
 
         self.J = self.sys_lop.dense()
 
     @jax.jit
     def eval_phi(self, k, cdt, b):
-        # cdtJ = cdt * self.sys_lop.dense()
         cdtJ = cdt * self.J
-        return f_phi_ks_pfd(cdtJ, b, jnp.asarray(k), self.pfd_coeffs)
+        phi_pfd = PhiEvaluator_PFD_Dense(cdtJ, self.pfd_method)
+        return phi_pfd.apply(b, jnp.asarray(k))
 
     @partial(jax.jit, static_argnames=('ks', ))
     def eval_phis(self, ks, cdt, bs):
-        # cdtJ = cdt * self.sys_lop.dense()
         cdtJ = cdt * self.J
-
-        Bs = jnp.stack(bs, axis=1)
-        Ks = jnp.asarray(ks)
-        results = f_phi_ks_pfd(cdtJ, Bs, Ks, self.pfd_coeffs)
-
+        bs = jnp.stack(bs, axis=1)
+        ks = jnp.asarray(ks)
+        phi_pfd = PhiEvaluator_PFD_Dense(cdtJ, self.pfd_method)
+        results = phi_pfd.apply(bs, ks)
         return jnp.sum(results, axis=1)
 
 

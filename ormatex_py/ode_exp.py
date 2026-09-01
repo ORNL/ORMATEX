@@ -351,8 +351,8 @@ class ExpRBIntegrator(IntegrateSys):
                 s1_k = (1, 2,)
                 s1_b = (s1_b[0], (dt**2.0)*fytt,)
 
-        s1_update = pfd_lu.apply(s1_b, s1_k)
-        y_2 = yt + s1_update
+        s1_update = pfd_lu.apply(jnp.stack(s1_b, axis=1), jnp.array(s1_k))
+        y_2 = yt + jnp.sum(s1_update, axis=1)
 
         # 2nd stage
         t_2 = t + dt
@@ -360,10 +360,10 @@ class ExpRBIntegrator(IntegrateSys):
         r_2 = ExpRBIntegrator._remf(
             t_2, y_2, t, yt, fyt, self.sys.frhs, frhs_kwargs, sys_jac_lop, fytt)
         s2_k, s2_b = (3,), (2.0*dt*r_2,)
-        s2_update = pfd_lu.apply(s2_b, s2_k)
+        s2_update = pfd_lu.apply(jnp.stack(s2_b, axis=1), jnp.array(s2_k))
 
         # compute final update
-        y_new = y_2 + s2_update
+        y_new = y_2 + jnp.sum(s2_update, axis=1)
         y_err = jnp.linalg.norm(y_2 - y_new, ord=jnp.inf)
 
         return StepResult(t+dt, dt, y_new, y_err)
