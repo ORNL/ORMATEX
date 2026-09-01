@@ -26,9 +26,14 @@ def test_lotka_volterra_auto():
     """
     sys = LotkaVolterra()
     dt_list = [0.01, 0.0125, 0.02, 0.05]
-    methods = ["epi2", "epi2_leja_im", "epi3", "exprb3", "exp3_dense"]
-    methods_order = [2.0, 2.0, 3.0, 3.0, 3.0]
-    for method, order in zip(methods, methods_order):
+    cases = [
+        ("epi2", "krylov", 2.0),
+        ("epi2", "leja", 2.0),
+        ("epi3", "pfd", 3.0),
+        ("exprb3", "dense", 3.0),
+        ("exp3_dense", "", 3.0)
+    ]
+    for method, phi_method, order in cases:
         err_dt = []
         for dt in dt_list:
             y0 = jnp.array([0.1, 0.2])
@@ -38,12 +43,13 @@ def test_lotka_volterra_auto():
             nsteps = int(tf/dt)
             res_true = integrate_wrapper.integrate(
                     sys, y0, t0, dt, nsteps, "rk4")
-            t_true, y_true = res_true.t_res, res_true.y_res
+            _, y_true = res_true.t_res, res_true.y_res
 
             # compute ormatex result
             y0 = jnp.array([0.1, 0.2])
             res = integrate_wrapper.integrate(
-                    sys, y0, t0, dt, nsteps, method, max_krylov_dim=4, iom=3, leja_tol=1e-10)
+                    sys, y0, t0, dt, nsteps, method, phi_method=phi_method,
+                    max_krylov_dim=4, iom=3, leja_tol=1e-10)
             t_res, y_res = res.t, res.y
             t_res = np.asarray(t_res)
             y_res = np.asarray(y_res)
@@ -70,9 +76,14 @@ def test_lotka_volterra_nonautonomous():
     """
     sys = LotkaVolterraNonauto()
     dt_list = [0.01, 0.0125, 0.02, 0.05]
-    methods = ["exprb2", "exprb3", "epi3", "exprb2_dense", "exp3_dense"]
-    methods_order = [2.0, 3.0, 3.0, 2.0, 3.0]
-    for method, order in zip(methods, methods_order):
+    cases = [
+        ("exprb2", "krylov", 2.0),
+        ("exprb3", "pfd", 3.0),
+        ("epi3", "pfd", 3.0),
+        ("exprb2", "dense", 2.0),
+        ("exp3_dense", "", 3.0)
+    ]
+    for method, phi_method, order in cases:
         err_dt = []
         for dt in dt_list:
             y0 = jnp.array([0.1, 0.2])
@@ -82,12 +93,13 @@ def test_lotka_volterra_nonautonomous():
             nsteps = int(tf/dt)
             res_true = integrate_wrapper.integrate(
                     sys, y0, t0, dt, nsteps, "rk4")
-            t_true, y_true = res_true.t_res, res_true.y_res
+            _, y_true = res_true.t_res, res_true.y_res
 
             # compute ormatex result
             y0 = jnp.array([0.1, 0.2])
             res = integrate_wrapper.integrate(
-                    sys, y0, t0, dt, nsteps, method, max_krylov_dim=4, iom=3, tol_fdt=1.0e-6)
+                    sys, y0, t0, dt, nsteps, method, phi_method=phi_method,
+                    max_krylov_dim=4, iom=3, tol_fdt=1.0e-6)
             t_res, y_res = res.t, res.y
             t_res = np.asarray(t_res)
             y_res = np.asarray(y_res)

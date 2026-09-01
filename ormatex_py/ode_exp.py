@@ -63,10 +63,12 @@ class ExpRBIntegrator(IntegrateSys):
         # handle deprecated methods
         if self.method in self._deprecated_methods.keys():
             replacement_method = self.method.split("_", maxsplit=1)[0]
-            warnings.warn(f"{self.method} is deprecated, please use {replacement_method}.")
             self.phi_method = self._deprecated_methods[self.method]
+            warnings.warn(f"'{self.method}' is deprecated, please use "
+                          f"'{replacement_method}' with phi_method='{self.phi_method}'.")
             if phi_method is not None:
-                warnings.warn(f"Using hardcoded {self.phi_method} not {phi_method=}.")
+                warnings.warn(f"Using hardcoded phi_method '{self.phi_method}'"
+                              f"for method '{self.method}' not {phi_method=}.")
             self.method = replacement_method
         else:
             # ensure that a phi_evaluator default is set
@@ -376,7 +378,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         fyt = sys_jac_lop._frhs_cached()
         if jnp.linalg.norm(fyt - sys_jac_lop(yt), ord=jax.numpy.inf) / jnp.linalg.norm(fyt, ord=jax.numpy.inf) > 1e-7:
-            print(f"warning: step_exp only valid for purely linear systems")
+            warnings.warn("Method step_exp is only valid for purely linear systems")
 
         y_new = self.Phi.eval_phi(0, dt, yt)
 

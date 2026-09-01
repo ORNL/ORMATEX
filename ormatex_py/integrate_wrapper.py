@@ -95,7 +95,7 @@ class TimeStepController:
         return accepted, np.copysign(next_dt, dt)
 
 
-def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
+def integrate(ode_sys, y0, t0, dt, nsteps, method, phi_method="krylov", **kwargs):
     """
     High level interface to all time integration methods in ORMATEX.
     """
@@ -112,9 +112,11 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     is_rk = method in RKIntegrator._valid_methods.keys()
     c_res = {}
     if is_rb or is_split or is_rk or is_leja:
+        method_str = method
         # init the time integrator
         if is_rb:
-            sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, **kwargs)
+            sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, phi_method=phi_method, **kwargs)
+            method_str = f"{method}<{phi_method}>"
         elif is_leja:
             sys_int = ExpLejaIntegrator(ode_sys, t0, y0, method=method, **kwargs)
         elif is_split:
@@ -147,7 +149,7 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
         y_res[-1].block_until_ready()
     toc = time.perf_counter()
 
-    print(f"Integrated system with {method} in {toc - tic:0.4f} seconds")
+    print(f"Integrated system with {method_str} in {toc - tic:0.4f} seconds")
     return IntegrateResult(t_res, y_res, c_res, 0)
 
 

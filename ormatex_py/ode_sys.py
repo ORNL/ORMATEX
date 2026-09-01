@@ -44,6 +44,11 @@ class LinOp(eqx.Module):
     def _matvec(self, v):
         raise NotImplementedError
 
+    @property
+    @abstractmethod
+    def n_domain(self):
+        raise NotImplementedError
+
     def __call__(self, v):
         return self._matvec(v)
 
@@ -75,6 +80,10 @@ class EyeLinOp(LinOp):
     def _matvec(self, v):
         return v
 
+    @property
+    def n_domain(self):
+        return self.n
+
     def _dense(self):
         return jnp.eye(self.n)
 
@@ -92,6 +101,10 @@ class DiagLinOp(LinOp):
     @jax.jit
     def _matvec(self, v):
         return self.d * v
+
+    @property
+    def n_domain(self):
+        return self.d.shape[0]
 
     def _dense(self):
         return jnp.diag(self.d)
@@ -114,11 +127,15 @@ class MatrixLinOp(LinOp):
         print("jit-compiling MatrixLinOp._matvec")
         return self.a @ b
 
+    @property
+    def n_domain(self):
+        return self.a.shape[1]
+
     def _dense(self) -> jax.Array:
         if isinstance(self.a, jax.Array):
             return self.a
         else:
-            #convert sparse array to dense
+            # convert sparse array to dense
             return self.a.todense()
 
 
@@ -165,6 +182,10 @@ class AugMatrixLinOp(LinOp):
         res = jnp.concat((ab_v, k_v))
         return res
 
+    @property
+    def n_domain(self):
+        return self.a_lo.n_domain + self.B.shape[1]
+
     def _dense(self):
         raise NotImplementedError
 
@@ -201,11 +222,12 @@ class SysJacLinOp(LinOp):
         """
         return self._frhs(self._t, self._u, **self._frhs_kwargs)
 
-    def dim(self) -> int:
+    @property
+    def n_domain(self) -> int:
         """
-        Operator dimension
+        Operator input/domain dimension
         """
-        return len(self._u)
+        return self._u.shape[0]
 
 
 class CustomJacLinOp(SysJacLinOp):
@@ -443,6 +465,7 @@ class OdeSplitSys(OdeSys):
     where L(t, U) is a (potentially time and state dependent) LinOp,
     different from the Jacobian.
     """
+
     def __init__(self, *args, **kwargs):
         pass
 

@@ -137,7 +137,7 @@ def f_phi_k_sq_all(z: jax.Array, k: int) -> list[jax.Array]:
     theta = jnp.linalg.norm(z, ord=np.inf)
     # TODO: determine the optimal initial polynomial degree and the number of squarings
     scale_fact = 16
-    init_poly_deg = 4
+    init_poly_deg = max(4, k+2)
     Nscale = jnp.floor(jnp.maximum(0, jnp.log2(theta * scale_fact))).astype(int)
     tt_N = 2 ** Nscale
 
