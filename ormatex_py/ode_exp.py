@@ -23,20 +23,21 @@ import numpy as np
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 import warnings
+from typing import Callable
 
 from ormatex_py.phi_evaluator import PhiEvaluator
 
-from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
-from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd, \
-        PhiEvaluator_PFD_Dense
+from ormatex_py.ode_sys import (
+    LinOp,
+    IntegrateSys,
+    OdeSys,
+    OdeSplitSys,
+    StepResult,
+)
+from ormatex_py.matexp_krylov import phi_linop
+from ormatex_py.matexp_phi import f_phi_k_sq_all, PhiEvaluator_PFD_Dense
 from ormatex_py.matexp_leja import gen_leja_fast, gen_leja_conjugate, build_a_tilde, \
         leja_shift_scale, real_leja_expmv_substep, complex_conj_leja_expmv_substep
-try:
-    import ormatex_py.ormatex as ormatex_rs
-    HAS_ORMATEX_RUST = True
-except ImportError:
-    HAS_ORMATEX_RUST = False
 
 
 @IntegrateSys.populate_valid_methods
@@ -90,18 +91,39 @@ class ExpRBIntegrator(IntegrateSys):
     def reset_ic(self, t0: float, y0: jax.Array):
         super().reset_ic(t0, y0)
 
-    def _remf(self, tr: float, yr: jax.Array,
-              frhs_yt: jax.Array, sys_jac_lop_yt: LinOp, v=0.0):
+    @jax.jit(static_argnums=(4,))
+    def _init_step(t: float, yt: jax.Array, sys, frhs_kwargs: dict, tol_fdt: float):
         """
-        Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt) - v*(tr-t0)
-        where v = d(frhs)/dt
+        Computes inital linearizations and evaluations
+        J_yt = d[frhs]/dy(t), fyt = frhs(t), fytt = d[frhs]/dt(t)
         """
-        t = self.t_hist[0]
-        yt = self.y_hist[0]
+        print("jit-compiling init_step kernel")
+        sys_jac_lop = sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        fyt = sys_jac_lop._frhs_cached()
+
+        if tol_fdt >= 0.:
+            # deriv of rhs wrt time at current time
+            fytt = sys_jac_lop._fdt()
+        else:
+            fytt = jnp.zeros(fyt.shape)
+
+        return sys_jac_lop, fyt, fytt
+
+    @jax.jit
+    def _remf(tr: float, yr: jax.Array,
+              t: float, yt: jax.Array,
+              fyt: jax.Array, sys_frhs: Callable, frhs_kwargs: dict,
+              sys_jac_lop_yt: LinOp, fytt: jax.Array):
+        """
+        Computes remainder
+        R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt) - fytt*(tr-t0)
+        where fytt = d[frhs]/dt(t)
+        """
+        print("jit-compiling remf kernel")
         dt = tr - t
-        frhs_yr = self.sys.frhs(tr, yr)
+        fyr = sys_frhs(tr, yr, **frhs_kwargs)
         jac_yd = sys_jac_lop_yt(yr - yt)
-        return frhs_yr - frhs_yt - jac_yd - v*dt
+        return fyr - fyt - jac_yd - fytt*dt
 
     @IntegrateSys.register_method(["exprb2", "epi2"], 2)
     def _step_exprb2(self, dt: float, frhs_kwargs: dict) -> StepResult:
@@ -120,14 +142,10 @@ class ExpRBIntegrator(IntegrateSys):
         t = self.t
         yt = self.y_hist[0]
 
-        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        sys_jac_lop, fyt, fytt = ExpRBIntegrator._init_step(
+            t, yt, self.sys, frhs_kwargs, self.tol_fdt)
+
         self.Phi.set_lop(sys_jac_lop)
-
-        fyt = sys_jac_lop._frhs_cached()
-
-        if self.tol_fdt >= 0.:
-            # deriv of rhs wrt time at current time
-            fytt = sys_jac_lop._fdt()
 
         if self.tol_fdt >= 0. and jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
             y_update = self.Phi.eval_phis((1, 2), dt, (fyt, dt*fytt))
@@ -156,16 +174,16 @@ class ExpRBIntegrator(IntegrateSys):
         yp = self.y_hist[1] # y_{t-1}
         tp = self.t_hist[1]
 
-        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        sys_jac_lop, fyt, fytt = ExpRBIntegrator._init_step(
+            t, yt, self.sys, frhs_kwargs, self.tol_fdt)
+
         self.Phi.set_lop(sys_jac_lop)
 
-        fyt = sys_jac_lop._frhs_cached()
-
-        # time derivative
-        fytt = sys_jac_lop._fdt()
-
         # residual
-        rn = self._remf(tp, yp, fyt, sys_jac_lop, fytt)
+        # rn = self._remf(tp, yp, fyt, sys_jac_lop, fytt)
+        rn = ExpRBIntegrator._remf(
+            tp, yp, t, yt, fyt, self.sys.frhs, frhs_kwargs,
+            sys_jac_lop, fytt)
 
         y_update = self.Phi.eval_phis((1, 2), dt, (fyt, (2./3.)*rn + dt*fytt))
 
@@ -192,15 +210,10 @@ class ExpRBIntegrator(IntegrateSys):
         t = self.t
         yt = self.y_hist[0]
 
-        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        sys_jac_lop, fyt, fytt = ExpRBIntegrator._init_step(
+            t, yt, self.sys, frhs_kwargs, self.tol_fdt)
+
         self.Phi.set_lop(sys_jac_lop)
-
-        fyt = sys_jac_lop._frhs_cached()
-
-        fytt = 0.
-        if self.tol_fdt >= 0.:
-            # deriv of rhs wrt time at current time
-            fytt = sys_jac_lop._fdt()
 
         if self.tol_fdt >= 0. and jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
             y_update1 = self.Phi.eval_phis((1, 2), dt, (fyt, dt*fytt))
@@ -211,7 +224,9 @@ class ExpRBIntegrator(IntegrateSys):
         t_2 = t + dt
         y_2 = yt + dt * y_update1
 
-        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=fytt)
+        # r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=fytt)
+        r_2 = ExpRBIntegrator._remf(
+            t_2, y_2, t, yt, fyt, self.sys.frhs, frhs_kwargs, sys_jac_lop, fytt)
 
         # compute final update
         y_update2 = self.Phi.eval_phi(3, dt, 2.*r_2)
@@ -241,22 +256,19 @@ class ExpRBIntegrator(IntegrateSys):
 
         Where $`U_{n2}`$ and $`U_{n3}`$ can be computed in parallel.
 
-        Ref: V. T. Luan. and A. Ostermann. Parallel Exponential rosenbrock methods.
+        Ref: V. T. Luan. and A. Ostermann. Parallel Exponential Rosenbrock Methods.
         Computers and Mathmatics with Applications, v71. 2016.
         """
         t = self.t
         yt = self.y_hist[0] # y_t
 
-        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        sys_jac_lop, fyt, fytt = ExpRBIntegrator._init_step(
+            t, yt, self.sys, frhs_kwargs, self.tol_fdt)
+
         self.Phi.set_lop(sys_jac_lop)
 
-        fyt = sys_jac_lop._frhs_cached()
-
         have_fytt = False
-        fytt = jnp.zeros(yt.shape)
         if self.tol_fdt >= 0.:
-            # deriv of rhs wrt time at current time
-            fytt = sys_jac_lop._fdt()
             have_fytt = jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt
 
         # butcher tableau coeffs
@@ -266,29 +278,25 @@ class ExpRBIntegrator(IntegrateSys):
         # compute U_{n2}
         def f_u_n2():
             t_2 = t + c_2*dt
-            #phi2_v_2, v_2 = self._phi2v_nonauto(sys_jac_lop, dt, c=c_2)
-            #y_2 = yt \
-            #    + c_2*dt*phi_linop(sys_jac_lop, c_2*dt, fyt, 1, self.max_krylov_dim, self.iom) \
-            #    + phi2_v_2
             if have_fytt:
                 y_2 = yt + dt * self.Phi.eval_phis((1, 2), c_2*dt, (c_2*fyt, c_2**2*dt*fytt))
             else:
                 y_2 = yt + dt * self.Phi.eval_phi(1, c_2*dt, c_2*fyt)
-            r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=fytt)
+            # r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=fytt)
+            r_2 = ExpRBIntegrator._remf(
+                t_2, y_2, t, yt, fyt, self.sys.frhs, frhs_kwargs, sys_jac_lop, fytt)
             return r_2
 
         # compute U_{n3}
         def f_u_n3():
             t_3 = t + c_3*dt
-            #phi2_v, v = self._phi2v_nonauto(sys_jac_lop, dt, c=c_3)
-            #y_3 = yt \
-            #    + c_3*dt*phi_linop(sys_jac_lop, c_3*dt, fyt, 1, self.max_krylov_dim, self.iom) \
-            #    + phi2_v
             if have_fytt:
                 y_3 = yt + dt * self.Phi.eval_phis((1, 2), c_3*dt, (c_3*fyt, c_3**2*dt*fytt))
             else:
                 y_3 = yt + dt * self.Phi.eval_phi(1, c_3*dt, c_3*fyt)
-            r_3 = self._remf(t_3, y_3, fyt, sys_jac_lop, v=fytt)
+            # r_3 = self._remf(t_3, y_3, fyt, sys_jac_lop, v=fytt)
+            r_3 = ExpRBIntegrator._remf(
+                t_3, y_3, t, yt, fyt, self.sys.frhs, frhs_kwargs, sys_jac_lop, fytt)
             return y_3, r_3
 
         # with ThreadPoolExecutor(max_workers=2) as executor:
@@ -298,10 +306,6 @@ class ExpRBIntegrator(IntegrateSys):
         y_3, r_3 = fut_f_u_n3.result()
 
         # compute final update
-        #vb0 = jnp.zeros(yt.shape)
-        #b2_b3 = kiops_fixedsteps(
-        #    sys_jac_lop, dt, [vb0, vb0, vb0, dt*(16.0*r_2-2.0*r_3), dt*(-48.0*r_2+12.0*r_3)],
-        #    max_krylov_dim=self.max_krylov_dim, iom=self.iom)
         b2_b3 = self.Phi.eval_phis((3, 4), dt, (16.0*r_2-2.0*r_3, -48.0*r_2+12.0*r_3))
         y_new = y_3 + dt * b2_b3
 
