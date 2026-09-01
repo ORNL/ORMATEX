@@ -235,19 +235,19 @@ class PhiEvaluator_PFD_Dense(eqx.Module):
         self.method = method
 
     @partial(jax.jit, static_argnums=(2,))
-    def apply(self, b: tuple[jax.Array], k: tuple[int]) -> jax.Array:
+    def apply(self, bs: tuple[jax.Array], ks: tuple[int]) -> jax.Array:
         # validate arguments and build tmp arrays
-        B = jnp.asarray(b).transpose()
+        B = jnp.asarray(bs).transpose()
         N, N1 = self.lu[0][0].shape
         assert N == N1
         # multiple rhs case
         N2, M = B.shape
         assert N2 == N
-        assert len(k) == M
+        assert len(ks) == M
 
         # poles and coefficients for partial fraction decomp.
         ps, cs, c0 = pfd_dict[self.method]
-        k = jnp.asarray(k)
+        k = jnp.asarray(ks)
 
         # correction for phi0
         bs = jnp.where(k == 0, 1.0, 0.0)
