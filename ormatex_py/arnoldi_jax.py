@@ -25,7 +25,7 @@ from ormatex_py.ode_sys import LinOp
 
 # inner ortho procedure, based on MGS
 @jax.jit
-def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k: int, iom: int) -> bool:
+def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k: int, iom: int, breakdown_tol: float=1e-25) -> bool:
     """
     Args:
         a_lo: linear operator
@@ -42,7 +42,6 @@ def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k
     print(f"jit-compiling MGS")
 
     m = hs.shape[0]
-    breakdown_tol = 1e-12
     iom_depth = jnp.maximum(k - iom, 0)
 
     # current vector to ortho against

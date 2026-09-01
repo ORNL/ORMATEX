@@ -575,7 +575,7 @@ class IntegrateSys(metaclass=ABCMeta):
         Computes remainder R(yr) = frhs(yr) - frhs(yt) - J_yt*(yr-yt) - v*(tr-t0)
         where v = d(frhs)/dt
         """
-        t = self.t_hist[0]
+        t = self.t
         yt = self.y_hist[0]
         dt = tr - t
         frhs_yr = self.sys.frhs(tr, yr)

@@ -25,7 +25,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ormatex_py.ode_sys import LinOp, IntegrateSys, OdeSys, OdeSplitSys, StepResult
 from ormatex_py.matexp_krylov import phi_linop, matexp_linop, kiops_fixedsteps
-from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd
+from ormatex_py.matexp_phi import f_phi_k_ext, f_phi_k_sq_all, f_phi_k_pfd, \
+        PhiEvaluator_PFD_Dense
 from ormatex_py.matexp_leja import gen_leja_fast, gen_leja_conjugate, build_a_tilde, \
         leja_shift_scale, real_leja_expmv_substep, complex_conj_leja_expmv_substep
 try:
@@ -37,7 +38,8 @@ except ImportError:
 class ExpRBIntegrator(IntegrateSys):
 
     _valid_methods = {"exprb2": 2, "exprb3": 3, "pexprb4": 4, "epi2": 2, "epi3": 3,
-                      "exprb2_dense": 2, "exprb2_pfd": 2, "exp_pfd": 1,
+                      "exprb3_pfd": 3, "exprb2_pfd": 2, "exp_pfd": 1,
+                      "exprb2_dense": 2,
                       "exprb2_pfd_rs": 2, "exp_pfd_rs": 1}
 
     def __init__(self, sys: OdeSys, t0: float, y0: jax.Array, method="epi2", **kwargs):
@@ -92,8 +94,11 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)+
-            dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)+
+                dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
         doi: https://doi.org/10.1137/080717717
         """
@@ -204,7 +209,7 @@ class ExpRBIntegrator(IntegrateSys):
                                       self.max_krylov_dim, self.iom)
 
         # TODO: error estimate by comparing y_2 and y_new?
-        y_err = -1.0
+        y_err = jnp.linalg.norm(y_2 - y_new, ord=jnp.inf)
 
         return StepResult(t+dt, dt, y_new, y_err)
 
@@ -295,7 +300,10 @@ class ExpRBIntegrator(IntegrateSys):
         r"""
         Exponential Euler,
         computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
         """
         t = self.t
         yt = self.y_hist[0]
@@ -307,7 +315,11 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Computes the solution update by:
-        y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
+
         where J is the dense Jacobian matrix and varphi is computed
         using partial fraction decomposition
         """
@@ -333,6 +345,59 @@ class ExpRBIntegrator(IntegrateSys):
         y_new = yt + dt * (phi1J_fyt + dt * phi2J_fytt)
 
         y_err = -1.
+        return StepResult(t+dt, dt, y_new, y_err)
+
+    def _step_exprb3_pfd(self, dt: float, frhs_kwargs: dict) -> StepResult:
+        r"""
+        Computes the solution update by:
+
+        .. math::
+
+            y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t) +
+                2*dt*\varphi_3(dt*J_t)R_2 +
+                dt**2*\varphi_2(dt*J_t)F'(t, y_t)
+
+        Using a partial fraction decomposition for $`\varphi`$.
+        """
+        t = self.t
+        yt = self.y_hist[0] # y_t
+
+        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        fyt = sys_jac_lop._frhs_cached()
+        fytt = sys_jac_lop._fdt()
+        J = sys_jac_lop.dense()
+        Jdt = dt*J
+
+        # precompute LU decomposition of scaled jacobian for each pole, p
+        # LU(J*dt-p*I)
+        pfd_lu = PhiEvaluator_PFD_Dense(Jdt, self.pfd_method)
+
+        # 1st stage
+        # prepare PhiEvaluator arguments
+        s1_k = (1,)         # Phi function order
+        s1_b = (dt * fyt,)  # Phi RHS
+
+        # check for nonautonomous system
+        if self.tol_fdt >= 0.:
+            # deriv of rhs wrt time at current time
+            if jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
+                # build additional RHS
+                s1_k = (1, 2,)
+                s1_b = (s1_b[0], (dt**2.0)*fytt,)
+
+        s1_update = pfd_lu.apply(s1_b, s1_k)
+        y_2 = yt + s1_update
+
+        # 2nd stage
+        t_2 = t + dt
+        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, fytt)
+        s2_k, s2_b = (3,), (2.0*dt*r_2,)
+        s2_update = pfd_lu.apply(s2_b, s2_k)
+
+        # compute final update
+        y_new = y_2 + s2_update
+        y_err = jnp.linalg.norm(y_2 - y_new, ord=jnp.inf)
+
         return StepResult(t+dt, dt, y_new, y_err)
 
     def _step_exprb2_pfd_rs(self, dt: float) -> StepResult:
@@ -417,6 +482,8 @@ class ExpRBIntegrator(IntegrateSys):
             return self._step_exprb2_dense(dt)
         elif self.method == "exprb2_pfd":
             return self._step_exprb2_pfd(dt, frhs_kwargs)
+        elif self.method == "exprb3_pfd":
+            return self._step_exprb3_pfd(dt, frhs_kwargs)
         elif self.method == "exp_pfd":
             return self._step_exp_pfd(dt, frhs_kwargs)
         elif self.method == "exprb2_pfd_rs" and HAS_ORMATEX_RUST:
