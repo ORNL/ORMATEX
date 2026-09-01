@@ -309,7 +309,9 @@ class ExpRBIntegrator(IntegrateSys):
         b2_b3 = self.Phi.eval_phis((3, 4), dt, (16.0*r_2-2.0*r_3, -48.0*r_2+12.0*r_3))
         y_new = y_3 + dt * b2_b3
 
-        y_err = -1.0
+        # Estimate the step error
+        # Note: this is the difference between the 4th order estimate and a 2nd order est.
+        y_err = jnp.linalg.norm(y_3 - y_new, ord=jnp.inf)
         return StepResult(t+dt, dt, y_new, y_err)
 
     @IntegrateSys.register_method(["exprb3_pfd"], 3)
