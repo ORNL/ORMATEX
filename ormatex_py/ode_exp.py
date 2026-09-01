@@ -328,15 +328,15 @@ class ExpRBIntegrator(IntegrateSys):
         t = self.t
         yt = self.y_hist[0] # y_t
 
-        sys_jac_lop = self.sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
-        fyt = sys_jac_lop._frhs_cached()
-        fytt = sys_jac_lop._fdt()
+        sys_jac_lop, fyt, fytt = ExpRBIntegrator._init_step(
+            t, yt, self.sys, frhs_kwargs, self.tol_fdt)
+
         J = sys_jac_lop.dense()
         Jdt = dt*J
 
         # precompute LU decomposition of scaled jacobian for each pole, p
         # LU(J*dt-p*I)
-        pfd_lu = PhiEvaluator_PFD_Dense(Jdt, self.pfd_method)
+        pfd_lu = PhiEvaluator_PFD_Dense(Jdt, "cram_16")
 
         # 1st stage
         # prepare PhiEvaluator arguments
@@ -356,7 +356,9 @@ class ExpRBIntegrator(IntegrateSys):
 
         # 2nd stage
         t_2 = t + dt
-        r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, fytt)
+        # r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, fytt)
+        r_2 = ExpRBIntegrator._remf(
+            t_2, y_2, t, yt, fyt, self.sys.frhs, frhs_kwargs, sys_jac_lop, fytt)
         s2_k, s2_b = (3,), (2.0*dt*r_2,)
         s2_update = pfd_lu.apply(s2_b, s2_k)
 

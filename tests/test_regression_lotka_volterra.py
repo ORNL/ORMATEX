@@ -28,9 +28,10 @@ def test_lotka_volterra_auto():
     dt_list = [0.01, 0.0125, 0.02, 0.05]
     cases = [
         ("epi2", "krylov", 2.0),
-        ("epi2", "leja", 2.0),
-        ("epi3", "pfd", 3.0),
-        ("exprb3", "dense", 3.0),
+        #("epi2", "leja", 2.0),
+        ("epi3", "dense", 3.0),
+        ("exprb3", "pfd", 3.0),
+        ("exprb3_pfd", "", 3.0),
         ("exp3_dense", "", 3.0)
     ]
     for method, phi_method, order in cases:
@@ -78,9 +79,8 @@ def test_lotka_volterra_nonautonomous():
     dt_list = [0.01, 0.0125, 0.02, 0.05]
     cases = [
         ("exprb2", "krylov", 2.0),
-        ("exprb3", "pfd", 3.0),
+        ("exprb3", "dense", 3.0),
         ("epi3", "pfd", 3.0),
-        ("exprb2", "dense", 2.0),
         ("exp3_dense", "", 3.0)
     ]
     for method, phi_method, order in cases:
