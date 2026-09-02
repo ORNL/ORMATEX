@@ -50,12 +50,12 @@ class MockIntegrator:
         self.t = result.t
 
 
-def test_integrate_wrapper_with_callback():
+def _integrate_wrapper_with_callback(method="exprb3", phi_method="pfd"):
     sys = MockOdeSysWithCallback()
     dt = 2.0
     nsteps = 2
     t0, y0 = 0.0, jnp.array([1.0])
-    res = integrate(sys, y0, t0, dt, nsteps, method='exprb3', phi_method='pfd',
+    res = integrate(sys, y0, t0, dt, nsteps, method=method, phi_method=phi_method,
                     callback_before_step=callback_before_step_dummy)
     t, y = np.asarray(res.t), np.asarray(res.y)
     assert np.isclose(t[-1], 4.0)
@@ -66,6 +66,16 @@ def test_integrate_wrapper_with_callback():
     callback_calc = cb["callback_before_step"][-1]["dummy_calc"]
     # should be dummy_calc with t=2.0, y=2.0  (start of last time step)
     assert np.isclose(callback_calc, 2.0*np.exp(2.0))
+
+
+def test_integrate_wrapper_with_callback():
+    _integrate_wrapper_with_callback("exprb2")
+    _integrate_wrapper_with_callback("exprb3")
+    _integrate_wrapper_with_callback("exprb4")
+    _integrate_wrapper_with_callback("exprb2", phi_method="krylov")
+    _integrate_wrapper_with_callback("exprb3", phi_method="krylov")
+    _integrate_wrapper_with_callback("epi3", phi_method="krylov")
+    _integrate_wrapper_with_callback("epi3", phi_method="leja")
 
 
 def test_adaptive_steps_retry_and_reach_final_time():
