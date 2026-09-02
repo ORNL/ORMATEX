@@ -234,7 +234,7 @@ class PhiEvaluatorLeja(PhiEvaluatorModule):
     leja_n_zeros: int
     leja_max_power_iter: int
     leja_max_re_eig_scale: float
-    n_leja: 280
+    n_leja: int
     leja_x: jax.Array
 
     def __init__(self, sys_lop, phi_plan=None, **kwargs):
@@ -307,37 +307,6 @@ class PhiEvaluatorLeja(PhiEvaluatorModule):
             raise RuntimeError("Leja not converged")
 
         return result
-
-    """
-    _power_iters = 0
-        if self.leja_a is None:
-            # estimate largest magnitude eigenvalue and corrosponding eigenvec
-            # by power iter.  Store eigenvector for next step
-            # to speed convergence of power iterations in
-            # subsequent calls to power iter method.
-            _, _, max_eig, self._leja_bk, _power_iters = leja_shift_scale(
-                    a_tilde_lo, v.shape[0], self.leja_max_power_iter,
-                    self._leja_bk, self.leja_max_re_eig_scale)
-            leja_a = -jnp.abs(max_eig)
-        else:
-            leja_a = self.leja_a * dt
-        if self.leja_c is None:
-            leja_c = 0.0
-        else:
-            leja_c = self.leja_c * dt
-
-        # generate leja sequence on the ellipse bounding the spectrum of the sys Jacobian
-        leja_x, n_leja_real, scale, shift = gen_leja_conjugate(n=self.n_leja, a=leja_a, b=0., c=leja_c)
-        leja_x = jnp.asarray(leja_x)
-
-        # compute phi-vector products by leja interpolation
-        y_update, leja_iters, converged, max_tau_dt = complex_conj_leja_expmv_substep(
-                a_tilde_lo, 1.1*self.leja_substep_size, v, leja_x, n_leja_real,
-                n, shift, scale, self.leja_tol, self.leja_substep,
-                leja_n_zeros=self.leja_n_zeros, dd_method=self.dd_method)
-
-        print("=t: %0.2f, Pwr itrs: %d, Leja itrs: %d, leja_a: %0.2f, leja_c: %0.2f, shift: %0.2f, scale: %0.2f" % (t, _power_iters, leja_iters, leja_a, leja_c, shift, scale))
-        """
 
 
 class PhiEvaluatorPFD(PhiEvaluatorModule):
