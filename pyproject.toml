@@ -23,8 +23,8 @@ classifiers = [
 dependencies = [
     "numpy>=1.8.0",
     "scipy>=0.12.0",
-    "jax",
-    "equinox",
+    "jax>=0.10.2",
+    "equinox>=0.13.8",
     "pytest",
     "mpmath",
 ]
