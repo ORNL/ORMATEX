@@ -102,7 +102,7 @@ class ExpRBIntegrator(IntegrateSys):
         J_yt = d[frhs]/dy(t), fyt = frhs(t), fytt = d[frhs]/dt(t)
         """
         print("jit-compiling init_step kernel")
-        sys_jac_lop = sys.fjac(t, yt, frhs_kwargs=frhs_kwargs)
+        sys_jac_lop = sys.fjac(t, yt, **frhs_kwargs)
         fyt = sys_jac_lop._frhs_cached()
 
         if tol_fdt >= 0.:
