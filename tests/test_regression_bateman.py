@@ -21,7 +21,7 @@ def test_bateman_s3():
         ("exprb3", "dense"),
         ("pexprb4", "pfd"),
         ("exp3_dense", ""),
-        ("epi3", "pfd")
+        ("epi3", "pfd"),
     ]
     for method, phi_method in cases:
         t_res, y_res, t_true, y_true = analytic_bateman_s3(method=method, phi_method=phi_method, do_plot=False)

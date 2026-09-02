@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from abc import abstractmethod
+from typing import Optional
 import equinox as eqx
 
 from functools import partial
@@ -34,15 +35,49 @@ except ImportError:
     HAS_ORMATEX_RUST = False
 
 
+class PhiPlan(eqx.Module):
+    r"""
+    Provides a plan of
+    - timestep size dt (converted to a jax.Array)
+    - local timestep sizes cdt = c*dt (converted to a jax.Array,
+      to ensure we do not introduce any new dtype conversions)
+    - and phi orders k as a list of lists of int
+    to PhiEvaluatorModule at init time.
+    """
+    dt: jax.Array = eqx.field(converter=jnp.asarray)
+    cdts: jax.Array = eqx.field(converter=jnp.asarray)
+    ks: tuple[tuple[int]] = eqx.field(static=True)
+
+    def __check_init__(self):
+        assert(len(self.dt.shape) == 0)
+        assert(len(self.cdts.shape) == 1)
+        assert(len(self.cdts) == len(self.ks))
+        assert(all(isinstance(k, tuple) for k in self.ks))
+
+
 class PhiEvaluatorModule(eqx.Module):
+    r"""
+    Abstract equinox module for PhiEvaluator implementations
+    """
+    sys_lop: LinOp
+    phi_plan: PhiPlan
+
+    def __init__(self, sys_lop: LinOp, phi_plan: Optional[PhiPlan] = None):
+        self.sys_lop = sys_lop
+        self.phi_plan = phi_plan if phi_plan is not None else PhiPlan(0., tuple(), tuple())
 
     @abstractmethod
-    def eval_phi(self, k, cdt, b):
+    def eval_phi(self, k: int, cdt: float, b: jax.Array):
         raise NotImplementedError
 
     @abstractmethod
-    def eval_phis(self, ks, cs, dt, bs):
+    def eval_phis(self, ks: tuple[int], cdt: float, bs:  tuple[jax.Array]):
         raise NotImplementedError
+
+    def eval_phis_plan(self, bs: jax.Array, step: int):
+        ks = self.phi_plan.ks[step]
+        cdt = self.phi_plan.cdts[step]
+        return self.eval_phis(ks, cdt, bs)
 
 
 class PhiEvaluator():
@@ -55,7 +90,11 @@ class PhiEvaluator():
         "dense"
     }
 
-    def __init__(self, sys_lop, method="krylov", **kwargs):
+    def __init__(self,
+                 method: str = "krylov",
+                 sys_lop: Optional[LinOp] = None,
+                 phi_plan: Optional[PhiPlan] = None,
+                 **kwargs):
 
         self.init_kwargs = kwargs
 
@@ -66,21 +105,23 @@ class PhiEvaluator():
 
         self.sys_lop = sys_lop
         if sys_lop is not None:
-            self.set_lop(sys_lop)
+            self.set_lop(sys_lop, phi_plan=phi_plan)
 
-    def set_lop(self, sys_lop):
+    def set_lop(self,
+                sys_lop: LinOp,
+                phi_plan: Optional[PhiPlan] = None,):
         self.sys_lop = sys_lop
 
         if self.method == "krylov":
-            self.Phi = PhiEvaluatorKrylov(sys_lop, **self.init_kwargs)
+            self.Phi = PhiEvaluatorKrylov(sys_lop, phi_plan=phi_plan, **self.init_kwargs)
         elif self.method == "leja":
-            self.Phi = PhiEvaluatorLeja(sys_lop, **self.init_kwargs)
+            self.Phi = PhiEvaluatorLeja(sys_lop, phi_plan=phi_plan, **self.init_kwargs)
         elif self.method == "pfd":
-            self.Phi = PhiEvaluatorPFD(sys_lop, **self.init_kwargs)
+            self.Phi = PhiEvaluatorPFD(sys_lop, phi_plan=phi_plan, **self.init_kwargs)
         elif self.method == "pfd_rs":
-            self.Phi = PhiEvaluatorPFDRS(sys_lop, **self.init_kwargs)
+            self.Phi = PhiEvaluatorPFDRS(sys_lop, phi_plan=phi_plan, **self.init_kwargs)
         elif self.method == "dense":
-            self.Phi = PhiEvaluatorDense(sys_lop, **self.init_kwargs)
+            self.Phi = PhiEvaluatorDense(sys_lop, phi_plan=phi_plan, **self.init_kwargs)
         else:
             raise NotImplementedError
 
@@ -114,18 +155,30 @@ class PhiEvaluator():
             raise ValueError(msg)
         return self.Phi.eval_phis(ks, cdt, bs)
 
+    def eval_phis_plan(self, bs, step):
+        r"""
+        Evaluates a linear combination of phi function applications
+        for all k in the tuple ks and vector rhs b in the tuple bs
+        for the (intermediate) stepsize cdt (:math:`\tau = c*\Delta{t}`)
+        .. math::
+            w(\tau) = \sum_{j} \varphi_{k_j}(\tau A) b_{j}
+        """
+        if not hasattr(self, 'Phi'):
+            msg = "PhiEvaluator: must call set_lop or provide valid linear operator in init."
+            raise ValueError(msg)
+        return self.Phi.eval_phis_plan(bs, step)
+
 
 class PhiEvaluatorKrylov(PhiEvaluatorModule):
-    sys_lop: LinOp
     max_krylov_dim: int
     iom: int
 
-    _always_use_extension: bool
-    _use_extension: bool
+    _always_use_extension: bool = eqx.field(static=True)
+    _use_extension: bool = eqx.field(static=True)
 
-    def __init__(self, sys_lop, **kwargs):
+    def __init__(self, sys_lop, phi_plan=None, **kwargs):
 
-        self.sys_lop = sys_lop
+        super().__init__(sys_lop, phi_plan)
 
         # maximum krylov subspace dimension
         self.max_krylov_dim = kwargs.get("max_krylov_dim", 100)
@@ -172,8 +225,6 @@ class PhiEvaluatorKrylov(PhiEvaluatorModule):
 
 
 class PhiEvaluatorLeja(PhiEvaluatorModule):
-    sys_lop: LinOp
-
     leja_tol: float
     leja_abc: tuple[float]
 
@@ -186,7 +237,10 @@ class PhiEvaluatorLeja(PhiEvaluatorModule):
     n_leja: 280
     leja_x: jax.Array
 
-    def __init__(self, sys_lop, **kwargs):
+    def __init__(self, sys_lop, phi_plan=None, **kwargs):
+
+        super().__init__(sys_lop, phi_plan)
+
         # Relative tol for leja polynomial approx
         self.leja_tol = kwargs.get("leja_tol", 1e-15)
         # Option to enable substepping
@@ -202,8 +256,6 @@ class PhiEvaluatorLeja(PhiEvaluatorModule):
         self.leja_max_re_eig_scale = kwargs.get("leja_max_re_eig_scale", 1.2)
         self.n_leja = kwargs.get("n_leja", 280)
         self.leja_x = jnp.asarray(gen_leja_fast(a=-2, b=2, n=self.n_leja))
-
-        self.sys_lop = sys_lop
 
         # Optional max magnitude of real component of eigs(J*dt)
         leja_a = kwargs.get("leja_a", None)
@@ -289,20 +341,30 @@ class PhiEvaluatorLeja(PhiEvaluatorModule):
 
 
 class PhiEvaluatorPFD(PhiEvaluatorModule):
-    sys_lop: LinOp
     J: jax.Array
-    pfd_coeffs: tuple
     pfd_method: str = eqx.field(static=True)
 
-    def __init__(self, sys_lop, **kwargs):
+    pfd_plan_list: list[PhiEvaluator_PFD_Dense]
 
-        self.sys_lop = sys_lop
+    def __init__(self, sys_lop, phi_plan=None, **kwargs):
+
+        super().__init__(sys_lop, phi_plan)
 
         # Partial fraction decomposition method
         self.pfd_method = kwargs.get("pfd_method", "cram_16")
-        self.pfd_coeffs = get_pfd_coeffs(self.pfd_method)
 
         self.J = self.sys_lop.dense()
+
+        self.pfd_plan_list = [None] * len(self.phi_plan.cdts)
+        if len(self.pfd_plan_list) > 0:
+            # unique logic is hard to jit-compile, use numpy unique
+            # since it is faster than jax.
+            # TODO: ideally this computation should be done statically
+            # for each integrator plan once, not here in every step
+            cdtu, inverse = np.unique(self.phi_plan.cdts, return_inverse=True)
+            # precompute all lu-decompositions that will be needed
+            pfd_list = [PhiEvaluator_PFD_Dense(float(cdt) * self.J, self.pfd_method) for cdt in cdtu]
+            self.pfd_plan_list = [pfd_list[ind] for ind in inverse]
 
     @jax.jit
     def eval_phi(self, k, cdt, b):
@@ -319,13 +381,20 @@ class PhiEvaluatorPFD(PhiEvaluatorModule):
         results = phi_pfd.apply(bs, ks)
         return jnp.sum(results, axis=1)
 
+    @jax.jit(static_argnums=(2,))
+    def eval_phis_plan(self, bs, step: int):
+        bs = jnp.stack(bs, axis=1)
+        ks = jnp.asarray(self.phi_plan.ks[step])
+        phi_pfd = self.pfd_plan_list[step]
+        results = phi_pfd.apply(bs, ks)
+        return jnp.sum(results, axis=1)
+
 
 class PhiEvaluatorDense(PhiEvaluatorModule):
-    sys_lop: LinOp
     J: jax.Array
 
-    def __init__(self, sys_lop, **kwargs):
-        self.sys_lop = sys_lop
+    def __init__(self, sys_lop, phi_plan=None, **kwargs):
+        super().__init__(sys_lop, phi_plan)
         self.J = self.sys_lop.dense()
 
     @partial(jax.jit, static_argnames=('k', ))
@@ -345,15 +414,20 @@ class PhiEvaluatorDense(PhiEvaluatorModule):
 
         return result
 
+    @jax.jit(static_argnums=(2,))
+    def eval_phis_plan(self, bs: jax.Array, step: int):
+        ks = self.phi_plan.ks[step]
+        cdt = self.phi_plan.cdts[step]
+        return self.eval_phis(ks, cdt, bs)
+
 
 class PhiEvaluatorPFDRS(PhiEvaluatorModule):
-    sys_lop: LinOp
     phikv_dense_rs: eqx.Module
     J: np.array
 
-    def __init__(self, sys_lop, **kwargs):
+    def __init__(self, sys_lop, phi_plan=None, **kwargs):
 
-        self.sys_lop = sys_lop
+        super().__init__(sys_lop, phi_plan)
 
         # Partial fraction decomposition method
         pfd_method = kwargs.get("pfd_method", "cram_16")

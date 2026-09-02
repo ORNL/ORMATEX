@@ -25,7 +25,10 @@ from concurrent.futures import ThreadPoolExecutor
 import warnings
 from typing import Callable
 
-from ormatex_py.phi_evaluator import PhiEvaluator
+from ormatex_py.phi_evaluator import (
+    PhiEvaluator,
+    PhiPlan,
+)
 
 from ormatex_py.ode_sys import (
     LinOp,
@@ -46,6 +49,7 @@ class ExpRBIntegrator(IntegrateSys):
     _deprecated_methods = {
         "exprb2_dense": "dense",
         "exprb2_pfd": "pfd",
+        # "exprb3_pfd": "pfd", # TODO: add this and remove dedicated exprb3_pfd once not needed
         "exp_pfd": "pfd",
         "exprb2_pfd_rs": "pfd_rs",
         "exp_pfd_rs": "pdf_rs",
@@ -77,7 +81,7 @@ class ExpRBIntegrator(IntegrateSys):
 
         # construct PhiEvaluator
         self.phi_method = self.phi_method or "krylov"
-        self.Phi = PhiEvaluator(None, method=self.phi_method, **kwargs)
+        self.Phi = PhiEvaluator(method=self.phi_method, sys_lop=None, **kwargs)
 
         order = self._valid_methods[self.method].order
         super().__init__(sys, t0, y0, order, self.method, **kwargs)
@@ -144,12 +148,13 @@ class ExpRBIntegrator(IntegrateSys):
 
         sys_jac_lop, fyt, fytt = ExpRBIntegrator._init_step(
             t, yt, self.sys, frhs_kwargs, self.tol_fdt)
-
         self.Phi.set_lop(sys_jac_lop)
 
         if self.tol_fdt >= 0. and jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
+            # phi_plan = PhiPlan(dt, (dt,), ((1, 2),))
             y_update = self.Phi.eval_phis((1, 2), dt, (fyt, dt*fytt))
         else:
+            # phi_plan = PhiPlan(dt, (dt,), ((1,),))
             y_update = self.Phi.eval_phi(1, dt, fyt)
 
         y_new = yt + dt * y_update
@@ -177,15 +182,23 @@ class ExpRBIntegrator(IntegrateSys):
         sys_jac_lop, fyt, fytt = ExpRBIntegrator._init_step(
             t, yt, self.sys, frhs_kwargs, self.tol_fdt)
 
-        self.Phi.set_lop(sys_jac_lop)
-
         # residual
         # rn = self._remf(tp, yp, fyt, sys_jac_lop, fytt)
         rn = ExpRBIntegrator._remf(
             tp, yp, t, yt, fyt, self.sys.frhs, frhs_kwargs,
             sys_jac_lop, fytt)
 
-        y_update = self.Phi.eval_phis((1, 2), dt, (fyt, (2./3.)*rn + dt*fytt))
+        phi_plan = PhiPlan(dt, (dt,), ((1, 2),))
+        phi_rhs = (fyt, (2./3.)*rn + dt*fytt)
+
+        # hardcoded switch between different equivalent implementations
+        use_plan = False
+        if use_plan:
+            self.Phi.set_lop(sys_jac_lop, phi_plan)
+            y_update = self.Phi.eval_phis_plan(phi_rhs, step=0)
+        else:
+            self.Phi.set_lop(sys_jac_lop)
+            y_update = self.Phi.eval_phis(phi_plan.ks[0], phi_plan.cdts[0], phi_rhs)
 
         y_new = yt + dt * y_update
         # no error est. avail
@@ -213,26 +226,28 @@ class ExpRBIntegrator(IntegrateSys):
         sys_jac_lop, fyt, fytt = ExpRBIntegrator._init_step(
             t, yt, self.sys, frhs_kwargs, self.tol_fdt)
 
-        self.Phi.set_lop(sys_jac_lop)
-
         if self.tol_fdt >= 0. and jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt:
-            y_update1 = self.Phi.eval_phis((1, 2), dt, (fyt, dt*fytt))
+            phi_plan = PhiPlan(dt, (dt, dt), ((1, 2), (3,)))
+            phi_rhs_0 = (fyt, dt*fytt)
         else:
-            y_update1 = self.Phi.eval_phi(1, dt, fyt)
+            phi_plan = PhiPlan(dt, (dt, dt), ((1,), (3,)))
+            phi_rhs_0 = (fyt,)
+
+        self.Phi.set_lop(sys_jac_lop, phi_plan)
 
         # 2nd stage
+        y_update1 = self.Phi.eval_phis_plan(phi_rhs_0, step=0)
         t_2 = t + dt
         y_2 = yt + dt * y_update1
 
-        # r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=fytt)
         r_2 = ExpRBIntegrator._remf(
             t_2, y_2, t, yt, fyt, self.sys.frhs, frhs_kwargs, sys_jac_lop, fytt)
 
         # compute final update
-        y_update2 = self.Phi.eval_phi(3, dt, 2.*r_2)
+        y_update2 = self.Phi.eval_phis_plan((2.*r_2,), step=1)
         y_new = y_2 + dt * y_update2
 
-        # TODO: error estimate by comparing y_2 and y_new?
+        # error estimate by comparing y_2 and y_new
         y_err = jnp.linalg.norm(y_2 - y_new, ord=jnp.inf)
 
         return StepResult(t+dt, dt, y_new, y_err)
@@ -265,8 +280,6 @@ class ExpRBIntegrator(IntegrateSys):
         sys_jac_lop, fyt, fytt = ExpRBIntegrator._init_step(
             t, yt, self.sys, frhs_kwargs, self.tol_fdt)
 
-        self.Phi.set_lop(sys_jac_lop)
-
         have_fytt = False
         if self.tol_fdt >= 0.:
             have_fytt = jnp.linalg.norm(fytt, ord=jax.numpy.inf) > self.tol_fdt
@@ -275,14 +288,26 @@ class ExpRBIntegrator(IntegrateSys):
         c_2 = 0.5
         c_3 = 1.0
 
+        # build plan
+        if have_fytt:
+            phi_plan = PhiPlan(dt,
+                               (c_2*dt, c_3*dt, dt),
+                               ((1, 2), (1, 2), (3, 4)))
+        else:
+            phi_plan = PhiPlan(dt,
+                               (c_2*dt, c_3*dt, dt),
+                               ((1,), (1,), (3, 4)))
+
+        self.Phi.set_lop(sys_jac_lop, phi_plan)
+
         # compute U_{n2}
         def f_u_n2():
             t_2 = t + c_2*dt
             if have_fytt:
-                y_2 = yt + dt * self.Phi.eval_phis((1, 2), c_2*dt, (c_2*fyt, c_2**2*dt*fytt))
+                phi_rhs = (c_2*fyt, c_2**2*dt*fytt)
             else:
-                y_2 = yt + dt * self.Phi.eval_phi(1, c_2*dt, c_2*fyt)
-            # r_2 = self._remf(t_2, y_2, fyt, sys_jac_lop, v=fytt)
+                phi_rhs = (c_2*fyt,)
+            y_2 = yt + dt * self.Phi.eval_phis_plan(phi_rhs, step=0)
             r_2 = ExpRBIntegrator._remf(
                 t_2, y_2, t, yt, fyt, self.sys.frhs, frhs_kwargs, sys_jac_lop, fytt)
             return r_2
@@ -291,10 +316,10 @@ class ExpRBIntegrator(IntegrateSys):
         def f_u_n3():
             t_3 = t + c_3*dt
             if have_fytt:
-                y_3 = yt + dt * self.Phi.eval_phis((1, 2), c_3*dt, (c_3*fyt, c_3**2*dt*fytt))
+                phi_rhs = (c_3*fyt, c_3**2*dt*fytt)
             else:
-                y_3 = yt + dt * self.Phi.eval_phi(1, c_3*dt, c_3*fyt)
-            # r_3 = self._remf(t_3, y_3, fyt, sys_jac_lop, v=fytt)
+                phi_rhs = (c_3*fyt,)
+            y_3 = yt + dt * self.Phi.eval_phis_plan(phi_rhs, step=1)
             r_3 = ExpRBIntegrator._remf(
                 t_3, y_3, t, yt, fyt, self.sys.frhs, frhs_kwargs, sys_jac_lop, fytt)
             return y_3, r_3
@@ -306,7 +331,9 @@ class ExpRBIntegrator(IntegrateSys):
         y_3, r_3 = fut_f_u_n3.result()
 
         # compute final update
-        b2_b3 = self.Phi.eval_phis((3, 4), dt, (16.0*r_2-2.0*r_3, -48.0*r_2+12.0*r_3))
+        phi_rhs_3 = (16.0*r_2-2.0*r_3, -48.0*r_2+12.0*r_3)
+        # b2_b3 = self.Phi.eval_phis((3, 4), dt, phi_rhs_3)
+        b2_b3 = self.Phi.eval_phis_plan(phi_rhs_3, step=2)
         y_new = y_3 + dt * b2_b3
 
         y_err = -1.0
