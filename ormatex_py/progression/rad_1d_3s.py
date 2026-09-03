@@ -308,9 +308,9 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
         plot_dt_jac_spec(ode_sys, y_res[-1], 0.0, dt, figname="reac_adv_diff_s3_eigplot")
 
         # plot the leja polynomial matexp-vec approx
-        if "leja" in method and "rs" not in method and kwargs.get("leja_plot", False):
+        if "leja" in args.phi_method and "rs" not in method and kwargs.get("leja_plot", False):
             plot_leja_conv_detail(ode_sys, y_res[-1], t, dt, outdir=outdir, **kwargs)
-        elif "leja" in args.phikv_method and kwargs.get("leja_plot", False):
+        elif "leja" in args.phi_method and kwargs.get("leja_plot", False):
             plot_leja_conv_detail_rs(ode_sys, y_res[-1], t, dt, outdir=outdir, **kwargs)
 
     print("=== Species MAEs at t=%0.4e ===" % t_res[-1])
@@ -346,7 +346,7 @@ if __name__ == "__main__":
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     parser.add_argument("-krylov_reuse", help="Recycle krylov vectors", action='store_true', default=False)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
-    parser.add_argument("-phikv_method", help="phi-function-vec prod method", type=str, default="leja")
+    parser.add_argument("-phi_method", help="phi-function-vec prod method", type=str, default="krylov")
     parser.add_argument("-dd_method", help="divided difference method", type=str, default="taylor")
     parser.add_argument("-max_substeps", help="max number of substeps", type=int, default=0)
     parser.add_argument("-leja_n_zeros", help="number of zeros prepended to leja sequence", type=int, default=1)
@@ -368,7 +368,7 @@ if __name__ == "__main__":
             for dt in dts:
                 mae, mae_rl = main(dt, method, True, args.mr, args.p,
                                    tf=args.tf, pfd_method=pfd_method, nu=args.nu,
-                                   phikv_method=args.phikv_method,
+                                   phi_method=args.phi_method,
                                    leja_a=args.leja_a, leja_c=args.leja_c,
                                    leja_substep=args.leja_substep, leja_tol=args.leja_tol,
                                    leja_n_zeros=args.leja_n_zeros, leja_plot=args.leja_plot,
@@ -410,7 +410,7 @@ if __name__ == "__main__":
     else:
         main(args.dt, args.method, args.per, args.mr, args.p,
              tf=args.tf, jac_plot=True, nu=args.nu,
-             phikv_method=args.phikv_method,
+             phi_method=args.phi_method,
              leja_a=args.leja_a, leja_c=args.leja_c, leja_substep=args.leja_substep,
              leja_tol=args.leja_tol, leja_n_zeros=args.leja_n_zeros,
              leja_plot=args.leja_plot, krylov_reuse=args.krylov_reuse,

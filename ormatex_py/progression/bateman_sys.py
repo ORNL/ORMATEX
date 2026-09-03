@@ -206,7 +206,7 @@ def analytic_bateman_s3(method="epi2", phi_method="krylov", do_plot=True, dt=10.
             test_ode_sys, y0, t0, dt, nsteps, method,
             phi_method=phi_method,
             max_krylov_dim=100, iom=12, pfd_method=pfd_method,
-            phikv_method="taylor", tol=1e-15)
+            tol=1e-15)
     t_res, y_res = res.t_res, res.y_res
     t_res = np.asarray(t_res)
     y_res = np.asarray(y_res)
@@ -341,7 +341,7 @@ if __name__ == "__main__":
     nsteps = int((tf - t0) / dt)
     res = integrate_wrapper.integrate(
             test_ode_sys, y0, t0, dt, nsteps, method, max_krylov_dim=280, iom=12,
-            phikv_method="leja",
+            phi_method="krylov",
             tol=1e-10, spec_iter=28, spec_method="arnoldi",
             krylov_reuse=False, osteps=1, **kwargs
             )

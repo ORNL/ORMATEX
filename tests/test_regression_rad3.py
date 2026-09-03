@@ -13,6 +13,7 @@ import skfem as fem
 import numpy as np
 import jax
 from jax import numpy as jnp
+
 jax.config.update("jax_enable_x64", True)
 
 try:
@@ -23,6 +24,7 @@ except ImportError:
 
 
 def _rad_3s(method="exprb2", phi_method="krylov"):
+
     # create the mesh
     dwidth = 1.0
     mesh0 = fem.MeshLine1(np.array([[0., dwidth]])).with_boundaries({
@@ -114,13 +116,19 @@ def _rad_3s(method="exprb2", phi_method="krylov"):
 
 
 def test_rad_3s():
+    print(f"Running on {jax.devices()} using {jnp.zeros((2, 1)).dtype} by default.")
+
     _rad_3s("exprb3", "krylov")
     _rad_3s("epi3", "krylov")
-    _rad_3s("exprb3", "leja")
-    _rad_3s("epi3", "leja")
     _rad_3s("exprb3", "pfd")
     _rad_3s("exprb3_pfd", "pfd")
+    _rad_3s("epi3", "leja")
+    _rad_3s("epi3_rs", "leja")
     _rad_3s("exp3_dense", "")
-    if HAS_ORMATEX_RUST:
-        _rad_3s("epi3_rs", phi_method="krylov")
-        _rad_3s("epi3_rs", phi_method="leja")
+    _rad_3s("exprb3", "krylov")
+    _rad_3s("epi3", "krylov")
+    _rad_3s("exprb3", "pfd")
+    _rad_3s("exprb3_pfd", "pfd")
+    _rad_3s("epi3", "leja")
+    _rad_3s("epi3_rs", "leja")
+    _rad_3s("exp3_dense", "")
