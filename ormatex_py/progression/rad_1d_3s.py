@@ -65,8 +65,7 @@ class RAD_SEM(OdeSplitSys):
 
     def __init__(self, sys_assembler: AdDiffSEM, *args, **kwargs):
         # get stiffness matrix and mass vector
-        A, self.Ml, _ = sys_assembler.assemble(**kwargs)
-        self.A = BCSR.from_bcoo(A)
+        self.A, self.Ml, _ = sys_assembler.assemble(**kwargs)
         # get collocation points
         self.xs = sys_assembler.collocation_points()
 

@@ -30,7 +30,7 @@ def _rad_3s(method="exprb2", phi_method="krylov"):
         'right': lambda x: np.isclose(x[0], dwidth)
     })
     # mesh refinement
-    mr = 6
+    mr = 7
     mesh = mesh0.refined(mr)
     mesh = fem.MeshLine1DG.periodic(
         mesh,
@@ -120,6 +120,7 @@ def test_rad_3s():
     _rad_3s("epi3", "leja")
     _rad_3s("exprb3", "pfd")
     _rad_3s("exprb3_pfd", "pfd")
+    _rad_3s("exp3_dense", "pfd")
     if HAS_ORMATEX_RUST:
         _rad_3s("epi3_rs", phi_method="krylov")
         _rad_3s("epi3_rs", phi_method="leja")
