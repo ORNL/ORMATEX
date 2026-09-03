@@ -161,8 +161,7 @@ def main(dt, method='epi3', periodic=True, mr=6, p=2, tf=1.0, jac_plot=False, nu
         'right': lambda x: np.isclose(x[0], dwidth)
     })
     # mesh refinement
-    nrefs = mr
-    mesh = mesh0.refined(nrefs)
+    mesh = mesh0.refined(mr)
 
     if periodic:
         mesh = fem.MeshLine1DG.periodic(
