@@ -170,7 +170,7 @@ The following integrators are available through the common high level `integrate
 Different integrators can be specified through the `method` keyword argument.
 
 | method | order | Impl Notes | description | Reference |
-| -------|-------|------------|--------|-------------|-----------|
+| -------|-------|------------|-------------|-----------|
 |exprb2| 2 | JAX/python | Exponential Rosenbrock order 2| https://doi.org/10.1137/080717717 |
 |exprb3| 3 | JAX/python | Exponential Rosenbrock order 3| https://doi.org/10.1137/080717717 |
 |pexprb4| 4 | JAX/python | Exponential Rosenbrock order 4| https://doi.org/10.1016/j.camwa.2016.01.020 |
