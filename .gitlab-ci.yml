@@ -48,6 +48,7 @@ debug_py:
     when: always
   script:
     - pip install -e .
+    - pip install -I scikit-fem==10.0.2
     - pytest
 
 release:

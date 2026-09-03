@@ -289,7 +289,7 @@ fn integrate_wrapper_rs<'py>(
 
     // stepper settings
     let method: String = get_val_or_default(py, &kd_hash, String::from("method"), String::from("epi2"));
-    let phi_method: String = get_val_or_default(py, &kd_hash, String::from("phi_method"), String::from("leja"));
+    let phi_method: String = get_val_or_default(py, &kd_hash, String::from("phi_method"), String::from("krylov"));
     let expmv_method: String = get_val_or_default(py, &kd_hash, String::from("expmv_method"), String::from("pade"));
     let max_krylov_dim: usize = get_val_or_default(py, &kd_hash, String::from("max_krylov_dim"), 100);
     let m: usize = get_val_or_default(py, &kd_hash, String::from("m"), max_krylov_dim);
