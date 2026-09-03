@@ -83,7 +83,7 @@ Classic integrators:
 
 For a local development install, run:
 
-    pip install -e .
+    pip install -e .[plot,fem,diffrax]
 
 After running the above, the python unit tests can be executed.
 From the project base directory (the directory this readme is located in), run:
@@ -132,7 +132,7 @@ Initialize the system and integrate
     t0 = 0.0
     dt = 0.2
     nsteps = 100
-    res = integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, method, max_krylov_dim=4, iom=2)
+    res = integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, method, phi_method='krylov', max_krylov_dim=4, iom=2)
     t_res, y_res = res.t, res.y
 
 Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, automatic differentiation will be used.
@@ -169,24 +169,48 @@ Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, au
 The following integrators are available through the common high level `integrate_wrapper.integrate` interface.
 Different integrators can be specified through the `method` keyword argument.
 
-| method | order | Impl Notes | kwargs | description | Reference |
+| method | order | Impl Notes | description | Reference |
 | -------|-------|------------|--------|-------------|-----------|
-|exprb2| 2 | JAX/python | max\_krylov\_dim, iom | Exponential Rosenbrock order 2| https://doi.org/10.1137/080717717 |
-|exprb3| 3 | JAX/python | max\_krylov\_dim, iom | Exponential Rosenbrock order 3| https://doi.org/10.1137/080717717 |
-|pexprb4| 4 | JAX/python | max\_krylov\_dim, iom | Exponential Rosenbrock order 4| https://doi.org/10.1016/j.camwa.2016.01.020 |
-|epi3| 3 | JAX/python | max\_krylov\_dim, iom | Exponential Propagation Iterative order 3| https://doi.org/10.1137/110849961 |
-|rk4 | 4 | JAX/python | | Explicit RK4  | |
-|implicit\_euler| 1 | JAX/diffrax |  | Backward Euler | |
-|implicit\_esdirk3| 3 | JAX/diffrax | | explicit singly diagonal implicit order 3 | |
-|dopri5 | 5 | JAX/diffrax | | Explicit Dormand-Prince order 5  | |
-|exprb2\_rs| 2 | Rust | max\_krylov\_dim, iom | Exponential Rosenbrock order 2| https://doi.org/10.1137/080717717 |
-|exprb3\_rs| 3 | Rust | max\_krylov\_dim, iom | Exponential Rosenbrock order 3| https://doi.org/10.1137/080717717 |
-|epi3\_rs| 3 | Rust | max\_krylov\_dim, iom | Exponential Propagation Iterative order 3| https://doi.org/10.1137/110849961 |
-|bdf1\_rs| 1 | Rust |  | Backward Euler | |
-|bdf2\_rs| 2 | Rust |  | Backward difference formula 2| |
-|cn\_rs| 2 | Rust |  | Crank-Nicolson | |
-|rk1\_rs| 1 | Rust |  | Forward Euler | |
-|rk4\_rs| 4 | Rust |  | Explicit RK4 | |
+|exprb2| 2 | JAX/python | Exponential Rosenbrock order 2| https://doi.org/10.1137/080717717 |
+|exprb3| 3 | JAX/python | Exponential Rosenbrock order 3| https://doi.org/10.1137/080717717 |
+|pexprb4| 4 | JAX/python | Exponential Rosenbrock order 4| https://doi.org/10.1016/j.camwa.2016.01.020 |
+|epi3| 3 | JAX/python | Exponential Propagation Iterative order 3| https://doi.org/10.1137/110849961 |
+|rk4 | 4 | JAX/python | Explicit RK4  | |
+|implicit\_euler| 1 | JAX/diffrax | Backward Euler | |
+|implicit\_esdirk3| 3 | JAX/diffrax | explicit singly diagonal implicit order 3 | |
+|dopri5 | 5 | JAX/diffrax | Explicit Dormand-Prince order 5  | |
+|exprb2\_rs| 2 | Rust | Exponential Rosenbrock order 2| https://doi.org/10.1137/080717717 |
+|exprb3\_rs| 3 | Rust | Exponential Rosenbrock order 3| https://doi.org/10.1137/080717717 |
+|epi3\_rs| 3 | Rust | Exponential Propagation Iterative order 3| https://doi.org/10.1137/110849961 |
+|bdf1\_rs| 1 | Rust | Backward Euler | |
+|bdf2\_rs| 2 | Rust | Backward difference formula 2| |
+|sdirk32\_rs| 3 | Rust | Singly Diagonally Implicit order 3 | |
+|cn\_rs| 2 | Rust | Crank-Nicolson | |
+|rk1\_rs| 1 | Rust | Forward Euler | |
+|rk4\_rs| 4 | Rust | Explicit RK4 | |
+
+For the exponential integrators, different $`\varphi`$-function evaluation methods are specified by the `phi_method` keyword argument.
+The $`\varphi`$-function method dictates how linear combinations of $`\varphi`$-vector products are computed.
+Available $`\varphi`$-function methods that are compatible with each integration method are listed in the following table.
+
+| method | available phi_method |
+| -------|----------------------|
+|exprb2| krylov, leja, pfd |
+|exprb2| krylov, leja, pfd |
+|exprb3| krylov, leja, pfd |
+|pexprb4| krylov, leja, pfd |
+|epi3| krylov, leja |
+|exprb2\_rs| krylov, leja, taylor |
+|exprb3\_rs| krylov, leja, taylor |
+|epi3\_rs| krylov, leja, taylor |
+
+For example,
+
+`integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, "exprb3", phi_method="krylov"`) specifies a Krylov $`\varphi`$-evaluator.
+
+`integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, "exprb3", phi_method="leja"`) specifies a Leja polynomial $`\varphi`$-evaluator.
+
+`integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, "exprb3", phi_method="pfd"`) specifies a partial fraction decomposition $`\varphi`$-evaluator.
 
 Adaptive time stepping is a work in progress. A step size controller will be optionally specified through this interface in the future.
 

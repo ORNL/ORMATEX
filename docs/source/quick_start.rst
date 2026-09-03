@@ -15,7 +15,7 @@ For a local development install, run:
 .. code::
 
     cd ORMATEX
-    pip install -e .
+    pip install -e .[plot,fem,diffrax]
 
 After running the above, the python unit tests can be executed.
 From the project base directory (the directory this readme is located in), run:
