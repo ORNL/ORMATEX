@@ -30,6 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+rust = ["maturin"]
 plot = ["matplotlib"]
 fem = ["scikit-fem"]
 diffrax = ["diffrax", "optimistix", "lineax"]

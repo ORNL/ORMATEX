@@ -47,7 +47,8 @@ debug_py:
     expire_in: 1 week
     when: always
   script:
-    - pip install -e .[plot,fem,diffrax]
+    - pip install -e .[plot,fem,diffrax,rust]
+    - maturin develop --release --features python
     - pytest
 
 release:
