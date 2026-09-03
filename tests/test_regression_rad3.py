@@ -102,7 +102,7 @@ def _rad_3s(method="exprb2", phi_method="krylov"):
     # integrate the system
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method, phi_method=phi_method,
-            max_krylov_dim=120, iom=2, tol=1e-12)
+            max_krylov_dim=90, iom=2, tol=1e-9)
     t_res, y_res = res.t_res, res.y_res
 
     # check the final result
@@ -120,7 +120,7 @@ def test_rad_3s():
     _rad_3s("epi3", "leja")
     _rad_3s("exprb3", "pfd")
     _rad_3s("exprb3_pfd", "pfd")
-    _rad_3s("exp3_dense", "pfd")
+    _rad_3s("exp3_dense", "")
     if HAS_ORMATEX_RUST:
         _rad_3s("epi3_rs", phi_method="krylov")
         _rad_3s("epi3_rs", phi_method="leja")

@@ -365,7 +365,7 @@ fn integrate_wrapper_rs<'py>(
         },
         // krylov is default
         _ => {
-            let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, std::cmp::min(100, m), m, tol, Some(iom));
+            let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, std::cmp::min(50, m), m, tol, Some(iom));
             select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
         },
     };
