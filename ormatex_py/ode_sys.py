@@ -49,6 +49,10 @@ class LinOp(eqx.Module):
     def n_domain(self):
         raise NotImplementedError
 
+    def dim(self):
+        """ Alias to n_domain. Used by Rust-bindings """
+        return self.n_domain
+
     def __call__(self, v):
         return self._matvec(v)
 

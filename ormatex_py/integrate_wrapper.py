@@ -111,8 +111,8 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, phi_method="krylov", **kwargs
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
     is_rk = method in RKIntegrator._valid_methods.keys()
     c_res = {}
+    method_str = method
     if is_rb or is_split or is_rk or is_leja:
-        method_str = method
         # init the time integrator
         if is_rb:
             sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, phi_method=phi_method, **kwargs)
@@ -130,12 +130,15 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, phi_method="krylov", **kwargs
         #wait for computation of last step to finish
         y_res[-1].block_until_ready()
     elif is_rs:
+        method_str = f"{method}<{phi_method}>"
         # try to integrate with rust ormatex integrators
         if not HAS_ORMATEX_RUST:
             raise ImportError("import ormatex_py.ormatex failed. Rust ormatex bindings not found. Run: maturin develop --release --features python")
         if not isinstance(ode_sys, PySysWrapped):
             ode_sys = PySysWrapped(OdeSysNp(ode_sys))
-        y_res, t_res = integrate_wrapper_rs(ode_sys, np.asarray(y0).reshape((-1, 1)), t0, dt, nsteps, method=str(method[0:-3]), **kwargs)
+        y_res, t_res = integrate_wrapper_rs(ode_sys, np.asarray(y0).reshape((-1, 1)),
+                                            t0, dt, nsteps, method=str(method[0:-3]),
+                                            phi_method=phi_method, **kwargs)
         y_res, t_res = np.asarray(y_res).squeeze(), np.asarray(t_res)
     else:
         try:

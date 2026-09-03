@@ -15,6 +15,12 @@ import jax
 from jax import numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
+try:
+    from ormatex_py.ormatex import complex_diag_leja_phikv_static_rs
+    HAS_ORMATEX_RUST = True
+except ImportError:
+    HAS_ORMATEX_RUST = False
+
 
 def _rad_3s(method="exprb2", phi_method="krylov"):
     # create the mesh
@@ -114,3 +120,6 @@ def test_rad_3s():
     _rad_3s("epi3", "leja")
     _rad_3s("exprb3", "pfd")
     _rad_3s("exprb3_pfd", "pfd")
+    if HAS_ORMATEX_RUST:
+        _rad_3s("epi3_rs", phi_method="krylov")
+        _rad_3s("epi3_rs", phi_method="leja")
