@@ -96,7 +96,7 @@ Initialize the system and integrate
     t0 = 0.0
     dt = 0.2
     nsteps = 100
-    res = integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, method, max_krylov_dim=4, iom=2)
+    res = integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, method, phi_method="krylov", max_krylov_dim=4, iom=2)
     t_res, y_res = res.t, res.y
 
 Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, automatic differentiation will be used.

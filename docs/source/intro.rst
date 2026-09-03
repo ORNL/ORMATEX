@@ -74,7 +74,7 @@ specified through the ``method`` keyword argument.
     ``epi3_rs``, 3 , Rust , Exponential Propagation Iterative order 3, https://doi.org/10.1137/110849961 
     ``bdf1_rs``, 1 , Rust , Backward Euler , 
     ``bdf2_rs``, 2 , Rust , Backward difference formula 2, 
-    ``sdirk32_rs``, 2 , Rust , Singly Diagonally Implicit order 3, 
+    ``sdirk32_rs``, 3 , Rust , Singly Diagonally Implicit order 3, 
     ``cn_rs``, 2 , Rust , Crank-Nicolson , 
     ``rk1_rs``, 1 , Rust , Forward Euler , 
     ``rk4_rs``, 4 , Rust , Explicit RK4 , 
