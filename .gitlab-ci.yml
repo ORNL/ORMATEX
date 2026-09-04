@@ -10,6 +10,8 @@ before_script:
   - which cargo
   - python --version
   - cargo --version
+  - python -m venv .venv
+  - source .venv/bin/activate
 
 variables:
   GIT_STRATEGY: clone
@@ -47,8 +49,9 @@ debug_py:
     expire_in: 1 week
     when: always
   script:
-    - pip install -e .
-    - pytest
+    - pip install -e .[plot,fem,diffrax,rust]
+    - maturin develop --release --features python
+    - pytest |& tee test_py.out
 
 release:
   stage: test

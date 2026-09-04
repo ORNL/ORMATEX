@@ -224,8 +224,8 @@ class AdDiffSEM:
         # provide jax arrays
         jMl = jnp.asarray(Ml)
         jA = jsp.BCOO.from_scipy_sparse(A)
-        #jA_sorted = jA.sort_indices()
-        #jA = jsp.BCSR.from_bcoo(jA_sorted)
+        # jA_sorted = jA.sort_indices()
+        # jA = jsp.BCSR.from_bcoo(jA_sorted)
         jb = jnp.asarray(b)
 
         return jA, jMl, jb
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     import argparse
 
     jax.config.update("jax_enable_x64", True)
-    print(f"Running on {jax.devices()}.")
+    print(f"Running on {jax.devices()} using {jnp.zeros((2, 1)).dtype} by default.")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-ic", help="one of [square, zero, gauss]", type=str, default="gauss")
@@ -320,9 +320,9 @@ if __name__ == "__main__":
     parser.add_argument("-nu", help="physical species bulk diffusion coefficient. 0 for no diffusion.", type=float, default=1.0e-16)
     parser.add_argument("-p", help="basis order", type=int, default=2)
     parser.add_argument("-method", help="time step method", type=str, default="epi3")
-    parser.add_argument("-phikv_method", help="time step method", type=str, default="taylor")
-    parser.add_argument("-spec_method", help="time step method", type=str, default="arnoldi")
-    parser.add_argument("-pfd_method", help="partial frac decomp method", type=str, default="CN")
+    parser.add_argument("-phi_method", help="phi evaluator method", type=str, default="krylov")
+    parser.add_argument("-spec_method", help="spec method", type=str, default="arnoldi")
+    parser.add_argument("-pfd_method", help="partial frac decomp method", type=str, default="cram_16")
     parser.add_argument("-nsteps", help="number of steps", type=int, default=10)
     parser.add_argument("-per", help="impose periodic BC", action='store_true')
     # parser.add_argument("-tf", help="final time", type=float, default=1.6)
@@ -432,9 +432,10 @@ if __name__ == "__main__":
     pfd_method = args.pfd_method
     res = integrate_wrapper.integrate(
             ode_sys, y0, t0, dt, nsteps, method,
+            phi_method=args.phi_method,
             max_krylov_dim=300, iom=2, pfd_method=pfd_method,
             leja_c=args.leja_c, leja_a=args.leja_a, dd_method=args.dd_method,
-            logging=True, phikv_method=args.phikv_method, krylov_reuse=args.krylov_reuse,
+            logging=True, krylov_reuse=args.krylov_reuse,
             spec_method=args.spec_method, spec_iter=30, tol=1e-13,
             )
     t_res, y_res = res.t_res, res.y_res
@@ -462,7 +463,7 @@ if __name__ == "__main__":
     plt.grid(ls='--')
     plt.ylabel('u')
     plt.xlabel('x')
-    plt.title("Method=%s, $C$=%0.2e, $v_{adv.}$=%0.2e \n $tau$=%0.2e, $\Delta$ t=%0.2e, $\Delta$ x=%0.2e" % (method, cfl, vel, args.tau, dt, mesh_spacing))
+    plt.title("Method=%s, $C$=%0.2e, $v_{adv.}$=%0.2e \n $tau$=%0.2e, $\\Delta$ t=%0.2e, $\\Delta$ x=%0.2e" % (method, cfl, vel, args.tau, dt, mesh_spacing))
     plt.savefig('adv_diff_1d_%s_%s_%s_%s.png' % (method, str(args.mr), str(args.ic), str(tf)))
     plt.close()
 

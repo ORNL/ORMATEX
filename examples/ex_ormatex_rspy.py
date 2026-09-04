@@ -54,13 +54,13 @@ class LotkaVolterra(OdeSys):
         return np.asarray(self._fjac(t, x, **kwargs).dense())
 
 
-def run_model(dt, nsteps, method="exprb2_rs", tol_fdt=1.0e-6, ft_scale=1.0, phikv_method="krylov"):
+def run_model(dt, nsteps, method="exprb2_rs", tol_fdt=1.0e-6, ft_scale=1.0, phi_method="krylov"):
     # Step the system forward
     t0 = 0.0
     y0 = np.array([0.1, 0.2])
     sys = LotkaVolterra(ft_scale=ft_scale)
     res = integrate(sys, y0, t0, dt, nsteps,
-                    method=method, m=20, tol_fdt=tol_fdt, phikv_method=phikv_method)
+                    method=method, m=20, tol_fdt=tol_fdt, phi_method=phi_method)
     y0 = jnp.array(y0.flatten())
     # Check against dopri5 in diffrax
     res_expected = integrate(LotkaVolterra(ft_scale=ft_scale), y0, t0, dt, nsteps,
@@ -81,7 +81,7 @@ if __name__ == "__main__":
                         "exprb2_rs, exprb3_rs, epi3_rs, exprb3_pfd, exprb2, exprb3, epi3. "
                         "Methods ending in _rs are rust impl. Others are python/JAX impl.",
                         type=str, default="epi3_rs")
-    parser.add_argument("-phikv_method", help="PhiEvaluator method. Valid methods are: "
+    parser.add_argument("-phi_method", help="PhiEvaluator method. Valid methods are: "
                         "krylov, leja", type=str, default="krylov")
     parser.add_argument("-ft_scale", help="Forcing term scale", type=float, default=1.0)
     parser.add_argument("-dt", help="time step size", type=float, default=0.05)
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     t_out, y_out, t_true, y_true = run_model(
             args.dt, args.nsteps, args.method, args.tol_fdt, ft_scale=args.ft_scale,
-            phikv_method=args.phikv_method)
+            phi_method=args.phi_method)
     # Visualize results
     print(y_out)
     plt.figure()

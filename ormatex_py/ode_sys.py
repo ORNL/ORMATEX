@@ -25,7 +25,9 @@ from discussion here:  https://github.com/jax-ml/jax/discussions/10598
 """
 from abc import ABCMeta
 from abc import abstractmethod, abstractproperty
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from typing import Optional
+import inspect
 import numpy as np
 from functools import partial
 from collections import deque
@@ -41,6 +43,15 @@ class LinOp(eqx.Module):
     @abstractmethod
     def _matvec(self, v):
         raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def n_domain(self):
+        raise NotImplementedError
+
+    def dim(self):
+        """ Alias to n_domain. Used by Rust-bindings """
+        return self.n_domain
 
     def __call__(self, v):
         return self._matvec(v)
@@ -73,6 +84,10 @@ class EyeLinOp(LinOp):
     def _matvec(self, v):
         return v
 
+    @property
+    def n_domain(self):
+        return self.n
+
     def _dense(self):
         return jnp.eye(self.n)
 
@@ -90,6 +105,10 @@ class DiagLinOp(LinOp):
     @jax.jit
     def _matvec(self, v):
         return self.d * v
+
+    @property
+    def n_domain(self):
+        return self.d.shape[0]
 
     def _dense(self):
         return jnp.diag(self.d)
@@ -112,11 +131,15 @@ class MatrixLinOp(LinOp):
         print("jit-compiling MatrixLinOp._matvec")
         return self.a @ b
 
+    @property
+    def n_domain(self):
+        return self.a.shape[1]
+
     def _dense(self) -> jax.Array:
         if isinstance(self.a, jax.Array):
             return self.a
         else:
-            #convert sparse array to dense
+            # convert sparse array to dense
             return self.a.todense()
 
 
@@ -163,6 +186,10 @@ class AugMatrixLinOp(LinOp):
         res = jnp.concat((ab_v, k_v))
         return res
 
+    @property
+    def n_domain(self):
+        return self.a_lo.n_domain + self.B.shape[1]
+
     def _dense(self):
         raise NotImplementedError
 
@@ -199,11 +226,12 @@ class SysJacLinOp(LinOp):
         """
         return self._frhs(self._t, self._u, **self._frhs_kwargs)
 
-    def dim(self) -> int:
+    @property
+    def n_domain(self) -> int:
         """
-        Operator dimension
+        Operator input/domain dimension
         """
-        return len(self._u)
+        return self._u.shape[0]
 
 
 class CustomJacLinOp(SysJacLinOp):
@@ -298,6 +326,7 @@ class AdJacLinOp(SysJacLinOp):
         """
         Define the (dense) jacobian of frhs.
         """
+        print("jit-compiling AdJacLinOp._dense")
         return jax.vmap(self._matvec, in_axes=(1), out_axes=1)(jnp.eye(self._u.shape[0]))
 
 
@@ -440,6 +469,7 @@ class OdeSplitSys(OdeSys):
     where L(t, U) is a (potentially time and state dependent) LinOp,
     different from the Jacobian.
     """
+
     def __init__(self, *args, **kwargs):
         pass
 
@@ -520,6 +550,25 @@ class IntegrateSys(metaclass=ABCMeta):
     # list of valid methods
     _valid_methods = {}
 
+    # decorator to annotate new valid methods
+    def register_method(names: Iterable[str], order: int, default_phi: Optional[str] = None):
+        def method_decorator(func):
+            func._is_valid_method = True
+            func.names = names
+            func.order = order
+            func.default_phi = default_phi
+            return func
+        return method_decorator
+
+    # class decorator to build _valid_methods
+    def populate_valid_methods(cls):
+        def is_valid_method(member):
+            return hasattr(member, "_is_valid_method")
+        for _, method_fun in inspect.getmembers(cls, is_valid_method):
+            for name in method_fun.names:
+                cls._valid_methods[name] = method_fun
+        return cls
+
     # defines the rhs of the system of odes
     sys: OdeSys
     # current time
@@ -560,7 +609,7 @@ class IntegrateSys(metaclass=ABCMeta):
 
     def accept_step(self, s: StepResult):
         """
-        default implementation, maybe overridden
+        default implementation, may be overridden
 
         Args:
             s: Step result

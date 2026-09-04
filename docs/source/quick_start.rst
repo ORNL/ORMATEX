@@ -15,7 +15,7 @@ For a local development install, run:
 .. code::
 
     cd ORMATEX
-    pip install -e .
+    pip install -e .[plot,fem,diffrax]
 
 After running the above, the python unit tests can be executed.
 From the project base directory (the directory this readme is located in), run:
@@ -96,7 +96,7 @@ Initialize the system and integrate
     t0 = 0.0
     dt = 0.2
     nsteps = 100
-    res = integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, method, max_krylov_dim=4, iom=2)
+    res = integrate_wrapper.integrate(sys, y0, t0, dt, nsteps, method, phi_method="krylov", max_krylov_dim=4, iom=2)
     t_res, y_res = res.t, res.y
 
 Optionally, an explicit Jacobian can be supplied.  If not supplied, as above, automatic differentiation will be used.

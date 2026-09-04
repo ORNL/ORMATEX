@@ -289,7 +289,7 @@ fn integrate_wrapper_rs<'py>(
 
     // stepper settings
     let method: String = get_val_or_default(py, &kd_hash, String::from("method"), String::from("epi2"));
-    let phikv_method: String = get_val_or_default(py, &kd_hash, String::from("phikv_method"), String::from("krylov"));
+    let phi_method: String = get_val_or_default(py, &kd_hash, String::from("phi_method"), String::from("krylov"));
     let expmv_method: String = get_val_or_default(py, &kd_hash, String::from("expmv_method"), String::from("pade"));
     let max_krylov_dim: usize = get_val_or_default(py, &kd_hash, String::from("max_krylov_dim"), 100);
     let m: usize = get_val_or_default(py, &kd_hash, String::from("m"), max_krylov_dim);
@@ -326,7 +326,7 @@ fn integrate_wrapper_rs<'py>(
     };
 
     // setup the time integrator
-    let solver = match phikv_method.as_str() {
+    let solver = match phi_method.as_str() {
         "leja" => {
             let lp = matexp_leja::LejaPoints::new_from_fn("leja_circle").slice(0, m+2);
             let mut matexp_m = match spec_method.as_str() {
@@ -365,7 +365,7 @@ fn integrate_wrapper_rs<'py>(
         },
         // krylov is default
         _ => {
-            let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, std::cmp::min(100, m), m, tol, Some(iom));
+            let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, std::cmp::min(50, m), m, tol, Some(iom));
             select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
         },
     };

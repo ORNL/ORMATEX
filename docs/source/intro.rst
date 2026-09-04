@@ -23,7 +23,7 @@ Classic integrators:
 -  ☒ BDF2
 -  ☒ Crank-Nicolson
 -  ☐ DIRK
--  ☐ SDIRK
+-  ☒ SDIRK
 
 Python
 ~~~~~~
@@ -59,23 +59,24 @@ The following integrators are available through the common high level
 specified through the ``method`` keyword argument.
 
 .. csv-table::
-    :header: method , order , Impl Notes , kwargs , description , Reference
+    :header: method , order , Impl Notes , description , Reference
 
-    ``exprb2``, 2 , JAX/python , max_krylov_dim; iom , Exponential Rosenbrock order 2, https://doi.org/10.1137/080717717
-    ``exprb3``, 3 , JAX/python , max\_krylov\_dim; iom , Exponential Rosenbrock order 3, https://doi.org/10.1137/080717717 
-    ``pexprb4``, 4 , JAX/python , max\_krylov\_dim; iom , Parallel Exponential Rosenbrock order 4, https://doi.org/10.1016/j.camwa.2016.01.020 
-    ``epi3``, 3 , JAX/python , max\_krylov\_dim; iom , Exponential Propagation Iterative order 3, https://doi.org/10.1137/110849961 
-    ``rk4`` , 4 , JAX/python , , Explicit RK4  , 
-    ``implicit_euler`` , 1 , JAX/diffrax ,  , Backward Euler , 
-    ``implicit_esdirk3``, 3 , JAX/diffrax , , explicit singly diagonal implicit order 3 , 
-    ``dopri5`` , 5 , JAX/diffrax , , Explicit Dormand-Prince order 5  , 
-    ``exprb2_rs``, 2 , Rust , max\_krylov\_dim; iom , Exponential Rosenbrock order 2, https://doi.org/10.1137/080717717 
-    ``exprb3_rs``, 3 , Rust , max\_krylov\_dim; iom , Exponential Rosenbrock order 3, https://doi.org/10.1137/080717717 
-    ``epi3_rs``, 3 , Rust , max\_krylov\_dim; iom , Exponential Propagation Iterative order 3, https://doi.org/10.1137/110849961 
-    ``bdf1_rs``, 1 , Rust ,  , Backward Euler , 
-    ``bdf2_rs``, 2 , Rust ,  , Backward difference formula 2, 
-    ``cn_rs``, 2 , Rust ,  , Crank-Nicolson , 
-    ``rk1_rs``, 1 , Rust ,  , Forward Euler , 
-    ``rk4_rs``, 4 , Rust ,  , Explicit RK4 , 
+    ``exprb2``, 2 , JAX/python , Exponential Rosenbrock order 2, https://doi.org/10.1137/080717717
+    ``exprb3``, 3 , JAX/python , Exponential Rosenbrock order 3, https://doi.org/10.1137/080717717 
+    ``pexprb4``, 4 , JAX/python , Parallel Exponential Rosenbrock order 4, https://doi.org/10.1016/j.camwa.2016.01.020 
+    ``epi3``, 3 , JAX/python , Exponential Propagation Iterative order 3, https://doi.org/10.1137/110849961 
+    ``rk4`` , 4 , JAX/python , Explicit RK4  , 
+    ``implicit_euler`` , 1 , JAX/diffrax , Backward Euler , 
+    ``implicit_esdirk3``, 3 , JAX/diffrax , explicit singly diagonal implicit order 3 , 
+    ``dopri5`` , 5 , JAX/diffrax , Explicit Dormand-Prince order 5  , 
+    ``exprb2_rs``, 2 , Rust , Exponential Rosenbrock order 2, https://doi.org/10.1137/080717717 
+    ``exprb3_rs``, 3 , Rust , Exponential Rosenbrock order 3, https://doi.org/10.1137/080717717 
+    ``epi3_rs``, 3 , Rust , Exponential Propagation Iterative order 3, https://doi.org/10.1137/110849961 
+    ``bdf1_rs``, 1 , Rust , Backward Euler , 
+    ``bdf2_rs``, 2 , Rust , Backward difference formula 2, 
+    ``sdirk32_rs``, 3 , Rust , Singly Diagonally Implicit order 3, 
+    ``cn_rs``, 2 , Rust , Crank-Nicolson , 
+    ``rk1_rs``, 1 , Rust , Forward Euler , 
+    ``rk4_rs``, 4 , Rust , Explicit RK4 , 
 
 The Rust-based integrators can be accessed through the common python ``integrate_wrapper.integrate`` interface after the Rust-Python bindings are built and installed.  Alternatively, the Rust integrator implementations can be used directly from a Rust-based program.

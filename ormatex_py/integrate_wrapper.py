@@ -95,9 +95,18 @@ class TimeStepController:
         return accepted, np.copysign(next_dt, dt)
 
 
-def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
+def integrate(ode_sys: OdeSys, y0: jax.Array, t0: float, dt: float, nsteps: int, method: str, phi_method: str="krylov", **kwargs) -> IntegrateResult:
     """
     High level interface to all time integration methods in ORMATEX.
+
+    Args:
+        ode_sys: system of ordinary differential equations to solve.
+        y0: inital state.
+        t0: initial time.
+        dt: time step size.
+        nsteps: number of time steps to perform.
+        method: name of the time integration method.
+        phi_method: method used to evaluate phi-function-vector products
     """
     tic = time.perf_counter()
     step_controller = kwargs.pop("step_controller", None)
@@ -111,10 +120,12 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
     is_split = method in ExpSplitIntegrator._valid_methods.keys()
     is_rk = method in RKIntegrator._valid_methods.keys()
     c_res = {}
+    method_str = method
     if is_rb or is_split or is_rk or is_leja:
         # init the time integrator
         if is_rb:
-            sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, **kwargs)
+            sys_int = ExpRBIntegrator(ode_sys, t0, y0, method=method, phi_method=phi_method, **kwargs)
+            method_str = f"{method}<{phi_method}>"
         elif is_leja:
             sys_int = ExpLejaIntegrator(ode_sys, t0, y0, method=method, **kwargs)
         elif is_split:
@@ -123,17 +134,19 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
             sys_int = RKIntegrator(ode_sys, t0, y0, method=method, **kwargs)
 
         t_res, y_res, c_res = integrate_ormatex(sys_int, y0, t0, dt, nsteps, method=method,
-                                          step_controller=step_controller,
-                                          **kwargs)
+                                                step_controller=step_controller, **kwargs)
         #wait for computation of last step to finish
         y_res[-1].block_until_ready()
     elif is_rs:
+        method_str = f"{method}<{phi_method}>"
         # try to integrate with rust ormatex integrators
         if not HAS_ORMATEX_RUST:
             raise ImportError("import ormatex_py.ormatex failed. Rust ormatex bindings not found. Run: maturin develop --release --features python")
         if not isinstance(ode_sys, PySysWrapped):
             ode_sys = PySysWrapped(OdeSysNp(ode_sys))
-        y_res, t_res = integrate_wrapper_rs(ode_sys, np.asarray(y0).reshape((-1, 1)), t0, dt, nsteps, method=str(method[0:-3]), **kwargs)
+        y_res, t_res = integrate_wrapper_rs(ode_sys, np.asarray(y0).reshape((-1, 1)),
+                                            t0, dt, nsteps, method=str(method[0:-3]),
+                                            phi_method=phi_method, **kwargs)
         y_res, t_res = np.asarray(y_res).squeeze(), np.asarray(t_res)
     else:
         try:
@@ -147,7 +160,7 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, **kwargs):
         y_res[-1].block_until_ready()
     toc = time.perf_counter()
 
-    print(f"Integrated system with {method} in {toc - tic:0.4f} seconds")
+    print(f"Integrated system with {method_str} in {toc - tic:0.4f} seconds")
     return IntegrateResult(t_res, y_res, c_res, 0)
 
 

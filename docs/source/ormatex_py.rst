@@ -52,6 +52,14 @@ ormatex\_py.matexp\_phi\_pfd\_dict module
    :show-inheritance:
    :undoc-members:
 
+ormatex\_py.matexp\_poly module
+-------------------------------
+
+.. automodule:: ormatex_py.matexp_poly
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 ormatex\_py.ode\_exp module
 ---------------------------
 
@@ -88,6 +96,14 @@ ormatex\_py.ormatex module
 --------------------------
 
 .. automodule:: ormatex_py.ormatex
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+ormatex\_py.phi\_evaluator module
+---------------------------------
+
+.. automodule:: ormatex_py.phi_evaluator
    :members:
    :show-inheritance:
    :undoc-members:
