@@ -38,10 +38,12 @@ except ImportError:
 class PhiPlan(eqx.Module):
     r"""
     Provides a plan of
+
     - timestep size dt (converted to a jax.Array)
     - local timestep sizes cdt = c*dt (converted to a jax.Array,
       to ensure we do not introduce any new dtype conversions)
     - and phi orders k as a list of lists of int
+
     to PhiEvaluatorModule at init time.
     """
     dt: jax.Array = eqx.field(converter=jnp.asarray)
@@ -147,7 +149,9 @@ class PhiEvaluator():
         Evaluates a linear combination of phi function applications
         for all k in the tuple ks and vector rhs b in the tuple bs
         for the (intermediate) stepsize cdt (:math:`\tau = c*\Delta{t}`)
+
         .. math::
+
             w(\tau) = \sum_{j} \varphi_{k_j}(\tau A) b_{j}
         """
         if not hasattr(self, 'Phi'):
@@ -160,7 +164,9 @@ class PhiEvaluator():
         Evaluates a linear combination of phi function applications
         for all k in the tuple ks and vector rhs b in the tuple bs
         for the (intermediate) stepsize cdt (:math:`\tau = c*\Delta{t}`)
+
         .. math::
+
             w(\tau) = \sum_{j} \varphi_{k_j}(\tau A) b_{j}
         """
         if not hasattr(self, 'Phi'):

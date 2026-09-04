@@ -133,7 +133,9 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb2(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Exponential Euler, computes the solution update by:
+
         .. math::
+
             y_{t+1} = y_t + dt*\varphi_1(dt*J)F(t, y_t) + dt**2*\varphi_2(dt*J)F'(t, y_t)
 
         where J is the Jacobian matrix and varphi is computed using a general PhiEvaluator
@@ -167,12 +169,14 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_epi3(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Exponential Propagation Integrator 3, computes the solution update by:
+
         .. math::
+
             y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)
                     + (2/3)*dt*\varphi_2(dt*J_t)R(t, y_t, y_{t-1})
                     + dt**2*\varphi_2(dt*J_t)F'(t, y_t)
 
-        doi:
+        Ref doi: https://doi.org/10.1137/110849961
         """
         t = self.t
         yt = self.y_hist[0] # y_t
@@ -210,7 +214,9 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exprb3(self, dt: float, frhs_kwargs: dict) -> StepResult:
         """
         Exponential Rosenbrock 3, computes the solution update by:
+
         .. math::
+
             y_{t+1} = y_t + dt*\varphi_1(dt*J_t)F(t, y_t)
                     + 2*dt*\varphi_3(dt*J_t)R_2
                     + dt**2*\varphi_2(dt*J_t)F'(t, y_t)

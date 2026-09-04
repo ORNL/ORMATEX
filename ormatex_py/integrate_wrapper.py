@@ -95,9 +95,18 @@ class TimeStepController:
         return accepted, np.copysign(next_dt, dt)
 
 
-def integrate(ode_sys, y0, t0, dt, nsteps, method, phi_method="krylov", **kwargs):
+def integrate(ode_sys: OdeSys, y0: jax.Array, t0: float, dt: float, nsteps: int, method: str, phi_method: str="krylov", **kwargs) -> IntegrateResult:
     """
     High level interface to all time integration methods in ORMATEX.
+
+    Args:
+        ode_sys: system of ordinary differential equations to solve.
+        y0: inital state.
+        t0: initial time.
+        dt: time step size.
+        nsteps: number of time steps to perform.
+        method: name of the time integration method.
+        phi_method: method used to evaluate phi-function-vector products
     """
     tic = time.perf_counter()
     step_controller = kwargs.pop("step_controller", None)
@@ -125,8 +134,7 @@ def integrate(ode_sys, y0, t0, dt, nsteps, method, phi_method="krylov", **kwargs
             sys_int = RKIntegrator(ode_sys, t0, y0, method=method, **kwargs)
 
         t_res, y_res, c_res = integrate_ormatex(sys_int, y0, t0, dt, nsteps, method=method,
-                                          step_controller=step_controller,
-                                          **kwargs)
+                                                step_controller=step_controller, **kwargs)
         #wait for computation of last step to finish
         y_res[-1].block_until_ready()
     elif is_rs:
