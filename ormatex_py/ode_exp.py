@@ -407,14 +407,18 @@ class ExpRBIntegrator(IntegrateSys):
     def _step_exp(self, dt: float, frhs_kwargs: dict) -> StepResult:
         r"""
         Computes the solution update by:
-            y_{t+1} = \varphi_0(dt*J)*y0
-        where J is the Jacobian matrix
+
+        .. math::
+
+            y_{t+1} = \varphi_0(\Delta t J) y_t
+
+        where J is the Jacobian matrix.
         NOTE: Only useful for purely linear systems
         """
         t = self.t
         yt = self.y_hist[0]
 
-        sys_jac_lop = self.sys.fjac(t, yt)
+        sys_jac_lop = self.sys.fjac(t, yt, **frhs_kwargs)
         self.Phi.set_lop(sys_jac_lop)
 
         fyt = sys_jac_lop._frhs_cached()
