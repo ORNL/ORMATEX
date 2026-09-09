@@ -44,6 +44,16 @@ decay_lib_1 = {
     'cs_135': ('none', np.log(2.) / (1.33e6*365*24*3600) ),
 }
 
+
+def to_scalar(val):
+    """
+    Helper method to convert a python array with len==1 to a float
+    """
+    tmp_arr = np.asarray(val)
+    assert tmp_arr.size <= 1
+    return tmp_arr.item()
+
+
 def gen_bateman_matrix(keymap: list, bateman_lib: dict) -> jax.Array:
     r"""
     Represents nuclear decay chain reactions of the form:
@@ -76,7 +86,7 @@ def gen_bateman_matrix(keymap: list, bateman_lib: dict) -> jax.Array:
         if isinstance(bateman_lib[key][0], tuple):
             for child_lambda_pair in bateman_lib[key]:
                 child_species = child_lambda_pair[0]
-                decay_const = child_lambda_pair[1]
+                decay_const = to_scalar(child_lambda_pair[1])
                 if child_species == 'none':
                     dest = i
                 else:
@@ -87,7 +97,7 @@ def gen_bateman_matrix(keymap: list, bateman_lib: dict) -> jax.Array:
         else:
             # lambda = ln(2)/T_1/2 where T_1/2 if the half life in s
             child_species = bateman_lib[key][0]
-            decay_const = bateman_lib[key][1]
+            decay_const = to_scalar(bateman_lib[key][1])
             if child_species == 'none':
                 dest = i
             else:

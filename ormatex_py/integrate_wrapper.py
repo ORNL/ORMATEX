@@ -235,7 +235,7 @@ def integrate_ormatex(sys_int, y0, t0, dt, nsteps, method="exprb2",
                     "callback_after_step_accept": [],
                     "callback_after_step_reject": [],}
 
-    if dt <= 0.0:
+    if dt <= 0.0 and step_controller is not None:
         raise ValueError("dt must be positive")
     if nsteps <= 0:
         raise ValueError("nsteps must be positive")
