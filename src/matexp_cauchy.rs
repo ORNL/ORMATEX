@@ -18,7 +18,8 @@ use faer::prelude::*;
 use rayon::prelude::*;
 use crate::mat_utils::{real_mat, complex_mat_scale, mat_pow};
 use crate::matexp_traits::DensePhikvEvaluator;
-use faer::linalg::solvers::{Solve, DenseSolveCore};
+use faer::linalg::solvers::{Solve, DenseSolveCore, PartialPivLu};
+use num_complex::Complex;
 
 
 #[derive(Debug)]
@@ -32,6 +33,9 @@ pub struct CauchyExpm
 
     /// offset
     alpha_0: c64,
+
+    /// LU decomp storage
+    lu_factors: Option<Vec<PartialPivLu<Complex<f64>>>>,
 }
 
 impl CauchyExpm {
@@ -42,7 +46,8 @@ impl CauchyExpm {
         Self {
             theta: theta.to_owned(),
             alpha: alpha.to_owned(),
-            alpha_0: alpha_0
+            alpha_0: alpha_0,
+            lu_factors: None,
         }
     }
 
@@ -60,15 +65,7 @@ impl CauchyExpm {
         // scaled a and conv. to complex
         let a_dt: Mat<c64> = complex_mat_scale(a, dt);
 
-        // loop over poles
-        // let mut exp_a: Mat<c64> = Mat::zeros(dim, dim);
-        // for k in 0..s {
-        //     let tmp_a = a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref();
-        //     // pseudo inverse used here as A may be only left invertible
-        //     let _tmp_a_qr = tmp_a.qr();
-        //     exp_a = exp_a + _tmp_a_qr.inverse() * Scale(self.alpha[(k, 0)]);
-        // }
-        // same as above in parallel
+        // loop over poles in parallel
         let exp_a: Mat<c64> = (0..s).into_par_iter().map(|k| {
                 let tmp_a = a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref();
                 let _tmp_a_qr = tmp_a.qr();
@@ -123,88 +120,103 @@ impl CauchyExpm {
     /// Computes exp(A*dt)*v0 for dense A
     pub fn matexp_dense_apply_cauchy(&self, a: MatRef<f64>, dt: f64, v0: MatRef<f64>) -> Mat<f64>
     {
-        let s = self.theta.nrows();
-        let dim = a.nrows();
-        let ident: Mat<c64> = Mat::identity(dim, dim);
-
-        // cast v0 to complex
-        let v0_complex = complex_mat_scale(v0.as_ref(), 1.0);
-
-        // scaled a and conv. to complex
-        let a_dt: Mat<c64> = complex_mat_scale(a, dt);
-
-        // loop over poles
-        // let mut out_v: Mat<c64> = Mat::zeros(dim, 1);
-        // for k in 0..s {
-        //     let tmp_a = a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref();
-        //     let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
-        //     let _lu_tmp_a = tmp_a.partial_piv_lu();
-        //     // solve the dense linear system
-        //     out_v = out_v + _lu_tmp_a.solve(tmp_b.as_ref());
-        // }
-        // same as above in parallel
-        let out_v: Mat<c64> = (0..s).into_par_iter().map(|k| {
-                let tmp_a = a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref();
-                let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
-                let _lu_tmp_a = tmp_a.partial_piv_lu();
-                // solve the dense linear system
-                _lu_tmp_a.solve(tmp_b.as_ref())
-            }).reduce_with(|a, b| a + b).unwrap();
-
-        // take real components
-        let mut r_v = 2. * real_mat(out_v.as_ref());
-        // apply shift
-        r_v = r_v + Scale(self.alpha_0.re)*v0.as_ref();
-        r_v
+        self.phik_dense_apply_cauchy(a, dt, v0, vec![0])
     }
 
-    /// Computes phi_l(A*dt)*v0 for dense A using fixed poles for all phi_l
+    /// Computes [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]
+    /// with a single solve with multiple RHS.
+    ///
     /// T. Schmelzer and L. Trefethen. Evaluating Matrix Functions for
     /// Exponential Integrators via Caratheodory-Fejer Approximation
     /// and Contour Integrals. Electronic Transactions on Numerical Analysis. v 29. 2007.
-    pub fn phik_dense_apply_cauchy(&self, a: MatRef<f64>, dt: f64, v0: MatRef<f64>, l: usize) -> Mat<f64>
+    pub fn phik_dense_apply_cauchy(&self, a: MatRef<f64>, dt: f64, vb: MatRef<f64>, ks: Vec<usize>) -> Mat<f64>
     {
+        assert!(vb.ncols() == ks.len());
         let s = self.theta.nrows();
         let dim = a.nrows();
         let ident: Mat<c64> = Mat::identity(dim, dim);
 
-        // cast v0 to complex
-        let v0_complex = complex_mat_scale(v0.as_ref(), 1.0);
+        // cast vb to complex
+        let vb_complex = complex_mat_scale(vb.as_ref(), 1.0);
 
         // scaled a and conv. to complex
         let a_dt: Mat<c64> = complex_mat_scale(a, dt);
 
-        // loop over poles
-        // let mut out_v: Mat<c64> = Mat::zeros(dim, 1);
-        // for k in 0..s {
-        //     let zk = self.theta[(k, 0)].powi(l as i32);
-        //     let tmp_a = zk * (a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref());
-        //     let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
-        //     let _lu_tmp_a = tmp_a.partial_piv_lu();
-        //     // solve the dense linear system
-        //     out_v = out_v + _lu_tmp_a.solve(tmp_b.as_ref());
-        // }
-        // same as above in parallel
-        let out_v: Mat<c64> = (0..s).into_par_iter().map(|k| {
-                let zk = self.theta[(k, 0)].powi(l as i32);
-                let tmp_a = Scale(zk) * (a_dt.as_ref() - Scale(self.theta[(k, 0)])*ident.as_ref());
-                let _lu_tmp_a = tmp_a.partial_piv_lu();
-                let tmp_b = Scale(self.alpha[(k, 0)]) * v0_complex.as_ref();
-                // solve the dense linear system
-                _lu_tmp_a.solve(tmp_b.as_ref())
+        // loop over poles in parallel
+        let out_v: Mat<c64> = (0..s).into_par_iter().map(|i| {
+                let zk = ks.iter().map(|k| {
+                    2.0 * self.alpha[(i, 0)] /
+                    self.theta[(i, 0)].powi(*k as i32)
+                }).collect::<Vec<Complex<f64>>>();
+                let coeffs_i = faer::ColRef::from_slice(&zk).as_mat();
+                // Solve the linear system
+                let solved = match &self.lu_factors {
+                    Some(lu_factors) => {
+                        // re-use LU decomp if available
+                        lu_factors[i].solve(vb_complex.as_ref())
+                    },
+                    _ => {
+                        let _tmp_a = a_dt.as_ref() - Scale(self.theta[(i, 0)])*ident.as_ref();
+                        let lu = _tmp_a.partial_piv_lu();
+                        // solve with multiple RHS
+                        lu.solve(vb_complex.as_ref())
+                    }
+                };
+
+                // Apply the PFD coefficients and sum the RHS columns.
+                solved * coeffs_i
             }).reduce_with(|a, b| a + b).unwrap();
 
         // take real components
-        let mut r_v = 2. * real_mat(out_v.as_ref());
-        // apply shift
-        r_v = r_v + Scale(self.alpha_0.re)*v0.as_ref();
+        let mut r_v = real_mat(out_v.as_ref());
+
+        // If phi_0 was requested, apply shift
+        for (idx, &k) in ks.iter().enumerate() {
+            // only apply shift to phi_0 col
+            if k == 0 {
+                let mut r_col = r_v.col_mut(idx);
+                r_col += Scale(self.alpha_0.re) * vb.col(idx);
+            }
+        }
+
         r_v
     }
 }
 
 impl DensePhikvEvaluator for CauchyExpm {
-    fn phik_apply(&self, a: MatRef<f64>, dt: f64, v0: MatRef<f64>, k: usize) -> Mat<f64> {
-        self.phik_dense_apply_cauchy(a, dt, v0, k)
+    fn apply_phi_k(&self, a: MatRef<f64>, dt: f64, v0: MatRef<f64>, k: usize) -> Mat<f64> {
+        self.phik_dense_apply_cauchy(a, dt, v0, vec![k])
+    }
+
+    fn apply_phi_k_v(&self, a: MatRef<f64>, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64>
+    {
+        assert!(!vb.is_empty());
+        let ks: Vec<usize> = (0..vb.len()).collect();
+        let mut vb_mat = Mat::zeros(a.nrows(), vb.len());
+        for (j, v) in vb.iter().enumerate() {
+            assert!(v.nrows() == a.nrows());
+            assert!(v.ncols() == 1);
+            vb_mat.col_mut(j).copy_from(v.col(0));
+        }
+        self.phik_dense_apply_cauchy(a, dt, vb_mat.as_ref(), ks)
+    }
+
+    fn apply_prepare(&mut self, a: MatRef<f64>, dt: f64, _v0: MatRef<f64>, _k: usize)
+    {
+        let s = self.theta.nrows();
+        let dim = a.nrows();
+        let ident: Mat<c64> = Mat::identity(dim, dim);
+
+        // scaled a and conv. to complex
+        let a_dt: Mat<c64> = complex_mat_scale(a, dt);
+
+        // loop over poles in parallel, compute LU decompositions
+        let out_lu: Vec<PartialPivLu<Complex<f64>>> = (0..s).into_par_iter().map(|i| {
+                let tmp_a = a_dt.as_ref() - Scale(self.theta[(i, 0)])*ident.as_ref();
+                tmp_a.partial_piv_lu()
+            }).collect();
+
+        self.lu_factors = Some(out_lu)
     }
 }
 
@@ -287,16 +299,20 @@ mod test_matexp_cauchy {
     // bring everything from above (parent) module into scope
     use super::*;
 
-    #[test]
-    fn test_cauchy_matexp() {
-        // initialize
-        let cram = gen_cram_expm(16);
-
+    fn _gen_test_a() -> Mat<f64> {
         let test_a: Mat<f64> = mat![
             [-1.0e00,  0.0e+00,  0.0e+00],
             [ 1.0e00, -1.0e+02,  0.0e+00],
             [ 0.0e00,  1.0e+02, -1.0e-02],
         ];
+        test_a
+    }
+
+    #[test]
+    fn test_cauchy_matexp() {
+        // initialize
+        let cram = gen_cram_expm(16);
+        let test_a = _gen_test_a();
         let dt = 1.0;
         // compute matexp using pade
         let pade_exp_a = matexp(test_a.as_ref(), dt);
@@ -312,12 +328,7 @@ mod test_matexp_cauchy {
     fn test_cauchy_phi() {
         // initialize
         let cram = gen_cram_expm(16);
-
-        let test_a: Mat<f64> = mat![
-            [-1.0e00,  0.0e+00,  0.0e+00],
-            [ 1.0e00, -1.0e+02,  0.0e+00],
-            [ 0.0e00,  1.0e+02, -1.0e-02],
-        ];
+        let test_a = _gen_test_a();
         let dt = 1.0;
         // compute phi_k using pade
         let pade_phi1_a = phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), 1);
@@ -337,13 +348,8 @@ mod test_matexp_cauchy {
     #[test]
     fn test_cauchy_cram_phik_apply() {
         // initialize
-        let cram = gen_cram_expm(16);
-
-        let test_a: Mat<f64> = mat![
-            [-1.0e00,  0.0e+00,  0.0e+00],
-            [ 1.0e00, -1.0e+02,  0.0e+00],
-            [ 0.0e00,  1.0e+02, -1.0e-02],
-        ];
+        let mut cram = gen_cram_expm(16);
+        let test_a = _gen_test_a();
         let dt = 1.0;
         let v0: Mat<f64> = mat![
             [ 1.0e00],
@@ -353,30 +359,93 @@ mod test_matexp_cauchy {
         // compute phi_k(a*dt)*v0 using pade
         let pade_phi1_av = phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), 1)*v0.as_ref();
 
-        // compute phi_k(a*dt)*v0 using caratheodory-fejer aprroximation and contour integral
-        // appraoch
-        let cram_phi1_av = cram.phik_dense_apply_cauchy(test_a.as_ref(), dt, v0.as_ref(), 1);
+        // compute phi_k(a*dt)*v0 using caratheodory-fejer aprroximation
+        let cram_phi1_av = cram.apply_phi_k(test_a.as_ref(), dt, v0.as_ref(), 1);
         println!("pade phi1(a*dt)*v0 {:?}", pade_phi1_av.as_ref());
         println!("cram phi1(a*dt)*v0 {:?}", cram_phi1_av.as_ref());
         mat_mat_approx_eq(pade_phi1_av.as_ref(), cram_phi1_av.as_ref(), 1e-12);
 
         // higher order phi fns
+        cram.apply_prepare(test_a.as_ref(), dt, v0.as_ref(), 0);
         for k in 0..4 {
             let pade_phik_av = phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), k)*v0.as_ref();
-            let cram_phik_av = cram.phik_dense_apply_cauchy(test_a.as_ref(), dt, v0.as_ref(), k);
+            let cram_phik_av = cram.apply_phi_k(test_a.as_ref(), dt, v0.as_ref(), k);
             // we expect some accuracy degredation for higher order phi functions
             mat_mat_approx_eq(pade_phik_av.as_ref(), cram_phik_av.as_ref(), 1e-10);
         }
     }
 
     #[test]
+    fn test_cauchy_cram_phik_v_apply() {
+        /// Test the ability evaluate linear combinations of phi-function-vector prods
+        /// of the form [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]
+        let mut cram = gen_cram_expm(16);
+        let test_a = _gen_test_a();
+        let dt = 1.0;
+        let v0: Mat<f64> = mat![
+            [ 0.0e00],
+            [ 0.0e00],
+            [ 0.0e00],
+        ];
+        let v1: Mat<f64> = mat![
+            [ 1.1e00],
+            [ 2.1e00],
+            [ 3.1e00],
+        ];
+        let v2: Mat<f64> = mat![
+            [ 1.2e00],
+            [ 2.2e00],
+            [ 3.2e00],
+        ];
+        let vb = vec![v0.as_ref(), v1.as_ref(), v2.as_ref()];
+
+        // compute ground truth phi-vector products
+        let mut expected: Mat<f64> = Mat::zeros(v0.nrows(), v0.ncols());
+        for k in 0..=2 {
+            expected += phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), k)*vb[k];
+        }
+
+        // compute using multi RHS
+        cram.apply_prepare(test_a.as_ref(), dt, v0.as_ref(), 0);
+        assert!(cram.lu_factors.is_some());
+        let out = cram.apply_phi_k_v(test_a.as_ref(), dt, &vb);
+
+        // ensure result is near expected within tol
+        mat_mat_approx_eq(expected.as_ref(), out.as_ref(), 1e-10);
+    }
+
+    #[test]
+    fn test_cauchy_cram_phi0_v_apply() {
+        /// Test [phi_0(dt*A) * v0]
+        let mut cram = gen_cram_expm(16);
+        let test_a = _gen_test_a();
+        let dt = 1.0;
+        let v0: Mat<f64> = mat![
+            [ 1.0e00],
+            [ 2.0e-2],
+            [ 3.0e01],
+        ];
+        let vb = vec![v0.as_ref(),];
+
+        // compute ground truth phi-vector products
+        let mut expected: Mat<f64> = Mat::zeros(v0.nrows(), v0.ncols());
+        for k in 0..vb.len() {
+            expected += phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), k)*vb[k];
+        }
+
+        // compute using multi RHS
+        cram.apply_prepare(test_a.as_ref(), dt, v0.as_ref(), 0);
+        assert!(cram.lu_factors.is_some());
+        let out = cram.apply_phi_k_v(test_a.as_ref(), dt, &vb);
+
+        // ensure result is near expected within tol
+        mat_mat_approx_eq(expected.as_ref(), out.as_ref(), 1e-12);
+    }
+
+    #[test]
     fn test_cauchy_parabolic_phik_apply() {
         let parabolic = gen_parabolic_expm(32);
-        let test_a: Mat<f64> = mat![
-            [-1.0e00,  0.0e+00,  0.0e+00],
-            [ 1.0e00, -1.0e+02,  0.0e+00],
-            [ 0.0e00,  1.0e+02, -1.0e-02],
-        ];
+        let test_a = _gen_test_a();
         let dt = 1.0;
         let v0: Mat<f64> = mat![
             [ 1.0e00],
@@ -384,13 +453,13 @@ mod test_matexp_cauchy {
             [ 3.0e00],
         ];
         let pade_phi1_av = phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), 1)*v0.as_ref();
-        let parabolic_phi1_av = parabolic.phik_dense_apply_cauchy(test_a.as_ref(), dt, v0.as_ref(), 1);
+        let parabolic_phi1_av = parabolic.apply_phi_k(test_a.as_ref(), dt, v0.as_ref(), 1);
         println!("pade phi1(a*dt)*v0 {:?}", pade_phi1_av.as_ref());
         println!("parabolic phi1(a*dt)*v0 {:?}", parabolic_phi1_av.as_ref());
         mat_mat_approx_eq(pade_phi1_av.as_ref(), parabolic_phi1_av.as_ref(), 1e-10);
         for k in 0..4 {
             let pade_phik_av = phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), k)*v0.as_ref();
-            let parabolic_phik_av = parabolic.phik_dense_apply_cauchy(test_a.as_ref(), dt, v0.as_ref(), k);
+            let parabolic_phik_av = parabolic.apply_phi_k(test_a.as_ref(), dt, v0.as_ref(), k);
             // we expect some accuracy degredation for higher order phi functions
             mat_mat_approx_eq(pade_phik_av.as_ref(), parabolic_phik_av.as_ref(), 1e-8);
         }

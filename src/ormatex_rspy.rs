@@ -574,12 +574,29 @@ impl DensePhikvEvalRs {
         }
     }
 
-    pub fn eval(&self, py: Python<'_>, a_np: PyReadonlyArray2<f64>, dt: f64, v0_np: PyReadonlyArray2<f64>, k: usize)
+    pub fn prepare(&mut self, _py: Python<'_>, a_np: PyReadonlyArray2<f64>, dt: f64, v0_np: PyReadonlyArray2<f64>, k: usize)
+    {
+        let a = a_np.into_faer();
+        let v0 = v0_np.into_faer();
+        self.evaluator.apply_prepare(a, dt, v0, k);
+    }
+
+    pub fn eval_phik(&self, py: Python<'_>, a_np: PyReadonlyArray2<f64>, dt: f64, v0_np: PyReadonlyArray2<f64>, k: usize)
         -> Py<PyArray2<f64>>
     {
         let a = a_np.into_faer();
         let v0 = v0_np.into_faer();
-        let phikv = self.evaluator.phik_apply(a, dt, v0, k);
+        let phikv = self.evaluator.apply_phi_k(a, dt, v0, k);
+        let ndarray_phikv = phikv.as_ref().into_ndarray().to_owned();
+        ndarray_phikv.into_pyarray(py).to_owned().into()
+    }
+
+    pub fn eval_phik_v(&self, py: Python<'_>, a_np: PyReadonlyArray2<f64>, dt: f64, bs_np: Vec<PyReadonlyArray2<f64>>)
+        -> Py<PyArray2<f64>>
+    {
+        let a = a_np.into_faer();
+        let bs: Vec<MatRef<f64>> = bs_np.iter().map(|b| b.clone().into_faer()).collect();
+        let phikv = self.evaluator.apply_phi_k_v(a, dt, &bs);
         let ndarray_phikv = phikv.as_ref().into_ndarray().to_owned();
         ndarray_phikv.into_pyarray(py).to_owned().into()
     }
