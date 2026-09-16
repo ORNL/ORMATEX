@@ -13,11 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use crate::ode_sys::*;
 /// Newtons methods for implicit methods
 use faer::prelude::*;
-use crate::ode_sys::*;
 use faer_gmres::gmres;
-
 
 /// Newton's method. Solves G(x)=0 for x.
 /// Jacobian-free newton krylov
@@ -32,17 +31,16 @@ use faer_gmres::gmres;
 /// system object). `x0` is the initial guess and is cloned immediately, so
 /// its lifetime is decoupled from `'jac`.
 ///
-pub fn jac_newton <'jac> (
-        t: f64,
-        x0: MatRef<'_, f64>,
-        gf: &dyn Fn(f64, MatRef<f64>) -> Mat<f64>,
-        gf_jac: &dyn Fn(f64, MatRef<f64>) -> ShiftedLinOp<'jac>,
-        tol: f64,
-        tol_lin: f64,
-        iters: usize,
-        iters_lin: usize,
-        ) -> Result<Mat<f64>, StepError>
-    {
+pub fn jac_newton<'jac>(
+    t: f64,
+    x0: MatRef<'_, f64>,
+    gf: &dyn Fn(f64, MatRef<f64>) -> Mat<f64>,
+    gf_jac: &dyn Fn(f64, MatRef<f64>) -> ShiftedLinOp<'jac>,
+    tol: f64,
+    tol_lin: f64,
+    iters: usize,
+    iters_lin: usize,
+) -> Result<Mat<f64>, StepError> {
     println!("=== Newton Solve");
     const TOL_STEP: f64 = 0.1;
     let mut x = x0.to_owned();
@@ -68,32 +66,46 @@ pub fn jac_newton <'jac> (
         a.fill(0.0);
         // solve J * a = G(x_k) for a
         let (lin_err, lin_iters) = gmres(
-            jac_gfn_x, gfn_x.as_ref(), a.as_mut(), iters_lin, tol_lin, None).unwrap();
+            jac_gfn_x,
+            gfn_x.as_ref(),
+            a.as_mut(),
+            iters_lin,
+            tol_lin,
+            None,
+        )
+        .unwrap();
         // apply a:  x_k+1 = x_k - a
         x = x - a.as_ref();
         dx_norm = a.norm_l2();
-        println!(", ||x_{}-x_{}||: {:0.6e},  Lin iters: {lin_iters}, Lin res: {:0.6e}", i+1, i, dx_norm, lin_err);
+        println!(
+            ", ||x_{}-x_{}||: {:0.6e},  Lin iters: {lin_iters}, Lin res: {:0.6e}",
+            i + 1,
+            i,
+            dx_norm,
+            lin_err
+        );
     }
-    let err = StepError{error_code: 1, msg: format!("Newton Failed")};
+    let err = StepError {
+        error_code: 1,
+        msg: format!("Newton Failed"),
+    };
     Err(err)
 }
-
 
 /// Newton's method. Solves G(x)=0 for x.
 /// Iterates x_k+1 = x_k - J^-1 * G(x_k)
 ///
-pub fn jac_newton_sys <'a> (
-        t: f64,
-        scale: f64,
-        gamma: f64,
-        x0: MatRef<f64>,
-        sys: &'a dyn OdeSys<'a>,
-        tol: f64,
-        tol_lin: f64,
-        iters: usize,
-        iters_lin: usize,
-        ) -> Result<Mat<f64>, StepError>
-    {
+pub fn jac_newton_sys<'a>(
+    t: f64,
+    scale: f64,
+    gamma: f64,
+    x0: MatRef<f64>,
+    sys: &'a dyn OdeSys<'a>,
+    tol: f64,
+    tol_lin: f64,
+    iters: usize,
+    iters_lin: usize,
+) -> Result<Mat<f64>, StepError> {
     println!("=== Newton Solve");
     let mut x: Mat<f64> = x0.to_owned();
     let mut a = faer::Mat::zeros(x.nrows(), x.ncols());
@@ -105,7 +117,14 @@ pub fn jac_newton_sys <'a> (
         let jac_gfn_x = sys.fjac_shifted(t, x.as_ref(), scale, Some(gamma));
         // solve J * a = G(x_k) for a
         let (lin_err, lin_iters) = gmres(
-            &jac_gfn_x, gfn_x.as_ref(), a.as_mut(), iters_lin, tol_lin, None).unwrap();
+            &jac_gfn_x,
+            gfn_x.as_ref(),
+            a.as_mut(),
+            iters_lin,
+            tol_lin,
+            None,
+        )
+        .unwrap();
         // apply a:  x_k+1 = x_k - a
         x = x.as_ref() - a.as_ref();
         let x_new_norm = a.norm_l2();
@@ -114,15 +133,17 @@ pub fn jac_newton_sys <'a> (
             return Ok(x);
         }
     }
-    let err = StepError{error_code: 1, msg: format!("Newton Failed")};
+    let err = StepError {
+        error_code: 1,
+        msg: format!("Newton Failed"),
+    };
     Err(err)
 }
 
-
 #[cfg(test)]
 mod test_newton {
-    use assert_approx_eq::assert_approx_eq;
     use crate::test_common::*;
+    use assert_approx_eq::assert_approx_eq;
 
     // bring everything from above (parent) module into scope
     use super::*;
@@ -138,11 +159,20 @@ mod test_newton {
         let scale = 1.0;
         let shift = 0.0;
         let tol = 1e-8;
-        let xsol = jac_newton_sys(0.0, scale, shift, x0.as_ref(), &my_test_sys, tol, 1e-14, 100, 1000).unwrap();
+        let xsol = jac_newton_sys(
+            0.0,
+            scale,
+            shift,
+            x0.as_ref(),
+            &my_test_sys,
+            tol,
+            1e-14,
+            100,
+            1000,
+        )
+        .unwrap();
 
         print!("sol: {:?}", xsol);
-        assert_approx_eq!(xsol.get(0, 0), 1.0, tol*10.);
-
+        assert_approx_eq!(xsol.get(0, 0), 1.0, tol * 10.);
     }
-
 }

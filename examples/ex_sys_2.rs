@@ -1,29 +1,24 @@
 /// Bateman example
 /// showing use of BDF, RK, and EPIRK time integrators
 use faer::prelude::*;
-use ormatex::ode_sys::*;
+use ormatex::matexp_krylov;
+use ormatex::matexp_pade;
+use ormatex::ode_epirk;
 use ormatex::ode_implicit;
 use ormatex::ode_rk;
-use ormatex::ode_epirk;
-use ormatex::matexp_krylov;
+use ormatex::ode_sys::*;
 use ormatex::test_common::*;
-use ormatex::matexp_pade;
 
 // optional deps for plotting
-#[cfg(feature="plot")]
+#[cfg(feature = "plot")]
 use kuva::prelude::*;
-
 
 pub fn main() {
     // setup system
     let test_sys = TestBatemanFdSys::new();
 
     // initial species concentrations
-    let y0 = faer::mat![
-        [0.001,],
-        [0.1,],
-        [1.0,],
-        ];
+    let y0 = faer::mat![[0.001,], [0.1,], [1.0,],];
 
     // setup the integrator
     // let mut sys_solver = ode_implicit::BdfIntegrator::new(0.0, y0.as_ref(), 2);
@@ -35,7 +30,12 @@ pub fn main() {
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
     let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, m, krylov_dim, tol, Some(iom));
     let mut sys_solver = ode_epirk::EpirkIntegrator::<matexp_krylov::KrylovExpm>::new(
-        0.0, y0.as_ref(), "epi2".to_string(), matexp_m).with_opt(String::from("tol_fdt"), 1e-8);
+        0.0,
+        y0.as_ref(),
+        "epi2".to_string(),
+        matexp_m,
+    )
+    .with_opt(String::from("tol_fdt"), 1e-8);
 
     // output concentrations
     let mut t_points: Vec<f64> = Vec::new();
@@ -57,7 +57,6 @@ pub fn main() {
 
         sys_solver.accept_step(y_new);
         t += dt;
-
     }
 
     // print the results
@@ -66,31 +65,37 @@ pub fn main() {
         println!("{:?}, {:?}, {:?}, {:?}", t_points[i], c0[i], c1[i], c2[i]);
     }
 
-    #[cfg(feature="plot")]
+    #[cfg(feature = "plot")]
     plot_time_series(t_points.clone(), c0.clone(), c1.clone(), c2.clone());
 }
 
-#[cfg(feature="plot")]
-fn plot_time_series(t: Vec<f64>, c0: Vec<f64>, c1: Vec<f64>, c2: Vec<f64>)
-    -> Result<(), Box<dyn std::error::Error>>
-{
+#[cfg(feature = "plot")]
+fn plot_time_series(
+    t: Vec<f64>,
+    c0: Vec<f64>,
+    c1: Vec<f64>,
+    c2: Vec<f64>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // create plots
     let plots = vec![
-        Plot::Line(LinePlot::new()
-            // iter() yeilds &T and into_iter yeilds T
-            .with_data(t.clone().into_iter().zip(c0.clone().into_iter()))
-            .with_color("steelblue")
-            .with_legend("c0")
+        Plot::Line(
+            LinePlot::new()
+                // iter() yeilds &T and into_iter yeilds T
+                .with_data(t.clone().into_iter().zip(c0.clone().into_iter()))
+                .with_color("steelblue")
+                .with_legend("c0"),
         ),
-        Plot::Line(LinePlot::new()
-            .with_data(t.clone().into_iter().zip(c1.clone().into_iter()))
-            .with_color("crimson")
-            .with_legend("c1")
+        Plot::Line(
+            LinePlot::new()
+                .with_data(t.clone().into_iter().zip(c1.clone().into_iter()))
+                .with_color("crimson")
+                .with_legend("c1"),
         ),
-        Plot::Line(LinePlot::new()
-            .with_data(t.clone().into_iter().zip(c2.clone().into_iter()))
-            .with_color("seagreen")
-            .with_legend("c2")
+        Plot::Line(
+            LinePlot::new()
+                .with_data(t.clone().into_iter().zip(c2.clone().into_iter()))
+                .with_color("seagreen")
+                .with_legend("c2"),
         ),
     ];
     let layout = Layout::auto_from_plots(&plots)

@@ -1,10 +1,10 @@
+use faer::prelude::*;
 use ormatex::mat_utils::mat_mat_approx_eq;
 use ormatex::matexp_krylov::KrylovExpm;
 use ormatex::matexp_leja::*;
-use ormatex::ode_sys::DynRefExtendedLinOp;
-use ormatex::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use ormatex::matexp_pade::{matexp, PadeExpm};
-use faer::prelude::*;
+use ormatex::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
+use ormatex::ode_sys::DynRefExtendedLinOp;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -19,7 +19,10 @@ fn read_mtx_file(path: &str) -> (usize, usize, Vec<(usize, usize, f64)>) {
 
     // Skip comment lines (start with %)
     loop {
-        let line = lines.next().expect("No dimensions line found").expect("Failed to read line");
+        let line = lines
+            .next()
+            .expect("No dimensions line found")
+            .expect("Failed to read line");
         if !line.trim().starts_with("%") {
             // Parse dimensions line: rows cols nnz
             let dims: Vec<usize> = line
@@ -61,8 +64,7 @@ fn read_mtx_file(path: &str) -> (usize, usize, Vec<(usize, usize, f64)>) {
 ///                    in the leja polynomial approximation
 /// * `k` - phi function order
 ///
-fn _case_s3_phikv(krylov_reuse: bool, k: usize)
-{
+fn _case_s3_phikv(krylov_reuse: bool, k: usize) {
     // Load Jacobian matrix from test_data/s3_jacobian.mtx
     let (m_rows, m_cols, jac_triplets_raw) = read_mtx_file("tests/test_data/s3_jacobian.mtx");
     // Convert to faer triplets
@@ -70,8 +72,9 @@ fn _case_s3_phikv(krylov_reuse: bool, k: usize)
         .iter()
         .map(|(i, j, val)| faer::sparse::Triplet::new(*i, *j, *val))
         .collect();
-    let jac_sparse = SparseColMat::<usize, f64>::try_new_from_triplets(m_rows, m_cols, &jac_triplets)
-        .expect("Failed to create sparse matrix");
+    let jac_sparse =
+        SparseColMat::<usize, f64>::try_new_from_triplets(m_rows, m_cols, &jac_triplets)
+            .expect("Failed to create sparse matrix");
 
     // Load y vector from test_data/s3_y.mtx
     let (y_rows, _y_cols, y_triplets_raw) = read_mtx_file("tests/test_data/s3_y.mtx");
@@ -93,38 +96,59 @@ fn _case_s3_phikv(krylov_reuse: bool, k: usize)
     let lp = LejaPoints::new_from_fn("leja_circle").slice(0, 400);
 
     // Setup Arnoldi-based spectrum estimation
-    let leja_ellipse_adapter = LejaEllipseAdapterArnoldiIOM::new(
-        -1.0, 0.0, 1.0, 1e-8, 24, 2, 1.05);
+    let leja_ellipse_adapter = LejaEllipseAdapterArnoldiIOM::new(-1.0, 0.0, 1.0, 1e-8, 24, 2, 1.05);
 
     let mut leja_eval = LejaPhiEval::new(
-        lp, 400, 1e-16, "clapm", "dd_taylor", krylov_reuse,
-        Box::new(leja_ellipse_adapter));
+        lp,
+        400,
+        1e-16,
+        "clapm",
+        "dd_taylor",
+        krylov_reuse,
+        Box::new(leja_ellipse_adapter),
+    );
 
     // Build vb_vec and ext_jac_lo before apply_prepare so the correct BAMPHI
     // Arnoldi starting vector (upper_block(ext^p * tilde_v)) can be computed.
     let mut zero_vec = y_vec.clone();
     zero_vec.fill(0.0);
     let vb_vec = if k == 1 {
-            vec![zero_vec.as_ref(), y_vec.as_ref()]
-        } else if k == 2 {
-            vec![zero_vec.as_ref(), zero_vec.as_ref(), y_vec.as_ref()]
-        } else {
-            vec![y_vec.as_ref()]
-        };
+        vec![zero_vec.as_ref(), y_vec.as_ref()]
+    } else if k == 2 {
+        vec![zero_vec.as_ref(), zero_vec.as_ref(), y_vec.as_ref()]
+    } else {
+        vec![y_vec.as_ref()]
+    };
     let ext_jac_lo = DynRefExtendedLinOp::new(dt, &jac_sparse, &vb_vec);
 
     // Prepare the evaluator with the correct extended operator
-    leja_eval.apply_prepare(&jac_sparse, dt, y_vec.as_ref(), k, Some((&ext_jac_lo, &vb_vec)));
+    leja_eval.apply_prepare(
+        &jac_sparse,
+        dt,
+        y_vec.as_ref(),
+        k,
+        Some((&ext_jac_lo, &vb_vec)),
+    );
 
     println!("n_ritz: {}", leja_eval.leja_ellipse_adapter.n_ritz());
-    println!("leja ritz_re: {:?}", leja_eval.leja_ellipse_adapter.get_ritz().0.unwrap());
-    println!("leja ritz_im: {:?}", leja_eval.leja_ellipse_adapter.get_ritz().1.unwrap());
+    println!(
+        "leja ritz_re: {:?}",
+        leja_eval.leja_ellipse_adapter.get_ritz().0.unwrap()
+    );
+    println!(
+        "leja ritz_im: {:?}",
+        leja_eval.leja_ellipse_adapter.get_ritz().1.unwrap()
+    );
 
     // Apply phi_0 using Leja polynomial method
     let leja_phikv = leja_eval.apply_phi_k_v(&ext_jac_lo, 1.0, &vb_vec);
 
     // Verify result is finite and reasonable
-    assert_eq!(leja_phikv.nrows(), y_rows, "Result should have same number of rows as y");
+    assert_eq!(
+        leja_phikv.nrows(),
+        y_rows,
+        "Result should have same number of rows as y"
+    );
     assert_eq!(leja_phikv.ncols(), 1, "Result should be a column vector");
     let result_norm = leja_phikv.norm_l2();
     assert!(result_norm.is_finite(), "Result norm should be finite");

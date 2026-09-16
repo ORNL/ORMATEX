@@ -13,33 +13,29 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
+use faer::matrix_free::LinOp;
 /// Defines and ODE system of equations
 /// Defines interface for integration ode equations with
 /// exponential integrators, implicit and explicit integrators
 ///
 use faer::prelude::*;
-use faer::matrix_free::LinOp;
 use faer::Par;
-use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use std::{error::Error, fmt};
 
 #[derive(Debug)]
-pub struct StepError
-{
+pub struct StepError {
     pub error_code: usize,
     pub msg: String,
 }
 
-impl Error for StepError
-{}
+impl Error for StepError {}
 
-impl fmt::Display for StepError
-{
+impl fmt::Display for StepError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "StepError")
     }
 }
-
 
 #[derive(Clone)]
 pub struct StepResult<T, S> {
@@ -52,26 +48,23 @@ pub struct StepResult<T, S> {
     // Not-None if embeded method provides err estimate
     pub err: Option<f64>,
 }
-impl <T, S> StepResult<T, S> {
-    pub fn new(t: T, dt: T, y: S, err: Option<f64>) -> Self
-    {
-        Self {
-            t,
-            dt,
-            y,
-            err,
-        }
+impl<T, S> StepResult<T, S> {
+    pub fn new(t: T, dt: T, y: S, err: Option<f64>) -> Self {
+        Self { t, dt, y, err }
     }
 }
 
-pub trait IntegrateSys<'a>
-{
+pub trait IntegrateSys<'a> {
     type TimeType;
     type SysStateType;
 
     /// Step solution forward by dt, proposes a new state.
     /// This may outright fail due to numerical issue
-    fn step<'b>(&mut self, sys: &'b dyn OdeSys<'b>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
+    fn step<'b>(
+        &mut self,
+        sys: &'b dyn OdeSys<'b>,
+        dt: Self::TimeType,
+    ) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
 
     /// Get current time
     fn time(&self) -> Self::TimeType;
@@ -85,9 +78,7 @@ pub trait IntegrateSys<'a>
 
     /// Reset integrator.  Removes solution history
     fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType);
-
 }
-
 
 /// Helper method to apply the linop to a vec but does an extra allocation to store
 /// and return the result.
@@ -97,11 +88,10 @@ pub fn apply_linop(lop: &impl LinOp<f64>, q: MatRef<f64>) -> Mat<f64> {
         out.as_mut(),
         q,
         faer::get_global_parallelism(),
-        MemStack::new(&mut MemBuffer::new(StackReq::empty()))
-        );
+        MemStack::new(&mut MemBuffer::new(StackReq::empty())),
+    );
     out
 }
-
 
 /// Wrapper to extend a LinOp, A
 /// and applies
@@ -121,7 +111,7 @@ pub struct ExtendedLinOp<'a> {
     kmat: faer::Mat<f64>,
 }
 
-impl <'a> ExtendedLinOp<'a> {
+impl<'a> ExtendedLinOp<'a> {
     pub fn new(t: f64, inner_lop: Box<dyn LinOp<f64> + 'a>, vb: &Vec<MatRef<f64>>) -> Self {
         let n = vb[0].nrows();
         let p = vb.len() - 1;
@@ -129,18 +119,20 @@ impl <'a> ExtendedLinOp<'a> {
         let mut i = 1;
         // build extended linear operator blocks
         for k in (0..p).rev() {
-            bmat.as_mut().get_mut(.., k..k+1).copy_from(
-                vb[i].as_ref());
+            bmat.as_mut()
+                .get_mut(.., k..k + 1)
+                .copy_from(vb[i].as_ref());
             i += 1;
         }
         let mut kmat = faer::Mat::zeros(p, p);
-        kmat.as_mut().get_mut(0..p-1, 1..).copy_from(
-            faer::Mat::<f64>::identity(p-1, p-1));
+        kmat.as_mut()
+            .get_mut(0..p - 1, 1..)
+            .copy_from(faer::Mat::<f64>::identity(p - 1, p - 1));
         Self {
             t,
             inner_lop,
             bmat,
-            kmat
+            kmat,
         }
     }
 
@@ -150,25 +142,21 @@ impl <'a> ExtendedLinOp<'a> {
         let p = vb.len() - 1;
         // let mut unit_vec = faer::Mat::zeros(p, 1);
         // unit_vec[(n, 0)] = 1.0;
-        let mut out: Mat<f64> = faer::Mat::zeros(n+p, 1);
-        out[(n+p-1, 0)] = 1.0;
+        let mut out: Mat<f64> = faer::Mat::zeros(n + p, 1);
+        out[(n + p - 1, 0)] = 1.0;
         out.as_mut().get_mut(0..n, 0..1).copy_from(vb[0].as_ref());
         (out, n)
     }
 }
 
-impl <'a>  fmt::Debug for ExtendedLinOp <'a>  {
+impl<'a> fmt::Debug for ExtendedLinOp<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "t={:?}, \n", self.t)
     }
 }
 
-impl <'a> LinOp<f64> for ExtendedLinOp<'a>   {
-    fn apply_scratch(
-            &self,
-            rhs_ncols: usize,
-            parallelism: Par,
-        ) -> StackReq {
+impl<'a> LinOp<f64> for ExtendedLinOp<'a> {
+    fn apply_scratch(&self, rhs_ncols: usize, parallelism: Par) -> StackReq {
         let _ = parallelism;
         let _ = rhs_ncols;
         self.inner_lop.apply_scratch(rhs_ncols, parallelism)
@@ -191,31 +179,28 @@ impl <'a> LinOp<f64> for ExtendedLinOp<'a>   {
         rhs: MatRef<f64>,
         parallelism: Par,
         stack: &mut MemStack,
-        )
-    {
+    ) {
         let n = self.bmat.nrows();
         let p = self.bmat.ncols();
 
         let mut av = faer::Mat::zeros(n, rhs.ncols());
-        self.inner_lop.apply(
-            av.as_mut(),
-            rhs.get(0..n, ..),
-            parallelism,
-            stack);
-        let ab_v = faer::Scale(self.t) * av +
-            self.bmat.as_ref() * rhs.get(rhs.nrows()-p.., ..);
-        let k_v = self.kmat.as_ref() * rhs.get(rhs.nrows()-p.., ..);
-        out.as_mut().get_mut(0..ab_v.nrows(), ..).copy_from(ab_v.as_ref());
+        self.inner_lop
+            .apply(av.as_mut(), rhs.get(0..n, ..), parallelism, stack);
+        let ab_v = faer::Scale(self.t) * av + self.bmat.as_ref() * rhs.get(rhs.nrows() - p.., ..);
+        let k_v = self.kmat.as_ref() * rhs.get(rhs.nrows() - p.., ..);
+        out.as_mut()
+            .get_mut(0..ab_v.nrows(), ..)
+            .copy_from(ab_v.as_ref());
         out.as_mut().get_mut(ab_v.nrows().., ..).copy_from(k_v);
     }
 
     fn conj_apply(
-            &self,
-            out: MatMut<'_, f64>,
-            rhs: MatRef<'_, f64>,
-            parallelism: Par,
-            stack: &mut MemStack,
-        ) {
+        &self,
+        out: MatMut<'_, f64>,
+        rhs: MatRef<'_, f64>,
+        parallelism: Par,
+        stack: &mut MemStack,
+    ) {
         // Not implented error!
         panic!("Not Implemented");
     }
@@ -228,7 +213,7 @@ pub struct DynRefExtendedLinOp<'a> {
     kmat: faer::Mat<f64>,
 }
 
-impl <'a> DynRefExtendedLinOp<'a> {
+impl<'a> DynRefExtendedLinOp<'a> {
     pub fn new(t: f64, inner_lop: &'a dyn LinOp<f64>, vb: &Vec<MatRef<f64>>) -> Self {
         let n = vb[0].nrows();
         let p = vb.len() - 1;
@@ -236,20 +221,22 @@ impl <'a> DynRefExtendedLinOp<'a> {
         let mut i = 1;
         // build extended linear operator blocks
         for k in (0..p).rev() {
-            bmat.as_mut().get_mut(.., k..k+1).copy_from(
-                vb[i].as_ref());
+            bmat.as_mut()
+                .get_mut(.., k..k + 1)
+                .copy_from(vb[i].as_ref());
             i += 1;
         }
         let mut kmat = faer::Mat::zeros(p, p);
         if p > 0 {
-            kmat.as_mut().get_mut(0..p-1, 1..).copy_from(
-                faer::Mat::<f64>::identity(p-1, p-1));
+            kmat.as_mut()
+                .get_mut(0..p - 1, 1..)
+                .copy_from(faer::Mat::<f64>::identity(p - 1, p - 1));
         }
         Self {
             t,
             inner_lop,
             bmat,
-            kmat
+            kmat,
         }
     }
 
@@ -259,25 +246,21 @@ impl <'a> DynRefExtendedLinOp<'a> {
         let p = vb.len() - 1;
         // let mut unit_vec = faer::Mat::zeros(p, 1);
         // unit_vec[(n, 0)] = 1.0;
-        let mut out: Mat<f64> = faer::Mat::zeros(n+p, 1);
-        out[(n+p-1, 0)] = 1.0;
+        let mut out: Mat<f64> = faer::Mat::zeros(n + p, 1);
+        out[(n + p - 1, 0)] = 1.0;
         out.as_mut().get_mut(0..n, 0..1).copy_from(vb[0].as_ref());
         (out, n)
     }
 }
 
-impl <'a>  fmt::Debug for DynRefExtendedLinOp <'a>  {
+impl<'a> fmt::Debug for DynRefExtendedLinOp<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "t={:?}, \n", self.t)
     }
 }
 
-impl <'a> LinOp<f64> for DynRefExtendedLinOp<'a>   {
-    fn apply_scratch(
-            &self,
-            rhs_ncols: usize,
-            parallelism: Par,
-        ) -> StackReq {
+impl<'a> LinOp<f64> for DynRefExtendedLinOp<'a> {
+    fn apply_scratch(&self, rhs_ncols: usize, parallelism: Par) -> StackReq {
         // let _ = parallelism;
         // let _ = rhs_ncols;
         // StackReq::empty()
@@ -301,36 +284,32 @@ impl <'a> LinOp<f64> for DynRefExtendedLinOp<'a>   {
         rhs: MatRef<f64>,
         parallelism: Par,
         stack: &mut MemStack,
-        )
-    {
+    ) {
         let n = self.bmat.nrows();
         let p = self.bmat.ncols();
 
         let mut av = faer::Mat::zeros(n, rhs.ncols());
-        self.inner_lop.apply(
-            av.as_mut(),
-            rhs.get(0..n, ..),
-            parallelism,
-            stack);
-        let ab_v = faer::Scale(self.t) * av +
-            self.bmat.as_ref() * rhs.get(rhs.nrows()-p.., ..);
-        let k_v = self.kmat.as_ref() * rhs.get(rhs.nrows()-p.., ..);
-        out.as_mut().get_mut(0..ab_v.nrows(), ..).copy_from(ab_v.as_ref());
+        self.inner_lop
+            .apply(av.as_mut(), rhs.get(0..n, ..), parallelism, stack);
+        let ab_v = faer::Scale(self.t) * av + self.bmat.as_ref() * rhs.get(rhs.nrows() - p.., ..);
+        let k_v = self.kmat.as_ref() * rhs.get(rhs.nrows() - p.., ..);
+        out.as_mut()
+            .get_mut(0..ab_v.nrows(), ..)
+            .copy_from(ab_v.as_ref());
         out.as_mut().get_mut(ab_v.nrows().., ..).copy_from(k_v);
     }
 
     fn conj_apply(
-            &self,
-            out: MatMut<'_, f64>,
-            rhs: MatRef<'_, f64>,
-            parallelism: Par,
-            stack: &mut MemStack,
-        ) {
+        &self,
+        out: MatMut<'_, f64>,
+        rhs: MatRef<'_, f64>,
+        parallelism: Par,
+        stack: &mut MemStack,
+    ) {
         // Not implented error!
         panic!("Not Implemented");
     }
 }
-
 
 /// Wrapper to shift and scale a LinOp, optionally weighted by a mass matrix.
 ///
@@ -356,7 +335,7 @@ pub struct ShiftedLinOp<'a> {
     mass: Option<Box<dyn LinOp<f64> + 'a>>,
 }
 
-impl <'a> ShiftedLinOp <'a> {
+impl<'a> ShiftedLinOp<'a> {
     pub fn new(
         t: f64,
         inner_lop: Box<dyn LinOp<f64> + 'a>,
@@ -373,18 +352,14 @@ impl <'a> ShiftedLinOp <'a> {
         }
     }
 }
-impl <'a>  fmt::Debug for ShiftedLinOp <'a>  {
+impl<'a> fmt::Debug for ShiftedLinOp<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "t={:?}, \n", self.t)
     }
 }
 
-impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
-    fn apply_scratch(
-            &self,
-            rhs_ncols: usize,
-            parallelism: Par,
-        ) -> StackReq {
+impl<'a> LinOp<f64> for ShiftedLinOp<'a> {
+    fn apply_scratch(&self, rhs_ncols: usize, parallelism: Par) -> StackReq {
         let _ = parallelism;
         let _ = rhs_ncols;
         StackReq::empty()
@@ -415,8 +390,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
         rhs: MatRef<f64>,
         parallelism: Par,
         stack: &mut MemStack,
-        )
-    {
+    ) {
         // s·J·v
         self.inner_lop.apply(out.as_mut(), rhs, parallelism, stack);
         out *= self.scale;
@@ -437,7 +411,7 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
                     }
                 }
             }
-            _ => { }
+            _ => {}
         }
     }
 
@@ -448,21 +422,20 @@ impl <'a>  LinOp<f64> for ShiftedLinOp<'a>   {
     /// * `rhs` - target to apply linop to
     /// * `parallelism` - faer parallelism
     fn conj_apply(
-            &self,
-            out: MatMut<'_, f64>,
-            rhs: MatRef<'_, f64>,
-            parallelism: Par,
-            stack: &mut MemStack,
-        ) {
+        &self,
+        out: MatMut<'_, f64>,
+        rhs: MatRef<'_, f64>,
+        parallelism: Par,
+        stack: &mut MemStack,
+    ) {
         // Not implented error!
         panic!("Not Implemented");
     }
 }
 
-
 /// Provides the linop L := (gamma*I + scale*J)
 /// that be applied to a vector:  L*v
-pub struct FdJacLinOp <'a> {
+pub struct FdJacLinOp<'a> {
     t: f64,
     x: Mat<f64>,
     frhs: &'a dyn OdeSys<'a>,
@@ -471,7 +444,7 @@ pub struct FdJacLinOp <'a> {
     gamma: Option<f64>,
 }
 
-impl <'a> FdJacLinOp <'a> {
+impl<'a> FdJacLinOp<'a> {
     /// Create a new finite difference based jacobian linear operator
     ///
     /// # Args
@@ -480,8 +453,13 @@ impl <'a> FdJacLinOp <'a> {
     /// * `frhs` - system rhs
     /// * `scale` - jacobian scale factor
     /// * `gamma` - jacobian shift factor
-    pub fn new(t: f64, x: Mat<f64>, frhs: &'a dyn OdeSys<'a> , scale: f64, gamma: Option<f64>)
-    -> Self {
+    pub fn new(
+        t: f64,
+        x: Mat<f64>,
+        frhs: &'a dyn OdeSys<'a>,
+        scale: f64,
+        gamma: Option<f64>,
+    ) -> Self {
         let frhs_x = frhs.frhs(t, x.as_ref());
         Self {
             t,
@@ -489,7 +467,7 @@ impl <'a> FdJacLinOp <'a> {
             frhs,
             frhs_x,
             scale,
-            gamma
+            gamma,
         }
     }
 
@@ -498,33 +476,31 @@ impl <'a> FdJacLinOp <'a> {
     /// # Args
     /// * `t` - time at which to evaluate the jacobian
     /// * `x` - current system state about which to evaluate the jacobian
-    pub fn set_op_x(&mut self, t: f64, x: Mat<f64>)
-    {
+    pub fn set_op_x(&mut self, t: f64, x: Mat<f64>) {
         self.t = t;
         self.x = x;
         self.frhs_x = self.frhs.frhs(t, self.x.as_ref());
     }
 
     /// Reset jacobian scale and diagonal shift
-    pub fn set_scale(&mut self, scale: f64, gamma: Option<f64>)
-    {
+    pub fn set_scale(&mut self, scale: f64, gamma: Option<f64>) {
         self.scale = scale;
         self.gamma = gamma;
     }
 }
 
-impl <'a> fmt::Debug for FdJacLinOp <'a> {
+impl<'a> fmt::Debug for FdJacLinOp<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "t={:?}, \n State x={:?} \n f_rhs(x)={:?} \n", self.t, self.x, self.frhs_x)
+        write!(
+            f,
+            "t={:?}, \n State x={:?} \n f_rhs(x)={:?} \n",
+            self.t, self.x, self.frhs_x
+        )
     }
 }
 
-impl <'a> LinOp<f64> for FdJacLinOp <'a> {
-    fn apply_scratch(
-            &self,
-            rhs_ncols: usize,
-            parallelism: Par,
-        ) -> StackReq {
+impl<'a> LinOp<f64> for FdJacLinOp<'a> {
+    fn apply_scratch(&self, rhs_ncols: usize, parallelism: Par) -> StackReq {
         let _ = parallelism;
         let _ = rhs_ncols;
         StackReq::empty()
@@ -556,8 +532,7 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
         rhs: MatRef<f64>,
         parallelism: Par,
         stack: &mut MemStack,
-        )
-    {
+    ) {
         // unused
         _ = parallelism;
         _ = stack;
@@ -570,12 +545,13 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
             let x_pert = self.x.as_ref() + faer::Scale(eps) * rhs.col(j).as_mat();
 
             // compute unshifted jacobian vector product
-            let mut j_v = (self.frhs.frhs(self.t, x_pert.as_ref())-self.frhs_x.as_ref())*faer::Scale(ieps);
+            let mut j_v = (self.frhs.frhs(self.t, x_pert.as_ref()) - self.frhs_x.as_ref())
+                * faer::Scale(ieps);
 
             // compute optional shift
             match self.gamma {
-                Some(gamma) => { j_v += faer::Scale(gamma) * rhs.col(j).as_mat() },
-                _ => { },
+                Some(gamma) => j_v += faer::Scale(gamma) * rhs.col(j).as_mat(),
+                _ => {}
             }
 
             // (gamma*I + scale*J) * v
@@ -590,17 +566,16 @@ impl <'a> LinOp<f64> for FdJacLinOp <'a> {
     /// * `rhs` - target to apply linop to
     /// * `parallelism` - faer parallelism
     fn conj_apply(
-            &self,
-            out: MatMut<'_, f64>,
-            rhs: MatRef<'_, f64>,
-            parallelism: Par,
-            stack: &mut MemStack,
-        ) {
+        &self,
+        out: MatMut<'_, f64>,
+        rhs: MatRef<'_, f64>,
+        parallelism: Par,
+        stack: &mut MemStack,
+    ) {
         // Not implented error!
         panic!("Not Implemented");
     }
 }
-
 
 pub trait OdeSys<'a>: Sync + Send {
     /// Defines the rhs of the system
@@ -614,10 +589,7 @@ pub trait OdeSys<'a>: Sync + Send {
     /// # Args
     /// * `t` - the current time
     /// * `x` - the current state
-    fn fjac<'b>(&'a self,
-            t: f64,
-            x: MatRef<'b, f64>)
-        -> Box<dyn LinOp<f64> + 'a>;
+    fn fjac<'b>(&'a self, t: f64, x: MatRef<'b, f64>) -> Box<dyn LinOp<f64> + 'a>;
 
     /// Optional mass matrix M at time `t`.
     ///
@@ -644,33 +616,30 @@ pub trait OdeSys<'a>: Sync + Send {
     /// # Args
     /// * `t` - the current time
     /// * `x` - the current state
-    fn fjac_shifted<'b>(&'a self,
-            t: f64,
-            x: MatRef<'b, f64>,
-            scale: f64,
-            gamma: Option<f64>)
-        -> ShiftedLinOp<'a>
-    {
-        ShiftedLinOp::new(
-            t,
-            self.fjac(t, x),
-            scale,
-            gamma,
-            self.fmass(t),
-        )
+    fn fjac_shifted<'b>(
+        &'a self,
+        t: f64,
+        x: MatRef<'b, f64>,
+        scale: f64,
+        gamma: Option<f64>,
+    ) -> ShiftedLinOp<'a> {
+        ShiftedLinOp::new(t, self.fjac(t, x), scale, gamma, self.fmass(t))
     }
 }
 
 /// Obtain finite difference jacobian LinOp of a system at a given operating point
-pub fn get_fd_jac<'a>(sys: &'a dyn OdeSys<'a>, t: f64, x: MatRef<f64>) -> FdJacLinOp<'a>
-{
+pub fn get_fd_jac<'a>(sys: &'a dyn OdeSys<'a>, t: f64, x: MatRef<f64>) -> FdJacLinOp<'a> {
     // sys.fjac(t, x)
     FdJacLinOp::new(t, x.to_owned(), sys, 1.0, None)
 }
 
 /// Obtain finite difference shifted and scaled jacobian LinOp of a system at a given operating point
-pub fn get_fd_jac_shifted<'a>(inner_lop: Box<dyn LinOp<f64> + 'a>, t: f64, scale: f64, gamma: Option<f64>) -> ShiftedLinOp<'a>
-{
+pub fn get_fd_jac_shifted<'a>(
+    inner_lop: Box<dyn LinOp<f64> + 'a>,
+    t: f64,
+    scale: f64,
+    gamma: Option<f64>,
+) -> ShiftedLinOp<'a> {
     // No OdeSys available here, so mass matrix is always None.
     // Use OdeSys::fjac_shifted if a mass matrix is required.
     ShiftedLinOp::new(t, inner_lop, scale, gamma, None)

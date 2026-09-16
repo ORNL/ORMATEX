@@ -16,7 +16,6 @@
 /// Useful tools for testing ODE integration methods
 use faer::prelude::*;
 
-
 /// define Lotka-Volterra system for testing ONLY
 pub fn lv_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
     let alpha = 1.0;
@@ -25,8 +24,8 @@ pub fn lv_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
     let gamma = 1.0;
 
     faer::mat![
-        [alpha * x[(0, 0)] - beta * x[(0, 0)]*x[(1, 0)] ],
-        [delta * x[(0, 0)]*x[(1, 0)] - gamma * x[(1, 0)] ],
+        [alpha * x[(0, 0)] - beta * x[(0, 0)] * x[(1, 0)]],
+        [delta * x[(0, 0)] * x[(1, 0)] - gamma * x[(1, 0)]],
     ]
 }
 
@@ -38,8 +37,8 @@ pub fn lv_sys_jac(_t: f64, x: MatRef<f64>) -> SparseColMat<usize, f64> {
     let gamma = 1.0;
 
     let jac = faer::mat![
-        [alpha - beta*x[(1, 0)], -beta*x[(0, 0)] ],
-        [delta*x[(1, 0)], delta*x[(0, 0)] - gamma ],
+        [alpha - beta * x[(1, 0)], -beta * x[(0, 0)]],
+        [delta * x[(1, 0)], delta * x[(0, 0)] - gamma],
     ];
     // convert to sparse
     let mut jac_triplets = Vec::new();
@@ -48,8 +47,9 @@ pub fn lv_sys_jac(_t: f64, x: MatRef<f64>) -> SparseColMat<usize, f64> {
             jac_triplets.push(faer::sparse::Triplet::new(i, j, jac[(i, j)]));
         }
     }
-    let jac_sprs = SparseColMat::<usize, f64>::try_new_from_triplets(
-        jac.nrows(), jac.ncols(), &jac_triplets).unwrap();
+    let jac_sprs =
+        SparseColMat::<usize, f64>::try_new_from_triplets(jac.nrows(), jac.ncols(), &jac_triplets)
+            .unwrap();
     jac_sprs
 }
 
@@ -66,9 +66,9 @@ pub fn bateman_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
     // let lambda_3 = 1.0e-16;
 
     let bat_mat = faer::mat![
-        [-lambda_0,  lambda_1,        0.],
-        [       0., -lambda_1,  lambda_2],
-        [       0.,        0., -lambda_2],
+        [-lambda_0, lambda_1, 0.],
+        [0., -lambda_1, lambda_2],
+        [0., 0., -lambda_2],
     ];
 
     let xdot = bat_mat * x.as_ref();
@@ -86,9 +86,5 @@ pub fn rob_sys_rhs(_t: f64, x_in: MatRef<f64>) -> Mat<f64> {
     let ydot = 0.04 * x - 1.0e4 * y * z - 3.0e7 * y.powf(2.0);
     let zdot = 3.0e7 * y.powf(2.0);
 
-    faer::mat![
-        [xdot],
-        [ydot],
-        [zdot],
-    ]
+    faer::mat![[xdot], [ydot], [zdot],]
 }

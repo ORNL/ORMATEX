@@ -13,21 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use crate::matexp_traits::DensePhikvEvaluator;
+use faer::complex::ComplexFloat;
+use faer::linalg::solvers::{DenseSolveCore, Solve};
 /// Matrix exponential evaluation methods for dense faer Mats.
 ///
 /// All public functions are generic over `T: ComplexField` (covers both `f64`
 /// and `c64 = Complex<f64>`). The time step `dt` is always a real `f64`,
 /// consistent with the assumption that time is a real quantity.
 use faer::prelude::*;
-use faer::linalg::solvers::{Solve, DenseSolveCore};
-use faer::complex::ComplexFloat;
-use faer_traits::ComplexField;
 use faer_traits::math_utils::from_f64;
+use faer_traits::ComplexField;
+use libm::frexp;
 use num_traits::ToPrimitive;
 use statrs::function::factorial;
-use crate::matexp_traits::DensePhikvEvaluator;
-use libm::frexp;
-
 
 #[derive(Debug)]
 pub struct PadeExpm {
@@ -35,11 +34,8 @@ pub struct PadeExpm {
 }
 
 impl PadeExpm {
-    pub fn new(max_squarings: usize) -> Self
-    {
-        Self {
-            max_squarings
-        }
+    pub fn new(max_squarings: usize) -> Self {
+        Self { max_squarings }
     }
 }
 
@@ -97,7 +93,7 @@ where
 {
     let mut phi_k = matexp(z.as_ref(), 1.0);
     if k == 0 {
-        return phi_k
+        return phi_k;
     }
     let qr = faer::linalg::solvers::Qr::new(z.as_ref());
     let z_inv = qr.inverse();
@@ -106,8 +102,7 @@ where
         // the phi recurrence: phi_k = Z^{-1}(phi_{k-1} - 1/(k-1)! · I).
         let fact = (1..i).product::<usize>() as f64;
         let fact = if fact == 0.0 { 1.0 } else { fact };
-        phi_k = z_inv.as_ref() * (phi_k.as_ref()
-            - Scale(from_f64::<T>(1.0 / fact)) * id.as_ref());
+        phi_k = z_inv.as_ref() * (phi_k.as_ref() - Scale(from_f64::<T>(1.0 / fact)) * id.as_ref());
     }
     phi_k
 }
@@ -138,9 +133,9 @@ where
             let z_ext_nrows = z_ext_k_nrows + n;
             let z_ext_ncols = z_ext_k_ncols + k * n;
             let mut z_ext = Mat::<T>::zeros(z_ext_nrows, z_ext_ncols);
-            z_ext.get_mut(0..n, 0..m)
-                .copy_from(z);
-            z_ext.get_mut(0..z_ext_k_nrows, z_ext_k_ncols..)
+            z_ext.get_mut(0..n, 0..m).copy_from(z);
+            z_ext
+                .get_mut(0..z_ext_k_nrows, z_ext_k_ncols..)
                 .copy_from(Mat::<T>::identity(k * n, k * n));
             z_ext
         }
@@ -170,31 +165,28 @@ where
 
     if a_1norm < from_f64::<T::Real>(1.495585217958292e-002) {
         let (u, v) = pade3(a, a2.as_ref());
-        return (u, v, alpha)
-    }
-    else if a_1norm < from_f64::<T::Real>(2.539398330063230e-001) {
+        return (u, v, alpha);
+    } else if a_1norm < from_f64::<T::Real>(2.539398330063230e-001) {
         let a4 = a2.as_ref() * a2.as_ref();
         let (u, v) = pade5(a, a2.as_ref(), a4.as_ref());
-        return (u, v, alpha)
-    }
-    else if a_1norm < from_f64::<T::Real>(9.504178996162932e-001) {
+        return (u, v, alpha);
+    } else if a_1norm < from_f64::<T::Real>(9.504178996162932e-001) {
         let a4 = a2.as_ref() * a2.as_ref();
         let a6 = a4.as_ref() * a2.as_ref();
         let (u, v) = pade7(a, a2.as_ref(), a4.as_ref(), a6.as_ref());
-        return (u, v, alpha)
-    }
-    else if a_1norm < from_f64::<T::Real>(2.097847961257068e+000) {
+        return (u, v, alpha);
+    } else if a_1norm < from_f64::<T::Real>(2.097847961257068e+000) {
         let a4 = a2.as_ref() * a2.as_ref();
         let a6 = a4.as_ref() * a2.as_ref();
         let a8 = a6.as_ref() * a2.as_ref();
         let (u, v) = pade9(a, a2.as_ref(), a4.as_ref(), a6.as_ref(), a8.as_ref());
-        return (u, v, alpha)
-    }
-    else {
+        return (u, v, alpha);
+    } else {
         let maxnorm: f64 = 5.371920351148152;
         // Convert T::Real → f64 for the frexp call (f64 is the real type for
         // both f64 and c64 matrices).
-        let a_1norm_f64 = a_1norm.to_f64()
+        let a_1norm_f64 = a_1norm
+            .to_f64()
             .expect("T::Real must be convertible to f64 for Pade scaling");
         let (_m, _a) = frexp(a_1norm_f64 / maxnorm);
         alpha = _a as isize;
@@ -206,8 +198,13 @@ where
         let a2_scaled = a_scaled.as_ref() * a_scaled.as_ref();
         let a4_scaled = a2_scaled.as_ref() * a2_scaled.as_ref();
         let a6_scaled = a4_scaled.as_ref() * a2_scaled.as_ref();
-        let (u, v) = pade13(a_scaled.as_ref(), a2_scaled.as_ref(), a4_scaled.as_ref(), a6_scaled.as_ref());
-        return (u, v, alpha)
+        let (u, v) = pade13(
+            a_scaled.as_ref(),
+            a2_scaled.as_ref(),
+            a4_scaled.as_ref(),
+            a6_scaled.as_ref(),
+        );
+        return (u, v, alpha);
     }
 }
 
@@ -219,11 +216,9 @@ where
 fn pade3<T: ComplexField>(a: MatRef<T>, a2: MatRef<T>) -> (Mat<T>, Mat<T>) {
     const B3: [f64; 4] = [120.0, 60.0, 12.0, 1.0];
     let ident = Mat::<T>::identity(a.ncols(), a.nrows());
-    let temp = a2 * Scale(from_f64::<T>(B3[3]))
-        + ident.as_ref() * Scale(from_f64::<T>(B3[1]));
+    let temp = a2 * Scale(from_f64::<T>(B3[3])) + ident.as_ref() * Scale(from_f64::<T>(B3[1]));
     let u = a * temp;
-    let v = a2 * Scale(from_f64::<T>(B3[2]))
-        + ident.as_ref() * Scale(from_f64::<T>(B3[0]));
+    let v = a2 * Scale(from_f64::<T>(B3[2])) + ident.as_ref() * Scale(from_f64::<T>(B3[0]));
     (u, v)
 }
 
@@ -241,9 +236,14 @@ fn pade5<T: ComplexField>(a: MatRef<T>, a2: MatRef<T>, a4: MatRef<T>) -> (Mat<T>
 }
 
 fn pade7<T: ComplexField>(
-    a: MatRef<T>, a2: MatRef<T>, a4: MatRef<T>, a6: MatRef<T>,
+    a: MatRef<T>,
+    a2: MatRef<T>,
+    a4: MatRef<T>,
+    a6: MatRef<T>,
 ) -> (Mat<T>, Mat<T>) {
-    const B7: [f64; 8] = [17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.];
+    const B7: [f64; 8] = [
+        17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.,
+    ];
     let ident = Mat::<T>::identity(a.ncols(), a.nrows());
     let temp = a6 * Scale(from_f64::<T>(B7[7]))
         + a4 * Scale(from_f64::<T>(B7[5]))
@@ -258,12 +258,22 @@ fn pade7<T: ComplexField>(
 }
 
 fn pade9<T: ComplexField>(
-    a: MatRef<T>, a2: MatRef<T>, a4: MatRef<T>, a6: MatRef<T>, a8: MatRef<T>,
+    a: MatRef<T>,
+    a2: MatRef<T>,
+    a4: MatRef<T>,
+    a6: MatRef<T>,
+    a8: MatRef<T>,
 ) -> (Mat<T>, Mat<T>) {
     const B9: [f64; 10] = [
-        17643225600., 8821612800., 2075673600.,
-        302702400.,   30270240.,   2162160.,
-        110880.,      3960.,       90.,
+        17643225600.,
+        8821612800.,
+        2075673600.,
+        302702400.,
+        30270240.,
+        2162160.,
+        110880.,
+        3960.,
+        90.,
         1.,
     ];
     let ident = Mat::<T>::identity(a.ncols(), a.nrows());
@@ -282,14 +292,26 @@ fn pade9<T: ComplexField>(
 }
 
 fn pade13<T: ComplexField>(
-    a: MatRef<T>, a2: MatRef<T>, a4: MatRef<T>, a6: MatRef<T>,
+    a: MatRef<T>,
+    a2: MatRef<T>,
+    a4: MatRef<T>,
+    a6: MatRef<T>,
 ) -> (Mat<T>, Mat<T>) {
     const B13: [f64; 14] = [
-        64764752532480000., 32382376266240000., 7771770303897600.,
-        1187353796428800.,  129060195264000.,   10559470521600.,
-        670442572800.,      33522128640.,       1323241920.,
-        40840800.,          960960.,            16380.,
-        182.,               1.,
+        64764752532480000.,
+        32382376266240000.,
+        7771770303897600.,
+        1187353796428800.,
+        129060195264000.,
+        10559470521600.,
+        670442572800.,
+        33522128640.,
+        1323241920.,
+        40840800.,
+        960960.,
+        16380.,
+        182.,
+        1.,
     ];
     let ident = Mat::<T>::identity(a.ncols(), a.nrows());
 
@@ -323,11 +345,10 @@ fn pade13<T: ComplexField>(
 /// phi_0(z) = exp(z)
 /// phi_k(z) = (phi_{k-1}(z) - 1/k!) / z
 /// ```
-pub fn phi_scaler<T: ComplexFloat>(z: T, k: usize) -> T
-{
+pub fn phi_scaler<T: ComplexFloat>(z: T, k: usize) -> T {
     let mut phi_z = z.exp();
     if k == 0 {
-        return phi_z
+        return phi_z;
     }
     for i in 1..=k {
         phi_z = (phi_z - T::from(1.0 / factorial::factorial(i as u64)).unwrap()) / z;
@@ -335,13 +356,12 @@ pub fn phi_scaler<T: ComplexFloat>(z: T, k: usize) -> T
     phi_z
 }
 
-
 #[cfg(test)]
 mod test_matexp_pade {
-    use std::f64::consts::PI;
-    use faer::c64;
-    use crate::mat_utils::{random_mat_normal, mat_mat_approx_eq};
     use super::*;
+    use crate::mat_utils::{mat_mat_approx_eq, random_mat_normal};
+    use faer::c64;
+    use std::f64::consts::PI;
 
     /// Verify that the recurrence formula and the extension formula for phi_k
     /// agree to within 1e-9 on a random 5×5 real matrix.
@@ -349,7 +369,7 @@ mod test_matexp_pade {
     fn test_phi_ext() {
         let dense_a: Mat<f64> = random_mat_normal(5, 5);
         for k in 0..=3 {
-            let phi_a     = phi(dense_a.as_ref(), k);
+            let phi_a = phi(dense_a.as_ref(), k);
             let phi_ext_a = phi_ext(dense_a.as_ref(), k);
             mat_mat_approx_eq(phi_a.as_ref(), phi_ext_a.as_ref(), 1e-9);
         }
@@ -413,12 +433,9 @@ mod test_matexp_pade {
     #[test]
     fn test_matexp_real_skew_symmetric() {
         let theta = 1.0_f64;
-        let dt    = 1.0_f64;
+        let dt = 1.0_f64;
 
-        let a = faer::mat![
-            [0.0_f64, -theta],
-            [theta,    0.0_f64]
-        ];
+        let a = faer::mat![[0.0_f64, -theta], [theta, 0.0_f64]];
 
         let result = matexp(a.as_ref(), dt);
 
@@ -427,19 +444,28 @@ mod test_matexp_pade {
 
         assert!(
             (result[(0, 0)] - c).abs() < tol,
-            "result[(0,0)]: expected cos({}) = {c}, got {}", theta * dt, result[(0, 0)]
+            "result[(0,0)]: expected cos({}) = {c}, got {}",
+            theta * dt,
+            result[(0, 0)]
         );
         assert!(
             (result[(0, 1)] - (-s)).abs() < tol,
-            "result[(0,1)]: expected -sin({}) = {}, got {}", theta * dt, -s, result[(0, 1)]
+            "result[(0,1)]: expected -sin({}) = {}, got {}",
+            theta * dt,
+            -s,
+            result[(0, 1)]
         );
         assert!(
             (result[(1, 0)] - s).abs() < tol,
-            "result[(1,0)]: expected sin({}) = {s}, got {}", theta * dt, result[(1, 0)]
+            "result[(1,0)]: expected sin({}) = {s}, got {}",
+            theta * dt,
+            result[(1, 0)]
         );
         assert!(
             (result[(1, 1)] - c).abs() < tol,
-            "result[(1,1)]: expected cos({}) = {c}, got {}", theta * dt, result[(1, 1)]
+            "result[(1,1)]: expected cos({}) = {c}, got {}",
+            theta * dt,
+            result[(1, 1)]
         );
     }
 
@@ -460,26 +486,38 @@ mod test_matexp_pade {
         // exp(iπ) = -1 + 0i
         assert!(
             (result[(0, 0)].re + 1.0).abs() < tol,
-            "Re(exp(iπ)) expected -1, got {}", result[(0, 0)].re
+            "Re(exp(iπ)) expected -1, got {}",
+            result[(0, 0)].re
         );
         assert!(
             result[(0, 0)].im.abs() < tol,
-            "Im(exp(iπ)) expected 0, got {}", result[(0, 0)].im
+            "Im(exp(iπ)) expected 0, got {}",
+            result[(0, 0)].im
         );
 
         // exp(iπ/2) = 0 + 1i
         assert!(
             result[(1, 1)].re.abs() < tol,
-            "Re(exp(iπ/2)) expected 0, got {}", result[(1, 1)].re
+            "Re(exp(iπ/2)) expected 0, got {}",
+            result[(1, 1)].re
         );
         assert!(
             (result[(1, 1)].im - 1.0).abs() < tol,
-            "Im(exp(iπ/2)) expected 1, got {}", result[(1, 1)].im
+            "Im(exp(iπ/2)) expected 1, got {}",
+            result[(1, 1)].im
         );
 
         // Off-diagonal entries should be zero
-        assert!(result[(0, 1)].norm() < tol, "result[(0,1)] expected 0, got {:?}", result[(0, 1)]);
-        assert!(result[(1, 0)].norm() < tol, "result[(1,0)] expected 0, got {:?}", result[(1, 0)]);
+        assert!(
+            result[(0, 1)].norm() < tol,
+            "result[(0,1)] expected 0, got {:?}",
+            result[(0, 1)]
+        );
+        assert!(
+            result[(1, 0)].norm() < tol,
+            "result[(1,0)] expected 0, got {:?}",
+            result[(1, 0)]
+        );
     }
 
     /// Verify the matrix exponential on a complex non-diagonal matrix.
@@ -514,11 +552,13 @@ mod test_matexp_pade {
         for i in 0..2 {
             assert!(
                 (result[(i, i)].re - c).abs() < tol,
-                "Re(result[({i},{i})]) expected cos(1) = {c}, got {}", result[(i, i)].re
+                "Re(result[({i},{i})]) expected cos(1) = {c}, got {}",
+                result[(i, i)].re
             );
             assert!(
                 result[(i, i)].im.abs() < tol,
-                "Im(result[({i},{i})]) expected 0, got {}", result[(i, i)].im
+                "Im(result[({i},{i})]) expected 0, got {}",
+                result[(i, i)].im
             );
         }
 
@@ -526,11 +566,13 @@ mod test_matexp_pade {
         for (r, ci) in [(0, 1), (1, 0)] {
             assert!(
                 result[(r, ci)].re.abs() < tol,
-                "Re(result[({r},{ci})]) expected 0, got {}", result[(r, ci)].re
+                "Re(result[({r},{ci})]) expected 0, got {}",
+                result[(r, ci)].re
             );
             assert!(
                 (result[(r, ci)].im - s).abs() < tol,
-                "Im(result[({r},{ci})]) expected sin(1) = {s}, got {}", result[(r, ci)].im
+                "Im(result[({r},{ci})]) expected sin(1) = {s}, got {}",
+                result[(r, ci)].im
             );
         }
     }

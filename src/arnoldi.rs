@@ -13,17 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use faer::dyn_stack::{MemBuffer, MemStack};
+use faer::matrix_free::LinOp;
 /// Contains arnoldi iteration methods
 /// Provides arnoldi methods for both faer LinOp and faer SparseColMat
 use faer::prelude::*;
-use faer::matrix_free::LinOp;
-use faer::dyn_stack::{MemBuffer, MemStack};
 use faer_traits::RealField;
+use num_traits::Float;
 use reborrow::ReborrowMut;
 use std::cmp;
-use num_traits::Float;
 // use faer::dyn_stack::PodStack;
-
 
 /// Arnoldi inner iteration with linear operator A
 ///
@@ -48,14 +47,14 @@ fn arnoldi_inner_lop<T>(
     stack: &mut MemStack,
     extended: bool,
 ) -> bool
-    where
+where
     T: RealField + Float,
 {
     // final iter check
-    let not_final_it: bool = k+1 < n;
+    let not_final_it: bool = k + 1 < n;
 
     // incomplete orth depth
-    let iom_depth = cmp::max(k as i32 - iom as i32 , 0) as usize;
+    let iom_depth = cmp::max(k as i32 - iom as i32, 0) as usize;
 
     // breakdown tol
     let breakdown_tol = T::from(1e-18).unwrap();
@@ -65,10 +64,12 @@ fn arnoldi_inner_lop<T>(
 
     // let mut qv: Mat<T> = a_lo * q_col;
     let mut qv: Mat<T> = faer::Mat::zeros(q_col.nrows(), 1);
-    a_lo.apply(qv.as_mut(),
-               q_col.as_mat().as_ref(),
-               faer::get_global_parallelism(),
-               stack);
+    a_lo.apply(
+        qv.as_mut(),
+        q_col.as_mat().as_ref(),
+        faer::get_global_parallelism(),
+        stack,
+    );
     qv = qv * faer::Scale(a_lo_scale);
 
     // let mut h = Vec::with_capacity(k + 2);
@@ -82,23 +83,21 @@ fn arnoldi_inner_lop<T>(
     }
 
     let norm_v = qv.norm_l2();
-    if k+1 < n || extended {
-        h[k+1] = norm_v;
+    if k + 1 < n || extended {
+        h[k + 1] = norm_v;
     }
 
     // check for happy breakdown
     let breakdown_flag: bool = norm_v < breakdown_tol;
 
-    if (not_final_it || extended) && !breakdown_flag
-    {
+    if (not_final_it || extended) && !breakdown_flag {
         // if norm_v is zero this is a div by 0 err
-        qv = qv * faer::Scale(T::from(1.).unwrap()/norm_v);
-        qs.col_mut(k+1).copy_from(qv.col(0));
+        qv = qv * faer::Scale(T::from(1.).unwrap() / norm_v);
+        qs.col_mut(k + 1).copy_from(qv.col(0));
     }
 
-    return breakdown_flag
+    return breakdown_flag;
 }
-
 
 /// Arnoldi iteration with linear operator A
 ///
@@ -115,7 +114,7 @@ pub fn arnoldi_lop<T>(
     n: usize,
     iom: usize,
 ) -> (Mat<T>, Mat<T>, usize)
-    where
+where
     T: RealField + Float,
 {
     let mut breakdown_n = 0;
@@ -125,7 +124,7 @@ pub fn arnoldi_lop<T>(
     let norm_b = b.norm_l2();
 
     // prevent div by 0 if norm_b~0
-    let not_early_bkdwn: bool =  (T::one() / norm_b).is_finite();
+    let not_early_bkdwn: bool = (T::one() / norm_b).is_finite();
     let q0 = if not_early_bkdwn {
         b * faer::Scale(T::from(1.0).unwrap() / norm_b)
     } else {
@@ -139,21 +138,28 @@ pub fn arnoldi_lop<T>(
 
     for k in 0..m {
         let breakdown_flag = arnoldi_inner_lop(
-            a_lo, a_lo_scale, k, m, iom, hs.as_mut(), qs.as_mut(),
-            MemStack::new(&mut mem_buf), false);
+            a_lo,
+            a_lo_scale,
+            k,
+            m,
+            iom,
+            hs.as_mut(),
+            qs.as_mut(),
+            MemStack::new(&mut mem_buf),
+            false,
+        );
         breakdown_n += 1;
         if breakdown_flag == true {
-            break
+            break;
         }
     }
 
     (
         qs.get(0..b.nrows(), 0..breakdown_n).to_owned(),
         hs.get(0..breakdown_n, 0..breakdown_n).to_owned(),
-        breakdown_n
+        breakdown_n,
     )
 }
-
 
 /// Arnoldi impl that can be restarted, taking mutable hessenberg
 /// and orthonormal matricies as input and writing into them.
@@ -184,14 +190,14 @@ pub fn arnoldi_lop_restarted<T>(
     n: usize,
     iom: usize,
 ) -> (bool, usize)
-    where
+where
     T: RealField + Float,
 {
     let dim = b.nrows();
     // ensure preallocated hessenberg storage is square
     assert!(hs.nrows() == hs.ncols());
     // ensure enough space avail in hs to write into
-    assert!(hs.ncols() > i+n);
+    assert!(hs.ncols() > i + n);
     // ensure orthonormal matrix has correct number of rows
     assert!(qs.nrows() == dim);
     let max_krylov_dim = hs.ncols();
@@ -214,32 +220,38 @@ pub fn arnoldi_lop_restarted<T>(
     let par = faer::get_global_parallelism();
     let mut mem_buf = MemBuffer::new(a_lo.apply_scratch(b.ncols(), par));
 
-    for k in i..i+n {
+    for k in i..i + n {
         // TODO: we should not have to check this.  happy breakdown should
         // happen here
         if k >= dim {
             breakdown_flag = true;
         }
         if breakdown_flag == true {
-            break
+            break;
         }
         // TODO: check that the last vector is properly computed in
         // the inner loop.
         breakdown_flag = arnoldi_inner_lop(
-            a_lo, a_lo_scale, k, max_krylov_dim, iom,
-            hs.as_mut(), qs.as_mut(),
-            MemStack::new(&mut mem_buf), true);
+            a_lo,
+            a_lo_scale,
+            k,
+            max_krylov_dim,
+            iom,
+            hs.as_mut(),
+            qs.as_mut(),
+            MemStack::new(&mut mem_buf),
+            true,
+        );
         breakdown_n += 1;
     }
 
     (breakdown_flag, breakdown_n)
 }
 
-
 #[cfg(test)]
 mod test_arnoldi {
+    use crate::mat_utils::{dense_to_sprs, mat_mat_approx_eq, random_mat_normal};
     use assert_approx_eq::assert_approx_eq;
-    use crate::mat_utils::{dense_to_sprs, random_mat_normal, mat_mat_approx_eq};
 
     // bring everything from above (parent) module into scope
     use super::*;
@@ -256,8 +268,7 @@ mod test_arnoldi {
         // arnoldi with linear op
         let iom = 1000;
         let kd = 10;
-        let (q, h, _brkdwn) = arnoldi_lop(
-            &test_a.as_ref(), 1.0, q0.as_ref(), kd, iom);
+        let (q, h, _brkdwn) = arnoldi_lop(&test_a.as_ref(), 1.0, q0.as_ref(), kd, iom);
         println!("arnoldi linop: \n {:?}", q);
         // brkdwn flag < 0 means method terminated without breakdown
         // assert!(_brkdwn < 0);
@@ -288,8 +299,7 @@ mod test_arnoldi {
         // arnoldi with linear op
         let iom = 1000;
         let kd = 10;
-        let (q, h, _brkdwn) = arnoldi_lop(
-            &test_a.as_ref(), 1.0, q0.as_ref(), kd, iom);
+        let (q, h, _brkdwn) = arnoldi_lop(&test_a.as_ref(), 1.0, q0.as_ref(), kd, iom);
         println!("arnoldi linop: \n {:?}", q);
         // brkdwn flag < 0 means method terminated without breakdown
         // assert!(_brkdwn < 0);
@@ -323,7 +333,16 @@ mod test_arnoldi {
         let mut hs_full = faer::Mat::zeros(dim_a, dim_a);
         let mut qs_full = faer::Mat::zeros(dim_a, dim_a);
         let iom = 10;
-        let (bkdwn, _) = arnoldi_lop_restarted(&dense_a, 1.0, q0.as_ref(), hs_full.as_mut(), qs_full.as_mut(), 0, m, iom);
+        let (bkdwn, _) = arnoldi_lop_restarted(
+            &dense_a,
+            1.0,
+            q0.as_ref(),
+            hs_full.as_mut(),
+            qs_full.as_mut(),
+            0,
+            m,
+            iom,
+        );
         assert!(!bkdwn);
 
         // run the standard allocating arnoldi procedure for 6 iterations
@@ -331,23 +350,32 @@ mod test_arnoldi {
 
         // Check output is equal to existing allocating arnoldi procedure.
         let hs_slice = hs_full.get(0..m, 0..m);
-        mat_mat_approx_eq(h.as_ref(), hs_slice, f64::EPSILON*100.);
+        mat_mat_approx_eq(h.as_ref(), hs_slice, f64::EPSILON * 100.);
 
         let qs_slice = qs_full.get(.., 0..m);
-        mat_mat_approx_eq(q.as_ref(), qs_slice, f64::EPSILON*100.);
+        mat_mat_approx_eq(q.as_ref(), qs_slice, f64::EPSILON * 100.);
 
         // continue two more iterations, for a total of 8
-        let (bkdwn, _) = arnoldi_lop_restarted(&dense_a, 1.0, q0.as_ref(), hs_full.as_mut(), qs_full.as_mut(), m, 2, iom);
+        let (bkdwn, _) = arnoldi_lop_restarted(
+            &dense_a,
+            1.0,
+            q0.as_ref(),
+            hs_full.as_mut(),
+            qs_full.as_mut(),
+            m,
+            2,
+            iom,
+        );
         assert!(!bkdwn);
         // run the standard allocating arnoldi procedure for 8 iterations
-        let (q, h, _) = arnoldi_lop(&dense_a, 1.0, q0.as_ref(), m+2, iom);
+        let (q, h, _) = arnoldi_lop(&dense_a, 1.0, q0.as_ref(), m + 2, iom);
 
         // Check output is equal to existing allocating arnoldi procedure.
-        let hs_slice = hs_full.get(0..m+2, 0..m+2);
-        mat_mat_approx_eq(h.as_ref(), hs_slice, f64::EPSILON*100.);
+        let hs_slice = hs_full.get(0..m + 2, 0..m + 2);
+        mat_mat_approx_eq(h.as_ref(), hs_slice, f64::EPSILON * 100.);
 
-        let qs_slice = qs_full.get(.., 0..m+2);
-        mat_mat_approx_eq(q.as_ref(), qs_slice, f64::EPSILON*100.);
+        let qs_slice = qs_full.get(.., 0..m + 2);
+        mat_mat_approx_eq(q.as_ref(), qs_slice, f64::EPSILON * 100.);
 
         // visual check with: cargo test cargo test lop_restarted -- --nocapture
         println!("arnoldi_lop_restarted h: {:?}", hs_full.as_ref());

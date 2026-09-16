@@ -1,18 +1,17 @@
 /// Demo showing the evaluation the matrix exponential using pade approx
 /// and partial fraction decomposition based methods.
 use faer::prelude::*;
-use ormatex::matexp_pade;
 use ormatex::matexp_cauchy;
+use ormatex::matexp_pade;
 #[cfg(feature = "plotters")]
 use plotters::prelude::*;
-
 
 pub fn main() {
     // example matrix
     let lmat = faer::mat![
-        [-1.0e-3,    1.0e1,      0.],
-        [       0., -1.0e1,  1.0e-1],
-        [       0.,     0., -1.0e-1],
+        [-1.0e-3, 1.0e1, 0.],
+        [0., -1.0e1, 1.0e-1],
+        [0., 0., -1.0e-1],
     ];
 
     // expm(dt*L) with pade approx
@@ -27,7 +26,10 @@ pub fn main() {
     // show the results are consistent
     println!("Pade expm: {:?}", exp_lmat_pade.as_ref());
     println!("PFD expm: {:?}", exp_lmat_pdf.as_ref());
-    println!("norm(diff): {:?}", (exp_lmat_pdf.as_ref() - exp_lmat_pade.as_ref()).norm_l2());
+    println!(
+        "norm(diff): {:?}",
+        (exp_lmat_pdf.as_ref() - exp_lmat_pade.as_ref()).norm_l2()
+    );
 
     // output plot storage
     let mut t_points: Vec<f64> = Vec::new();
@@ -40,8 +42,7 @@ pub fn main() {
     let mut y = faer::mat![[0.001], [0.1], [1.0]];
     let mut t = 0.0;
     for _i in 0..10000 {
-        y = matexp_eval.matexp_dense_cauchy(lmat.as_ref(), dt)
-            * y.as_ref();
+        y = matexp_eval.matexp_dense_cauchy(lmat.as_ref(), dt) * y.as_ref();
         t += dt;
         t_points.push(t);
         c0.push(y[(0, 0)]);
@@ -56,7 +57,12 @@ pub fn main() {
 }
 
 #[cfg(feature = "plotters")]
-fn plot_time_series(t: Vec<f64>, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), Box<dyn std::error::Error>> {
+fn plot_time_series(
+    t: Vec<f64>,
+    x: Vec<f64>,
+    y: Vec<f64>,
+    z: Vec<f64>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let root = BitMapBackend::new("ex_linsys.png", (640, 480)).into_drawing_area();
     root.fill(&WHITE)?;
     let mut chart = ChartBuilder::on(&root)
@@ -65,7 +71,8 @@ fn plot_time_series(t: Vec<f64>, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Resul
         .y_label_area_size(30)
         .build_cartesian_2d((0f64..10000f64).log_scale(), (1e-9f64..2.0f64).log_scale())?;
 
-    chart.configure_mesh()
+    chart
+        .configure_mesh()
         .y_desc("Population")
         .x_desc("Time")
         .draw()?;
