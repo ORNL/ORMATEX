@@ -30,12 +30,12 @@ use statrs::function::factorial;
 
 #[derive(Debug)]
 pub struct PadeExpm {
-    max_squarings: usize,
+    _max_squarings: usize,
 }
 
 impl PadeExpm {
     pub fn new(max_squarings: usize) -> Self {
-        Self { max_squarings }
+        Self { _max_squarings: max_squarings }
     }
 }
 

@@ -122,7 +122,7 @@ impl LinOp<f64> for PyJaxJacLinOp {
 
     fn apply(
         &self,
-        mut out: MatMut<f64>,
+        out: MatMut<f64>,
         rhs: MatRef<f64>,
         parallelism: Par,
         stack: &mut MemStack,
@@ -148,10 +148,10 @@ impl LinOp<f64> for PyJaxJacLinOp {
 
     fn conj_apply(
         &self,
-        out: MatMut<'_, f64>,
-        rhs: MatRef<'_, f64>,
-        parallelism: Par,
-        stack: &mut MemStack,
+        _out: MatMut<'_, f64>,
+        _rhs: MatRef<'_, f64>,
+        _parallelism: Par,
+        _stack: &mut MemStack,
     ) {
         // Not implented error!
         panic!("Not Implemented");
@@ -405,7 +405,7 @@ fn integrate_wrapper_rs<'py>(
             let lp = matexp_leja::LejaPoints::new(vec![0.0; m], vec![0.0; m]);
             let leja_ellipse_adapter =
                 matexp_leja::LejaEllipseAdapterStatic::new(leja_a, leja_b, leja_c);
-            let mut matexp_m = matexp_leja::LejaPhiEval::new(
+            let matexp_m = matexp_leja::LejaPhiEval::new(
                 lp,
                 std::cmp::min(m, 800),
                 tol,
@@ -418,7 +418,7 @@ fn integrate_wrapper_rs<'py>(
         }
         // krylov is default
         _ => {
-            let mut matexp_m =
+            let matexp_m =
                 matexp_krylov::KrylovExpm::new(expmv, std::cmp::min(50, m), m, tol, Some(iom));
             select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
         }
@@ -622,8 +622,8 @@ fn complex_diag_leja_phikv_fitted_rs<'py>(
 /// Python interface for computing dense phi_k(A*dt)*v0 products
 #[pyclass(unsendable)]
 pub struct DensePhikvEvalRs {
-    method: String,
-    order: usize,
+    _method: String,
+    _order: usize,
     evaluator: Box<dyn DensePhikvEvaluator>,
 }
 
@@ -638,8 +638,8 @@ impl DensePhikvEvalRs {
             _ => Box::new(PadeExpm::new(order)),
         };
         Self {
-            method,
-            order,
+            _method: method,
+            _order: order,
             evaluator,
         }
     }

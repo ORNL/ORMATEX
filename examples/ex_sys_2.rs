@@ -1,11 +1,8 @@
 /// Bateman example
 /// showing use of BDF, RK, and EPIRK time integrators
-use faer::prelude::*;
 use ormatex::matexp_krylov;
 use ormatex::matexp_pade;
 use ormatex::ode_epirk;
-use ormatex::ode_implicit;
-use ormatex::ode_rk;
 use ormatex::ode_sys::*;
 use ormatex::test_common::*;
 
@@ -28,7 +25,7 @@ pub fn main() {
     let m = 3;
     let tol = 1e-12;
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
-    let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, m, krylov_dim, tol, Some(iom));
+    let matexp_m = matexp_krylov::KrylovExpm::new(expmv, m, krylov_dim, tol, Some(iom));
     let mut sys_solver = ode_epirk::EpirkIntegrator::<matexp_krylov::KrylovExpm>::new(
         0.0,
         y0.as_ref(),

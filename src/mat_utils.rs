@@ -194,7 +194,7 @@ impl<'a, T> LinOp<T> for JacobianMatLinOp<'a, T>
 where
     T: RealField + Float,
 {
-    fn apply_linop_to_vec(&self, t: T, x: MatRef<T>, w: MatRef<T>, s: Option<T>) -> Mat<T> {
+    fn apply_linop_to_vec(&self, _t: T, _x: MatRef<T>, w: MatRef<T>, s: Option<T>) -> Mat<T> {
         self.a_mat * w * faer::Scale(s.unwrap_or(T::from(1.0).unwrap()))
     }
 }
@@ -242,13 +242,11 @@ where
 
 #[cfg(test)]
 mod test_matexp_rs {
-    use assert_approx_eq::assert_approx_eq;
-
     // bring everything from above (parent) module into scope
     use super::*;
 
     /// define Lotka-Volterra system for testing ONLY
-    fn lv_sys_rhs(t: f64, x: MatRef<f64>) -> Mat<f64> {
+    fn lv_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
         let alpha = 1.0;
         let beta = 1.0;
         let delta = 1.0;
@@ -261,7 +259,7 @@ mod test_matexp_rs {
     }
 
     /// define Lotka-Volterra jacobian for testing ONLY
-    fn lv_sys_jac(t: f64, x: MatRef<f64>) -> Mat<f64> {
+    fn lv_sys_jac(_t: f64, x: MatRef<f64>) -> Mat<f64> {
         let alpha = 1.0;
         let beta = 1.0;
         let delta = 1.0;
@@ -286,7 +284,7 @@ mod test_matexp_rs {
         let true_jac_w = true_jac.as_ref() * w.as_ref();
 
         // estimate jacobian vector prod with fw finite diff
-        let mut jac_linop = JacobianRhsLinOp::new(&lv_sys_rhs, 2);
+        let jac_linop = JacobianRhsLinOp::new(&lv_sys_rhs, 2);
         let approx_jac_w = jac_linop.apply_linop_to_vec(1.0, x0.as_ref(), w.as_ref(), None);
 
         // check

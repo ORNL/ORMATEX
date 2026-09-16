@@ -1,14 +1,10 @@
 /// Lotka voltera example showing use of BDF, RK, and EPIRK time integrators
 /// Run example with plot:
 /// cargo run --example ex_sys_1 --features plot
-use faer::prelude::*;
 use ormatex::logger::init_logger;
 use ormatex::matexp_krylov;
-use ormatex::matexp_leja;
 use ormatex::matexp_pade;
 use ormatex::ode_epirk;
-use ormatex::ode_implicit;
-use ormatex::ode_rk;
 use ormatex::ode_sys::*;
 use ormatex::test_common::*;
 
@@ -33,7 +29,7 @@ pub fn main() {
     let iom = 2;
     let krylov_dim = 6;
     let expmv = Box::new(matexp_pade::PadeExpm::new(12));
-    let mut matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, 80, 1e-12, Some(iom));
+    let matexp_m = matexp_krylov::KrylovExpm::new(expmv, krylov_dim, 80, 1e-12, Some(iom));
 
     let _logger = init_logger();
     //     let lp = matexp_leja::LejaPoints::new_from_lib("leja_circle").slice(0, 80);

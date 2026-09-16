@@ -19,25 +19,25 @@ use faer::matrix_free::LinOp;
 /// Common structs and methods for testing
 use faer::prelude::*;
 use rand::rngs::StdRng;
-use rand::{Rng, RngCore, SeedableRng};
+use rand::{Rng, SeedableRng};
 use std::marker::PhantomData;
 
 /// System with quadratic rhs for testing
 pub struct TestQuadSys<'a> {
-    sys_x: Mat<f64>,
+    _sys_x: Mat<f64>,
     phantom: PhantomData<&'a ()>,
 }
 impl<'a> TestQuadSys<'a> {
     pub fn new(sys_x: Mat<f64>) -> Self {
         Self {
-            sys_x,
+            _sys_x: sys_x,
             phantom: Default::default(),
         }
     }
 }
 impl<'a> OdeSys<'a> for TestQuadSys<'a> {
     // define nonlin fn
-    fn frhs(&self, t: f64, x: MatRef<f64>) -> Mat<f64> {
+    fn frhs(&self, _t: f64, x: MatRef<f64>) -> Mat<f64> {
         // x^2 - 1  has zeros a -1, 1
         x.as_ref() * x.as_ref() - faer::Mat::full(x.nrows(), x.ncols(), 1.0)
     }

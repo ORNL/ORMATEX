@@ -18,7 +18,6 @@ use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::linalg::matmul::triangular::{matmul as tri_matmul, BlockStructure};
 use faer::matrix_free::LinOp;
 use faer::prelude::*;
-use faer::reborrow::*;
 use faer::traits::ComplexField;
 use faer_traits::math_utils::{add, from_f64, mul};
 
@@ -270,7 +269,7 @@ pub fn inv_shift_scale_leja(
 pub struct LejaPoints {
     leja_re: Col<f64>,
     leja_im: Col<f64>,
-    leja_x: Col<c64>,
+    _leja_x: Col<c64>,
 }
 
 impl LejaPoints {
@@ -285,7 +284,7 @@ impl LejaPoints {
         Self {
             leja_re,
             leja_im,
-            leja_x,
+            _leja_x: leja_x,
         }
     }
 
@@ -296,7 +295,7 @@ impl LejaPoints {
         Self {
             leja_re,
             leja_im,
-            leja_x,
+            _leja_x: leja_x,
         }
     }
 
@@ -315,7 +314,7 @@ impl LejaPoints {
     /// ...
     /// leja_re_n, leja_im_n
     ///
-    pub fn new_from_file(file_str: &str) -> Self {
+    pub fn new_from_file(_file_str: &str) -> Self {
         // parse file content string
         todo!("Implement leja points from user file.");
     }
@@ -746,7 +745,7 @@ pub fn dd_taylor(
             std::mem::swap(&mut f_out, &mut tmp_sq);
         }
         // Final step: only need first column of f_out².
-        let mut col0: Mat<c64> = f_out.col(0).as_mat().to_owned();
+        let col0: Mat<c64> = f_out.col(0).as_mat().to_owned();
         let mut tmp_v: Mat<c64> = faer::Mat::zeros(n_leja, 1);
         tri_matmul(
             tmp_v.as_mut(),
@@ -1380,7 +1379,7 @@ impl LejaPhiEval {
             // leja polynomial update
             // vm = (tau * av.as_ref() - leja_x_sc_re[i-1]*vm) / scale;
             let z_re_inv = leja_x_sc_re[i - 1] * inv_scale;
-            faer::zip!(&mut vm, &av).for_each(|faer::unzip!(mut v, a)| {
+            faer::zip!(&mut vm, &av).for_each(|faer::unzip!(v, a)| {
                 *v = tau_inv_scale * *a - z_re_inv * *v;
             });
             let c_re = coeffs[i].re;
@@ -1414,7 +1413,7 @@ impl LejaPhiEval {
 
             // qm = (tau * av - z_re * vm) * inv_scale
             // in-place, no alloc
-            faer::zip!(&mut qm, &av, &vm).for_each(|faer::unzip!(mut q, a, v)| {
+            faer::zip!(&mut qm, &av, &vm).for_each(|faer::unzip!(q, a, v)| {
                 *q = tau_inv_scale * *a - z_re_inv * *v;
             });
             pm += faer::Scale(c_re) * qm.as_ref();
@@ -1423,7 +1422,7 @@ impl LejaPhiEval {
 
             // nv = (tau * av - z_re * qm) * inv_scale + im_sq * vm
             // in-place, no alloc
-            faer::zip!(&mut nv, &av, &qm, &vm).for_each(|faer::unzip!(mut n, a, q, v)| {
+            faer::zip!(&mut nv, &av, &qm, &vm).for_each(|faer::unzip!(n, a, q, v)| {
                 *n = tau_inv_scale * *a - z_re_inv * *q + im_sq * *v;
             });
             std::mem::swap(&mut vm, &mut nv);
@@ -1967,10 +1966,10 @@ impl GetSpectrumBounds for LejaEllipseAdapterStatic {
 /// diagonals of matrix are centers of disks
 /// sum of each row is radius of each disk
 /// take max radius and max diag + radius as spectrum bounds
-pub fn spectrum_gershgorin_disks(ext_a_lo: &dyn LinOp<f64>) -> (f64, f64, f64) {
-    let mut a: f64 = -1.0;
-    let mut b: f64 = 0.0;
-    let mut c: f64 = 1.0;
+pub fn spectrum_gershgorin_disks(_ext_a_lo: &dyn LinOp<f64>) -> (f64, f64, f64) {
+    let _a: f64 = -1.0;
+    let _b: f64 = 0.0;
+    let _c: f64 = 1.0;
 
     //let diag = ext_a_lo.inner_lop.apply(eye);
     //let row_sums = ext_a_lo.inner_lop.apply(ones);
@@ -1978,7 +1977,7 @@ pub fn spectrum_gershgorin_disks(ext_a_lo: &dyn LinOp<f64>) -> (f64, f64, f64) {
     //let b = 0.0;
     //let c = row_sums.abs().max();
     todo!("Implement greshgorin disks estimate of spectrum bounds.");
-    (a, b, c)
+    //(_a, _b, _c)
 }
 
 /// Using krylov-schur to estimate
@@ -2000,7 +1999,7 @@ pub fn spectrum_krylov_schur(
     let r0 = v0.col(0) / v0.norm_l2();
 
     let par = faer::get_global_parallelism();
-    let mut params = faer::matrix_free::eigen::PartialEigenParams::default();
+    let params = faer::matrix_free::eigen::PartialEigenParams::default();
     let stack_req = faer::matrix_free::eigen::partial_eigen_scratch(ext_a_lo, nev, par, params);
     let mut membuffer = MemBuffer::new(stack_req);
     let memstack = MemStack::new(&mut membuffer);
@@ -2214,7 +2213,7 @@ pub fn complex_diag_leja_phikv_static(
 
 fn complex_diag_leja_phikv(
     mut leja_phikv_eval: LejaPhiEval,
-    dt: f64,
+    _dt: f64,
     d_diag_re: ColRef<f64>,
     d_diag_im: ColRef<f64>,
     v_re: ColRef<f64>,
@@ -2276,11 +2275,9 @@ fn complex_diag_leja_phikv(
 
 #[cfg(test)]
 mod test_matexp_leja {
-    use core::time;
     use std::time::Instant;
 
     use crate::mat_utils::mat_mat_approx_eq;
-    use crate::matexp_krylov::KrylovExpm;
     use crate::matexp_pade::{matexp, phi};
     use crate::test_common::{gen_test_a, gen_test_b, gen_test_c};
     use assert_approx_eq::assert_approx_eq;
@@ -2310,7 +2307,7 @@ mod test_matexp_leja {
         let mut vbk: Vec<MatRef<f64>> = vec![];
         vbk.push(test_v.as_ref());
         let ext_a_lo = DynRefExtendedLinOp::new(1.0, &test_a, &vbk);
-        let (ext_a, ext_b, ext_c, _, _, _, _) =
+        let (ext_a, _ext_b, ext_c, _, _, _, _) =
             spectrum_arnoldi_iom(&ext_a_lo, test_v.as_ref(), 1.0, 10, 10, true);
 
         // check for consistency
@@ -2332,9 +2329,9 @@ mod test_matexp_leja {
         let b_eigs = test_b.eigenvalues().unwrap();
         let b_eigs_re: Vec<f64> = b_eigs.iter().map(|x| x.re()).collect();
         let b_eigs_im: Vec<f64> = b_eigs.iter().map(|x| x.im()).collect();
-        let min_b_re = b_eigs_re.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
-        let max_b_re = b_eigs_re.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
-        let max_b_im = b_eigs_im.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
+        let _min_b_re = b_eigs_re.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
+        let _max_b_re = b_eigs_re.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
+        let _max_b_im = b_eigs_im.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
     }
 
     #[test]
@@ -2516,7 +2513,7 @@ mod test_matexp_leja {
         );
 
         // print the ritz values
-        let (_a, _b, _c, ritz_re, ritz_im, q, h) = spectrum_arnoldi_iom(
+        let (_a, _b, _c, ritz_re, ritz_im, _q, _h) = spectrum_arnoldi_iom(
             &test_b.as_ref(),
             test_v.as_ref(),
             dt,
@@ -2796,7 +2793,7 @@ mod test_matexp_leja {
             println!("{lp_lib_re}, {lp_fn_re}");
             // assert_approx_eq!(lp_fn_re, lp_lib_re);
         }
-        for (lp_fn_im, lp_lib_im) in lp_fn.leja_im.iter().zip(lp_lib.leja_im.iter()) {
+        for (_lp_fn_im, _lp_lib_im) in lp_fn.leja_im.iter().zip(lp_lib.leja_im.iter()) {
             // assert_approx_eq!(lp_fn_im, lp_lib_im);
         }
     }

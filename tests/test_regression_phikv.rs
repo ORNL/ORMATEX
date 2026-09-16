@@ -2,7 +2,7 @@ use faer::prelude::*;
 use ormatex::mat_utils::mat_mat_approx_eq;
 use ormatex::matexp_krylov::KrylovExpm;
 use ormatex::matexp_leja::*;
-use ormatex::matexp_pade::{matexp, PadeExpm};
+use ormatex::matexp_pade::PadeExpm;
 use ormatex::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use ormatex::ode_sys::DynRefExtendedLinOp;
 use std::fs::File;

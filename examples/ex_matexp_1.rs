@@ -1,6 +1,5 @@
 /// Demo showing the evaluation the matrix exponential using pade approx
 /// and partial fraction decomposition based methods.
-use faer::prelude::*;
 use ormatex::matexp_cauchy;
 use ormatex::matexp_pade;
 #[cfg(feature = "plotters")]

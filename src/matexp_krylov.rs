@@ -16,7 +16,6 @@
 // Krylov Matrix Exponential Methods
 //
 use crate::arnoldi::{arnoldi_lop, arnoldi_lop_restarted};
-use crate::matexp_pade;
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use crate::ode_sys::DynRefExtendedLinOp;
 use faer::matrix_free::LinOp;
@@ -312,7 +311,6 @@ mod test_matexp_krylov {
     use crate::mat_utils::mat_mat_approx_eq;
     use crate::matexp_pade::{matexp, phi_ext};
     use crate::test_common::{gen_test_b, gen_test_c};
-    use assert_approx_eq::assert_approx_eq;
 
     // bring everything from above (parent) module into scope
     use super::*;
@@ -324,7 +322,7 @@ mod test_matexp_krylov {
         let m = 10;
         let tol = 1e-12;
         let krylov_dim_max = 100;
-        let expmv = Box::new(matexp_pade::PadeExpm::new(12));
+        let expmv = Box::new(crate::matexp_pade::PadeExpm::new(12));
         let mut krylov_phikv_eval = KrylovExpm::new(expmv, m, krylov_dim_max, tol, Some(iom));
         krylov_phikv_eval.set_verbosity(true);
 

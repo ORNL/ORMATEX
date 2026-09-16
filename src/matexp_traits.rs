@@ -21,11 +21,11 @@ use faer_traits::ComplexField;
 
 pub struct PhikvStatus {
     /// converged status
-    conv: bool,
+    _conv: bool,
     /// number of internal iterations required
-    iter: usize,
+    _iter: usize,
     /// err estimate
-    err: f64,
+    _err: f64,
 }
 
 /// Trait for implementors of a phi_k(A*dt)*v method for dense A.
@@ -78,11 +78,11 @@ pub trait LinOpPhikvEvaluator {
     /// vector and `k` is the zero-prefix length.
     fn apply_prepare(
         &mut self,
-        a_lo: &dyn LinOp<f64>,
-        dt: f64,
-        v: MatRef<f64>,
-        k: usize,
-        ext: Option<(&DynRefExtendedLinOp, &Vec<MatRef<f64>>)>,
+        _a_lo: &dyn LinOp<f64>,
+        _dt: f64,
+        _v: MatRef<f64>,
+        _k: usize,
+        _ext: Option<(&DynRefExtendedLinOp, &Vec<MatRef<f64>>)>,
     ) {
         // default is null-op
     }

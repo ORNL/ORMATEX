@@ -196,10 +196,10 @@ impl<'a> LinOp<f64> for ExtendedLinOp<'a> {
 
     fn conj_apply(
         &self,
-        out: MatMut<'_, f64>,
-        rhs: MatRef<'_, f64>,
-        parallelism: Par,
-        stack: &mut MemStack,
+        _out: MatMut<'_, f64>,
+        _rhs: MatRef<'_, f64>,
+        _parallelism: Par,
+        _stack: &mut MemStack,
     ) {
         // Not implented error!
         panic!("Not Implemented");
@@ -301,10 +301,10 @@ impl<'a> LinOp<f64> for DynRefExtendedLinOp<'a> {
 
     fn conj_apply(
         &self,
-        out: MatMut<'_, f64>,
-        rhs: MatRef<'_, f64>,
-        parallelism: Par,
-        stack: &mut MemStack,
+        _out: MatMut<'_, f64>,
+        _rhs: MatRef<'_, f64>,
+        _parallelism: Par,
+        _stack: &mut MemStack,
     ) {
         // Not implented error!
         panic!("Not Implemented");
@@ -423,10 +423,10 @@ impl<'a> LinOp<f64> for ShiftedLinOp<'a> {
     /// * `parallelism` - faer parallelism
     fn conj_apply(
         &self,
-        out: MatMut<'_, f64>,
-        rhs: MatRef<'_, f64>,
-        parallelism: Par,
-        stack: &mut MemStack,
+        _out: MatMut<'_, f64>,
+        _rhs: MatRef<'_, f64>,
+        _parallelism: Par,
+        _stack: &mut MemStack,
     ) {
         // Not implented error!
         panic!("Not Implemented");
@@ -567,10 +567,10 @@ impl<'a> LinOp<f64> for FdJacLinOp<'a> {
     /// * `parallelism` - faer parallelism
     fn conj_apply(
         &self,
-        out: MatMut<'_, f64>,
-        rhs: MatRef<'_, f64>,
-        parallelism: Par,
-        stack: &mut MemStack,
+        _out: MatMut<'_, f64>,
+        _rhs: MatRef<'_, f64>,
+        _parallelism: Par,
+        _stack: &mut MemStack,
     ) {
         // Not implented error!
         panic!("Not Implemented");
