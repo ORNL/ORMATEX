@@ -71,10 +71,7 @@ impl ImplicitBT {
             s: 2,
             c: vec![0.0, 1.0],
             b: vec![0.5, 0.5],
-            a: vec![
-                vec![0.0],
-                vec![0.5, 0.5],
-            ],
+            a: vec![vec![0.0], vec![0.5, 0.5]],
         }
     }
 
@@ -94,10 +91,7 @@ impl ImplicitBT {
             s: 2,
             c: vec![gamma, 1.0],
             b: vec![1.0 - gamma, gamma],
-            a: vec![
-                vec![gamma],
-                vec![1.0 - gamma, gamma],
-            ],
+            a: vec![vec![gamma], vec![1.0 - gamma, gamma]],
         }
     }
 
@@ -117,11 +111,7 @@ impl ImplicitBT {
             s: 3,
             c: vec![0.25, 0.5, 1.0],
             b: vec![0.5, 0.25, 0.25],
-            a: vec![
-                vec![0.25],
-                vec![0.25, 0.25],
-                vec![0.5,  0.25, 0.25],
-            ],
+            a: vec![vec![0.25], vec![0.25, 0.25], vec![0.5, 0.25, 0.25]],
         }
     }
 
@@ -144,11 +134,7 @@ impl ImplicitBT {
             s: 3,
             c: vec![gamma, 0.5, 1.0],
             b: vec![b0, b1, gamma],
-            a: vec![
-                vec![gamma],
-                vec![0.5 - gamma,  gamma],
-                vec![b0,           b1,     gamma],
-            ],
+            a: vec![vec![gamma], vec![0.5 - gamma, gamma], vec![b0, b1, gamma]],
         }
     }
 
@@ -171,16 +157,12 @@ impl ImplicitBT {
         const GAMMA: f64 = 0.435_866_521_545_466_4;
         let g = GAMMA;
         let b1 = -(6.0 * g * g - 16.0 * g + 1.0) / 4.0;
-        let b2 =  (6.0 * g * g - 20.0 * g + 5.0) / 4.0;
+        let b2 = (6.0 * g * g - 20.0 * g + 5.0) / 4.0;
         ImplicitBT {
             s: 3,
             c: vec![g, (1.0 + g) / 2.0, 1.0],
             b: vec![b1, b2, g],
-            a: vec![
-                vec![g],
-                vec![(1.0 - g) / 2.0, g],
-                vec![b1, b2, g],
-            ],
+            a: vec![vec![g], vec![(1.0 - g) / 2.0, g], vec![b1, b2, g]],
         }
     }
 }
@@ -304,7 +286,8 @@ mod test_tableau {
         // b^T A c  =  Σ_i b_i * (Σ_{j=0..=i} a[i][j] * c[j])
         let mut sum_bac = 0.0_f64;
         for i in 0..bt.s {
-            for j in 0..=i {              // j ≤ i, includes diagonal
+            for j in 0..=i {
+                // j ≤ i, includes diagonal
                 sum_bac += bt.b[i] * bt.a[i][j] * bt.c[j];
             }
         }

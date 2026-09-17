@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use crate::ode_sys::*;
 /// Runge-Kutta explicit integrators
 use faer::prelude::*;
 use std::collections::VecDeque;
-use crate::ode_sys::*;
 
 pub struct BT {
     c: Vec<f64>,
@@ -27,47 +27,39 @@ pub struct BT {
 /// Butcher tableau
 pub fn bt_factory(order: usize) -> BT {
     match order {
-    // RK4
-    4 => BT {
-        c: vec![0.0, 0.5, 0.5, 1.0],
-        b: vec![1./6., 1./3., 1./3., 1./6.],
-        a: vec![
-            vec![0.5, 0.0, 0.0],
-            vec![0.0, 0.5, 0.0],
-            vec![0.0, 0.0, 1.0],
+        // RK4
+        4 => BT {
+            c: vec![0.0, 0.5, 0.5, 1.0],
+            b: vec![1. / 6., 1. / 3., 1. / 3., 1. / 6.],
+            a: vec![
+                vec![0.5, 0.0, 0.0],
+                vec![0.0, 0.5, 0.0],
+                vec![0.0, 0.0, 1.0],
             ],
         },
-    // RK3
-    3 => BT {
-        c: vec![0.0, 0.5, 1.0],
-        b: vec![1./6., 2./3., 1./6.],
-        a: vec![
-            vec![0.5, 0.0],
-            vec![-1., 2.0],
-            ],
+        // RK3
+        3 => BT {
+            c: vec![0.0, 0.5, 1.0],
+            b: vec![1. / 6., 2. / 3., 1. / 6.],
+            a: vec![vec![0.5, 0.0], vec![-1., 2.0]],
         },
-    // RK2
-    2 => BT {
-        c: vec![0.0, 0.5],
-        b: vec![0.0, 1.0],
-        a: vec![
-            vec![0.5,],
-            ],
+        // RK2
+        2 => BT {
+            c: vec![0.0, 0.5],
+            b: vec![0.0, 1.0],
+            a: vec![vec![0.5]],
         },
-    // RK1
-    _ => BT {
-        c: vec![0.0,],
-        b: vec![1.0,],
-        a: vec![
-            vec![],
-            ],
+        // RK1
+        _ => BT {
+            c: vec![0.0],
+            b: vec![1.0],
+            a: vec![vec![]],
         },
     }
 }
 
 /// Runga-Kutta ode intergrator
-pub struct RkIntegrator
-{
+pub struct RkIntegrator {
     /// Order
     order: usize,
 
@@ -81,18 +73,16 @@ pub struct RkIntegrator
     y_hist: VecDeque<Mat<f64>>,
 }
 
-impl RkIntegrator
-{
-    pub fn new(t0: f64, y0: MatRef<f64>, order: usize) -> Self
-    {
-    let mut y_hist = VecDeque::with_capacity(order);
-    y_hist.push_front(y0.to_owned());
+impl RkIntegrator {
+    pub fn new(t0: f64, y0: MatRef<f64>, order: usize) -> Self {
+        let mut y_hist = VecDeque::with_capacity(order);
+        y_hist.push_front(y0.to_owned());
         let bt = match order {
             4 => bt_factory(4),
             3 => bt_factory(3),
             2 => bt_factory(2),
             1 => bt_factory(1),
-            _ => panic!("Invalid RK order")
+            _ => panic!("Invalid RK order"),
         };
         Self {
             order,
@@ -102,16 +92,20 @@ impl RkIntegrator
         }
     }
 
-    pub fn step_rk<'b>(&self, sys: &'b dyn OdeSys<'b>, dt: f64) -> Result<StepResult<f64, Mat<f64>>, StepError> {
+    pub fn step_rk<'b>(
+        &self,
+        sys: &'b dyn OdeSys<'b>,
+        dt: f64,
+    ) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         // current state
         let t = self.t;
         let y0 = self.y_hist[0].as_ref();
 
         let mut k: Vec<Mat<f64>> = vec![];
         k.push(sys.frhs(t, y0.as_ref()));
-        for i in 0..self.order-1 {
+        for i in 0..self.order - 1 {
             let mut y_delta = y0.to_owned();
-            for j in 0..i+1 {
+            for j in 0..i + 1 {
                 y_delta = y_delta.as_ref() + faer::Scale(dt * self.bt.a[i][j]) * k[j].as_ref();
             }
             let k_i = sys.frhs(t + (dt * self.bt.c[i + 1]), y_delta.as_ref());
@@ -121,17 +115,20 @@ impl RkIntegrator
         for i in 0..self.order {
             acc = acc.as_ref() + faer::Scale(dt * self.bt.b[i]) * k[i].as_ref();
         }
-        Ok(StepResult::new(t+dt, dt, acc, None))
+        Ok(StepResult::new(t + dt, dt, acc, None))
     }
 }
 
-impl <'a> IntegrateSys<'a> for RkIntegrator
-{
+impl<'a> IntegrateSys<'a> for RkIntegrator {
     type TimeType = f64;
     type SysStateType = Mat<f64>;
 
-    fn step<'b>(&mut self, sys: &'b dyn OdeSys<'b>, dt: Self::TimeType) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
-       self.step_rk(sys, dt)
+    fn step<'b>(
+        &mut self,
+        sys: &'b dyn OdeSys<'b>,
+        dt: Self::TimeType,
+    ) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError> {
+        self.step_rk(sys, dt)
     }
 
     fn time(&self) -> Self::TimeType {
@@ -143,11 +140,11 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
     }
 
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>) {
-       self.t = s.t;
-       self.y_hist.push_front(s.y);
-       if self.y_hist.len() >= self.order+1 {
-           self.y_hist.pop_back();
-       }
+        self.t = s.t;
+        self.y_hist.push_front(s.y);
+        if self.y_hist.len() >= self.order + 1 {
+            self.y_hist.pop_back();
+        }
     }
 
     fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType) {
@@ -156,7 +153,6 @@ impl <'a> IntegrateSys<'a> for RkIntegrator
         self.t = t0;
     }
 }
-
 
 #[cfg(test)]
 mod test_rk {
@@ -187,7 +183,7 @@ mod test_rk {
         let y0 = faer::mat![
             [5.0,], // pred pop
             [4.0,], // prey pop
-            ];
+        ];
 
         // setup rk ode solver order 1
         let mut sys_solver = RkIntegrator::new(0.0, y0.as_ref(), 1);
@@ -212,7 +208,7 @@ mod test_rk {
         let y0 = faer::mat![
             [5.0,], // pred pop
             [4.0,], // prey pop
-            ];
+        ];
 
         // setup rk ode solver order 2
         let mut sys_solver = RkIntegrator::new(0.0, y0.as_ref(), 2);
@@ -237,7 +233,7 @@ mod test_rk {
         let y0 = faer::mat![
             [5.0,], // pred pop
             [4.0,], // prey pop
-            ];
+        ];
 
         // setup rk ode solver order 4
         let mut sys_solver = RkIntegrator::new(0.0, y0.as_ref(), 4);
@@ -279,5 +275,4 @@ mod test_rk {
         assert!(order_4_to_8 > 3.5, "observed order: {order_4_to_8}");
         assert!(order_8_to_16 > 3.5, "observed order: {order_8_to_16}");
     }
-
 }

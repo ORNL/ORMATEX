@@ -13,26 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use crate::ode_sys::DynRefExtendedLinOp;
+use faer::matrix_free::LinOp;
 /// The phi-function evaluator traits
 use faer::prelude::*;
-use faer::matrix_free::LinOp;
 use faer_traits::ComplexField;
-use crate::ode_sys::{DynRefExtendedLinOp};
-
 
 pub struct PhikvStatus {
     /// converged status
-    conv: bool,
+    _conv: bool,
     /// number of internal iterations required
-    iter: usize,
+    _iter: usize,
     /// err estimate
-    err: f64,
+    _err: f64,
 }
 
-
 /// Trait for implementors of a phi_k(A*dt)*v method for dense A.
-pub trait DensePhikvEvaluator<T: ComplexField = f64>
-{
+pub trait DensePhikvEvaluator<T: ComplexField = f64> {
     /// Evaluates phi_k(dt*A) * v0
     fn apply_phi_k(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize) -> Mat<T>;
 
@@ -50,19 +47,21 @@ pub trait DensePhikvEvaluator<T: ComplexField = f64>
     }
 
     /// Prepare for apply_*.
-    fn apply_prepare(&mut self, _a: MatRef<T>, _dt: f64, _v0: MatRef<T>, _k: usize)
-    {
+    fn apply_prepare(&mut self, _a: MatRef<T>, _dt: f64, _v0: MatRef<T>, _k: usize) {
         // default is null-op
     }
 }
 
-
 /// Trait for implementors of a phi_k(A*dt)*v method for Sparse or LinOp A
-pub trait LinOpPhikvEvaluator
-{
+pub trait LinOpPhikvEvaluator {
     /// Evaluate a linear combination of phi-function vector prodcuts
     /// of the form [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]
-    fn apply_phi_k_v(&mut self, a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64>;
+    fn apply_phi_k_v(
+        &mut self,
+        a_lo: &DynRefExtendedLinOp,
+        dt: f64,
+        vb: &Vec<MatRef<f64>>,
+    ) -> Mat<f64>;
 
     /// Evaluate the phi-function vector prodcut:
     /// phi_k(dt*A) * vk
@@ -80,11 +79,11 @@ pub trait LinOpPhikvEvaluator
     /// vector and `k` is the zero-prefix length.
     fn apply_prepare(
         &mut self,
-        a_lo: &dyn LinOp<f64>,
-        dt: f64,
-        v: MatRef<f64>,
-        k: usize,
-        ext: Option<(&DynRefExtendedLinOp, &Vec<MatRef<f64>>)>,
+        _a_lo: &dyn LinOp<f64>,
+        _dt: f64,
+        _v: MatRef<f64>,
+        _k: usize,
+        _ext: Option<(&DynRefExtendedLinOp, &Vec<MatRef<f64>>)>,
     ) {
         // default is null-op
     }

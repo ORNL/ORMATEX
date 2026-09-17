@@ -15,14 +15,12 @@
  */
 // Krylov Matrix Exponential Methods
 //
-use std::cmp::{max, min};
-use faer::prelude::*;
-use faer::matrix_free::LinOp;
 use crate::arnoldi::{arnoldi_lop, arnoldi_lop_restarted};
-use crate::ode_sys::{DynRefExtendedLinOp};
-use crate::matexp_pade;
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
-
+use crate::ode_sys::DynRefExtendedLinOp;
+use faer::matrix_free::LinOp;
+use faer::prelude::*;
+use std::cmp::{max, min};
 
 /// Krylov methods to compute Sparse Matrix Exponential
 /// and Phi functions
@@ -49,7 +47,13 @@ pub struct KrylovExpm {
 }
 
 impl KrylovExpm {
-    pub fn new(expmv: Box<dyn DensePhikvEvaluator>, m: usize, krylov_dim_max: usize, tol: f64, iom_in: Option<usize>) -> Self {
+    pub fn new(
+        expmv: Box<dyn DensePhikvEvaluator>,
+        m: usize,
+        krylov_dim_max: usize,
+        tol: f64,
+        iom_in: Option<usize>,
+    ) -> Self {
         assert!(krylov_dim_max > 0);
         assert!(m <= krylov_dim_max);
         Self {
@@ -89,9 +93,7 @@ impl KrylovExpm {
     /// * `dt` - time step scale.
     /// * `v0` - the vector to which the matrix exponential is applied
     ///
-    pub fn apply_linop(&mut self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>)
-        -> Mat<f64>
-    {
+    pub fn apply_linop(&mut self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>) -> Mat<f64> {
         self.apply_phik_linop(a_lo, dt, v0, 0)
     }
 
@@ -104,9 +106,12 @@ impl KrylovExpm {
     /// * `v0` - the vector to which the matrix phi-function is applied
     /// * `k` - the phi function order
     pub fn apply_phik_linop_adapt(
-        &mut self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>, k: usize)
-        -> Mat<f64>
-    {
+        &mut self,
+        a_lo: &dyn LinOp<f64>,
+        dt: f64,
+        v0: MatRef<f64>,
+        k: usize,
+    ) -> Mat<f64> {
         let clock = std::time::Instant::now();
         log::info!("=== Adaptive KrylovExpm");
         println!("=== Adaptive KrylovExpm");
@@ -125,8 +130,15 @@ impl KrylovExpm {
 
         // run initial arnoldi iterations up to the current krylov dim
         let (mut breakdown_flag, mut breakdown_m) = arnoldi_lop_restarted(
-            a_lo, dt, v0, self.hs.as_mut(), self.qs.as_mut(),
-            0, self.m, self.iom);
+            a_lo,
+            dt,
+            v0,
+            self.hs.as_mut(),
+            self.qs.as_mut(),
+            0,
+            self.m,
+            self.iom,
+        );
 
         const BUFFER_M: usize = 2;
         let beta = v0.norm_l2();
@@ -138,25 +150,27 @@ impl KrylovExpm {
             // trim hessenberg to size
             let h_dim = min(self.m, breakdown_m);
             // get H_{m+1} view
-            let h = self.hs.get(0..h_dim+1, 0..h_dim+1);
-            let q = self.qs.get(.., 0..h_dim+1);
+            let h = self.hs.get(0..h_dim + 1, 0..h_dim + 1);
+            let q = self.qs.get(.., 0..h_dim + 1);
 
             // compute the dense matrix exponential of the hessenberg
             let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
             unit_vec[(0, 0)] = 1.0;
-            let phi_h = self.expmv.apply_phi_k(
-                h.as_ref(), 1.0, unit_vec.as_ref(), k);
+            let phi_h = self
+                .expmv
+                .apply_phi_k(h.as_ref(), 1.0, unit_vec.as_ref(), k);
             res = faer::Scale(beta) * (q.as_ref() * phi_h.as_ref());
 
             // compute error estimate
-            let last_m = phi_h.nrows()-1;
+            let last_m = phi_h.nrows() - 1;
             let mut last_m_p = last_m;
             let krylov_dim_lookback = max(self.krylov_dim_lookback, 2);
             // p is the lookback
             for p in 1..=min(krylov_dim_lookback, last_m) {
                 converged = p > 1;
-                last_m_p = last_m+1 - p;
-                let final_updates = q.get(.., last_m_p..last_m+1) * phi_h.col(0).get(last_m_p..last_m+1);
+                last_m_p = last_m + 1 - p;
+                let final_updates =
+                    q.get(.., last_m_p..last_m + 1) * phi_h.col(0).get(last_m_p..last_m + 1);
                 err_est_p = final_updates.norm_l2();
 
                 // log error estimate to stdout and log file
@@ -178,12 +192,23 @@ impl KrylovExpm {
                 // run arnoldi additional iters
                 // cap the increment to available storage
                 let storage_size = self.krylov_dim_max + 1;
-                let max_increment = if storage_size > self.m { storage_size - self.m - 1 } else { 0 };
+                let max_increment = if storage_size > self.m {
+                    storage_size - self.m - 1
+                } else {
+                    0
+                };
                 let dim_inc = min(self.krylov_dim_inc, max_increment);
                 if dim_inc > 0 {
                     let (bd, bd_n) = arnoldi_lop_restarted(
-                        a_lo, dt, v0, self.hs.as_mut(), self.qs.as_mut(),
-                        self.m, dim_inc, self.iom);
+                        a_lo,
+                        dt,
+                        v0,
+                        self.hs.as_mut(),
+                        self.qs.as_mut(),
+                        self.m,
+                        dim_inc,
+                        self.iom,
+                    );
                     breakdown_m = bd_n;
                     breakdown_flag = bd;
                     // extend krylov dim
@@ -194,12 +219,15 @@ impl KrylovExpm {
             // TODO: return Err() or Warning
             if self.m >= self.krylov_dim_max {
                 self.m = self.krylov_dim_max;
-                break
+                break;
             }
             adapt_iter += 1;
         }
 
-        println!("converged: {converged}, m: {}, err_est: {:0.6e}", self.m, err_est_p);
+        println!(
+            "converged: {converged}, m: {}, err_est: {:0.6e}",
+            self.m, err_est_p
+        );
         println!("Krylov expmv time (s): {}", clock.elapsed().as_secs_f64());
         // return final approximation beta*Q*exp(H)*e1
         res
@@ -213,14 +241,18 @@ impl KrylovExpm {
     /// * `v0` - the vector to which the matrix phi-function is applied
     /// * `k` - the phi function order
     pub fn apply_phik_linop(
-        &self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>, k: usize)
-        -> Mat<f64>
-    {
+        &self,
+        a_lo: &dyn LinOp<f64>,
+        dt: f64,
+        v0: MatRef<f64>,
+        k: usize,
+    ) -> Mat<f64> {
         let (q, h, _b) = arnoldi_lop(a_lo, 1.0, v0.as_ref(), self.m, self.iom);
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
-        return faer::Scale(beta) * (q.as_ref() * self.expmv.apply_phi_k(h.as_ref(), dt, unit_vec.as_ref(), k))
+        return faer::Scale(beta)
+            * (q.as_ref() * self.expmv.apply_phi_k(h.as_ref(), dt, unit_vec.as_ref(), k));
     }
 
     /// This method evaluates linear combinations
@@ -246,9 +278,8 @@ impl KrylovExpm {
         &mut self,
         ext_a_lo: &DynRefExtendedLinOp,
         tau: f64,
-        vb: &Vec<MatRef<f64>>)
-        -> Mat<f64>
-    {
+        vb: &Vec<MatRef<f64>>,
+    ) -> Mat<f64> {
         // setup the extended rhs vector
         let (ext_v, n) = ext_a_lo.get_v(vb);
 
@@ -261,7 +292,12 @@ impl KrylovExpm {
 }
 
 impl LinOpPhikvEvaluator for KrylovExpm {
-    fn apply_phi_k_v(&mut self, ext_a_lo: &DynRefExtendedLinOp, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64> {
+    fn apply_phi_k_v(
+        &mut self,
+        ext_a_lo: &DynRefExtendedLinOp,
+        dt: f64,
+        vb: &Vec<MatRef<f64>>,
+    ) -> Mat<f64> {
         self.apply_linop_ext(ext_a_lo, dt, vb)
     }
 
@@ -270,10 +306,8 @@ impl LinOpPhikvEvaluator for KrylovExpm {
     }
 }
 
-
 #[cfg(test)]
 mod test_matexp_krylov {
-    use assert_approx_eq::assert_approx_eq;
     use crate::mat_utils::mat_mat_approx_eq;
     use crate::matexp_pade::{matexp, phi_ext};
     use crate::test_common::{gen_test_b, gen_test_c};
@@ -288,12 +322,12 @@ mod test_matexp_krylov {
         let m = 10;
         let tol = 1e-12;
         let krylov_dim_max = 100;
-        let expmv = Box::new(matexp_pade::PadeExpm::new(12));
+        let expmv = Box::new(crate::matexp_pade::PadeExpm::new(12));
         let mut krylov_phikv_eval = KrylovExpm::new(expmv, m, krylov_dim_max, tol, Some(iom));
         krylov_phikv_eval.set_verbosity(true);
 
         // generate vb vector: vb = [b0, b1, ... bk]
-        let test_vb = vec![test_v.as_ref(),];
+        let test_vb = vec![test_v.as_ref()];
 
         // compute phi_0(dt*A)*b0
         let dt = 0.3;
@@ -304,22 +338,19 @@ mod test_matexp_krylov {
         let phi0mv_pade_dense = matexp(test_b.as_ref(), dt) * test_v.as_ref();
         println!("krylov phi0mv: {:?}", &phi0mv_krylov_pm);
         println!("pade phi0mv: {:?}", &phi0mv_pade_dense);
-        mat_mat_approx_eq(
-            phi0mv_krylov_pm.as_ref(), phi0mv_pade_dense.as_ref(), 1e-8);
-
+        mat_mat_approx_eq(phi0mv_krylov_pm.as_ref(), phi0mv_pade_dense.as_ref(), 1e-8);
 
         // compute phi_1(dt*A)*b0
         let zeros = Mat::zeros(test_v.nrows(), test_v.ncols());
-        let test_vb = vec![zeros.as_ref(), test_v.as_ref(),];
+        let test_vb = vec![zeros.as_ref(), test_v.as_ref()];
         let ext_b_lo = DynRefExtendedLinOp::new(dt, &test_b, &test_vb);
         let phi1mv_krylov_pm: Mat<f64> = krylov_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi1mv_pade_dense = phi_ext((dt*test_b).as_ref(), 1) * test_v.as_ref();
+        let phi1mv_pade_dense = phi_ext((dt * test_b).as_ref(), 1) * test_v.as_ref();
         println!("krylov phi1mv: {:?}", &phi1mv_krylov_pm);
         println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
-        mat_mat_approx_eq(
-            phi1mv_krylov_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);
+        mat_mat_approx_eq(phi1mv_krylov_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);
     }
 
     #[test]
@@ -335,7 +366,7 @@ mod test_matexp_krylov {
         // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
         // krylov method for a larger 80x80 A
         let (test_b, test_v) = gen_test_c(80);
-        let scale = 20.0;  // increase stiffness of the problem
+        let scale = 20.0; // increase stiffness of the problem
         _run_krylov_phikv(faer::Scale(scale) * test_b, test_v);
     }
 }

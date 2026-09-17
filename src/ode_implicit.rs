@@ -14,17 +14,16 @@
  * limitations under the License.
  */
 
+use crate::newton::*;
+use crate::ode_sys::*;
+use crate::tableau_implicit::ImplicitBT;
 /// Implicit time integration:
 ///   - Generic DIRK / SDIRK via Butcher tableau  (`DirkIntegrator`)
 ///   - BDF1 and BDF2 linear multistep methods     (`BdfIntegrator`)
 ///
 use faer::prelude::*;
-use crate::ode_sys::*;
-use crate::newton::*;
-use crate::tableau_implicit::ImplicitBT;
-use std::marker::PhantomData;
 use std::collections::VecDeque;
-
+use std::marker::PhantomData;
 
 /// Advance `y' = f(t,y)` by one step `dt` using the implicit Butcher tableau `bt`.
 ///
@@ -47,15 +46,15 @@ use std::collections::VecDeque;
 /// Lifetime `'jac` is the lifetime of the ODE system (governs `ShiftedLinOp`).
 /// `y0` may have any lifetime shorter than `'jac`; it is cloned on entry.
 fn dirk_step<'jac>(
-    sys:       &'jac dyn OdeSys<'jac>,
-    t:         f64,
-    y0:        MatRef<'_, f64>,
-    dt:        f64,
-    bt:        &ImplicitBT,
-    tol_nlin:  f64,
-    tol_lin:   f64,
+    sys: &'jac dyn OdeSys<'jac>,
+    t: f64,
+    y0: MatRef<'_, f64>,
+    dt: f64,
+    bt: &ImplicitBT,
+    tol_nlin: f64,
+    tol_lin: f64,
     iters_nlin: usize,
-    iters_lin:  usize,
+    iters_lin: usize,
 ) -> Result<StepResult<f64, Mat<f64>>, StepError> {
     let s = bt.s;
     // Stage derivatives k[i] = f(t + c[i]*dt, y_i)
@@ -65,19 +64,17 @@ fn dirk_step<'jac>(
         // explicit accumulation: y_expl = y0 + dt * \sum_{j<i} a[i][j]*k[j]
         let mut y_expl: Mat<f64> = y0.to_owned();
         for j in 0..i {
-            y_expl = y_expl.as_ref()
-                + faer::Scale(dt * bt.a[i][j]) * k[j].as_ref();
+            y_expl = y_expl.as_ref() + faer::Scale(dt * bt.a[i][j]) * k[j].as_ref();
         }
 
         let a_ii = bt.a[i][i];
-        let t_i  = t + bt.c[i] * dt;
+        let t_i = t + bt.c[i] * dt;
 
         let k_i: Mat<f64> = if a_ii == 0.0 {
             // Explicit stage
             sys.frhs(t_i, y_expl.as_ref())
-
         } else {
-            print!("Implicit stage: {} ", i+1);
+            print!("Implicit stage: {} ", i + 1);
             // Implicit stage
             // Solve  g(y_i) = y_i - y_expl - dt*a_ii*f(t_i, y_i) = 0
             // dg/dy_i = I - dt*a_ii * J_f(t_i, y_i)
@@ -86,12 +83,9 @@ fn dirk_step<'jac>(
 
             // HRTB on the input MatRef so `jac_newton` can call the closure
             // with its internal iteration variable.
-            let gfn: &dyn for<'c> Fn(f64, MatRef<'c, f64>) -> Mat<f64> =
-                &|t_arg, y_i| {
-                    y_i.as_ref()
-                        - y_expl.as_ref()
-                        - faer::Scale(dt * a_ii) * sys.frhs(t_arg, y_i)
-                };
+            let gfn: &dyn for<'c> Fn(f64, MatRef<'c, f64>) -> Mat<f64> = &|t_arg, y_i| {
+                y_i.as_ref() - y_expl.as_ref() - faer::Scale(dt * a_ii) * sys.frhs(t_arg, y_i)
+            };
 
             // Return lifetime is 'jac (tied to `sys`), independent of input 'c.
             let gfn_jac: &dyn for<'c> Fn(f64, MatRef<'c, f64>) -> ShiftedLinOp<'jac> =
@@ -99,9 +93,14 @@ fn dirk_step<'jac>(
 
             // Newton initial guess = y_expl (explicit accumulation for this stage).
             let y_i = jac_newton(
-                t_i, y_expl.as_ref(),
-                gfn, gfn_jac,
-                tol_nlin, tol_lin, iters_nlin, iters_lin,
+                t_i,
+                y_expl.as_ref(),
+                gfn,
+                gfn_jac,
+                tol_nlin,
+                tol_lin,
+                iters_nlin,
+                iters_lin,
             )?;
 
             // Stage derivative
@@ -119,7 +118,6 @@ fn dirk_step<'jac>(
     Ok(StepResult::new(t + dt, dt, y_new, None))
 }
 
-
 /// Generic single-step DIRK / SDIRK integrator defined by an [`ImplicitBT`] tableau.
 ///
 /// Works with any fully-implicit or ESDIRK tableau: Backward Euler,
@@ -127,11 +125,11 @@ fn dirk_step<'jac>(
 ///
 pub struct DirkIntegrator<'a> {
     bt: ImplicitBT,
-    t:  f64,
-    y:  Mat<f64>,
-    tol_lin:    f64,
-    tol_nlin:   f64,
-    iters_lin:  usize,
+    t: f64,
+    y: Mat<f64>,
+    tol_lin: f64,
+    tol_nlin: f64,
+    iters_lin: usize,
     iters_nlin: usize,
     phantom: PhantomData<&'a ()>,
 }
@@ -144,9 +142,9 @@ impl<'a> DirkIntegrator<'a> {
             bt,
             t: t0,
             y: y0.to_owned(),
-            tol_lin:    tol_lin,
-            tol_nlin:   tol_nlin,
-            iters_lin:  1000,
+            tol_lin: tol_lin,
+            tol_nlin: tol_nlin,
+            iters_lin: 1000,
             iters_nlin: 50,
             phantom: Default::default(),
         }
@@ -154,7 +152,7 @@ impl<'a> DirkIntegrator<'a> {
 }
 
 impl<'a> IntegrateSys<'a> for DirkIntegrator<'a> {
-    type TimeType     = f64;
+    type TimeType = f64;
     type SysStateType = Mat<f64>;
 
     fn step<'b>(
@@ -165,16 +163,27 @@ impl<'a> IntegrateSys<'a> for DirkIntegrator<'a> {
         println!("\nDIRK step, t: {:?}, dt: {:?}", self.t, dt);
         let clock = std::time::Instant::now();
         let res = dirk_step(
-            sys, self.t, self.y.as_ref(), dt, &self.bt,
-            self.tol_nlin, self.tol_lin, self.iters_nlin, self.iters_lin,
+            sys,
+            self.t,
+            self.y.as_ref(),
+            dt,
+            &self.bt,
+            self.tol_nlin,
+            self.tol_lin,
+            self.iters_nlin,
+            self.iters_lin,
         );
         println!("DIRK step time (s): {}", clock.elapsed().as_secs_f64());
         res
     }
 
-    fn time(&self) -> Self::TimeType { self.t }
+    fn time(&self) -> Self::TimeType {
+        self.t
+    }
 
-    fn state(&self) -> Self::SysStateType { self.y.clone() }
+    fn state(&self) -> Self::SysStateType {
+        self.y.clone()
+    }
 
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>) {
         self.t = s.t;
@@ -187,7 +196,6 @@ impl<'a> IntegrateSys<'a> for DirkIntegrator<'a> {
     }
 }
 
-
 /// BDF linear multistep integrator.
 ///
 /// `order = 1` — BDF1 (Backward Euler); delegates to `dirk_step` with
@@ -199,12 +207,12 @@ impl<'a> IntegrateSys<'a> for DirkIntegrator<'a> {
 ///
 pub struct BdfIntegrator<'a> {
     order: usize,
-    t:     f64,
+    t: f64,
     /// History: index 0 = y_n (most recent), index 1 = y_{n-1}
     y_hist: VecDeque<Mat<f64>>,
-    tol_lin:    f64,
-    tol_nlin:   f64,
-    iters_lin:  usize,
+    tol_lin: f64,
+    tol_nlin: f64,
+    iters_lin: usize,
     iters_nlin: usize,
     phantom: PhantomData<&'a ()>,
 }
@@ -219,9 +227,9 @@ impl<'a> BdfIntegrator<'a> {
             order,
             t: t0,
             y_hist,
-            tol_lin:    tol_lin,
-            tol_nlin:   tol_nlin,
-            iters_lin:  1000,
+            tol_lin: tol_lin,
+            tol_nlin: tol_nlin,
+            iters_lin: 1000,
             iters_nlin: 50,
             phantom: Default::default(),
         }
@@ -234,9 +242,15 @@ impl<'a> BdfIntegrator<'a> {
         dt: f64,
     ) -> Result<StepResult<f64, Mat<f64>>, StepError> {
         dirk_step(
-            sys, self.t, self.y_hist[0].as_ref(), dt,
+            sys,
+            self.t,
+            self.y_hist[0].as_ref(),
+            dt,
             &ImplicitBT::implicit_euler(),
-            self.tol_nlin, self.tol_lin, self.iters_nlin, self.iters_lin,
+            self.tol_nlin,
+            self.tol_lin,
+            self.iters_nlin,
+            self.iters_lin,
         )
     }
 
@@ -246,9 +260,9 @@ impl<'a> BdfIntegrator<'a> {
         sys: &'b dyn OdeSys<'b>,
         dt: f64,
     ) -> Result<StepResult<f64, Mat<f64>>, StepError> {
-        let t  = self.t;
-        let y0 = self.y_hist[0].as_ref();   // y_n
-        let y1 = self.y_hist[1].as_ref();   // y_{n-1}
+        let t = self.t;
+        let y0 = self.y_hist[0].as_ref(); // y_n
+        let y1 = self.y_hist[1].as_ref(); // y_{n-1}
 
         // BDF2 formula:
         //   y_{n+1} = (4/3)*y_n − (1/3)*y_{n-1} + (2/3)*dt*f(t+dt, y_{n+1})
@@ -260,29 +274,30 @@ impl<'a> BdfIntegrator<'a> {
         //   dg/dy = gamma*I − (2/3)*dt*J_f  ≡  fjac_shifted(scale=−2dt/3, gamma=1)
         let scale = -(2.0 / 3.0) * dt;
 
-        let gfn: &dyn for<'c> Fn(f64, MatRef<'c, f64>) -> Mat<f64> =
-            &|t_arg, y| {
-                y.as_ref()
-                    - faer::Scale(4.0 / 3.0) * y0
-                    + faer::Scale(1.0 / 3.0) * y1
-                    - faer::Scale((2.0 / 3.0) * dt) * sys.frhs(t_arg, y)
-            };
+        let gfn: &dyn for<'c> Fn(f64, MatRef<'c, f64>) -> Mat<f64> = &|t_arg, y| {
+            y.as_ref() - faer::Scale(4.0 / 3.0) * y0 + faer::Scale(1.0 / 3.0) * y1
+                - faer::Scale((2.0 / 3.0) * dt) * sys.frhs(t_arg, y)
+        };
 
         let gfn_jac: &dyn for<'c> Fn(f64, MatRef<'c, f64>) -> ShiftedLinOp<'b> =
             &|t_arg, y| sys.fjac_shifted(t_arg, y, scale, Some(1.0));
 
         let y_new = jac_newton(
-            t + dt, y0,
-            gfn, gfn_jac,
-            self.tol_nlin, self.tol_lin, self.iters_nlin, self.iters_lin,
+            t + dt,
+            y0,
+            gfn,
+            gfn_jac,
+            self.tol_nlin,
+            self.tol_lin,
+            self.iters_nlin,
+            self.iters_lin,
         )?;
         Ok(StepResult::new(t + dt, dt, y_new, None))
     }
-
 }
 
 impl<'a> IntegrateSys<'a> for BdfIntegrator<'a> {
-    type TimeType     = f64;
+    type TimeType = f64;
     type SysStateType = Mat<f64>;
 
     fn step<'b>(
@@ -301,16 +316,20 @@ impl<'a> IntegrateSys<'a> for BdfIntegrator<'a> {
                     // Bootstrap: not enough history yet, use BDF1
                     self.step_order_1(sys, dt)
                 }
-            },
+            }
             _ => panic!("BdfIntegrator: unsupported order {}", self.order),
         };
         println!("BDF step time (s): {}", clock.elapsed().as_secs_f64());
         res
     }
 
-    fn time(&self) -> Self::TimeType { self.t }
+    fn time(&self) -> Self::TimeType {
+        self.t
+    }
 
-    fn state(&self) -> Self::SysStateType { self.y_hist[0].to_owned() }
+    fn state(&self) -> Self::SysStateType {
+        self.y_hist[0].to_owned()
+    }
 
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>) {
         self.t = s.t;
@@ -327,12 +346,11 @@ impl<'a> IntegrateSys<'a> for BdfIntegrator<'a> {
     }
 }
 
-
 #[cfg(test)]
 mod test_implicit {
-    use crate::test_common::*;
-    use crate::ode_rk::RkIntegrator;
     use super::*;
+    use crate::ode_rk::RkIntegrator;
+    use crate::test_common::*;
 
     /// Test parameters: Lotka–Volterra y0=[5,4], 10 steps * dt=0.01, tf=0.1
     const DT: f64 = 0.01;
@@ -360,7 +378,7 @@ mod test_implicit {
     /// errors being tested.
     fn rk4_reference() -> Mat<f64> {
         let sys = TestLvSys::new();
-        let y0  = faer::mat![[5.0_f64,], [4.0_f64,]];
+        let y0 = faer::mat![[5.0_f64,], [4.0_f64,]];
         let mut rk4 = RkIntegrator::new(0.0, y0.as_ref(), 4);
         for _ in 0..N_STEPS {
             let res = rk4.step(&sys, DT).unwrap();
@@ -375,14 +393,15 @@ mod test_implicit {
     /// Scale is max(|y_ref[i]|, 1e-8) to handle near-zero components.
     fn assert_close_to_rk4(label: &str, y: &Mat<f64>, y_ref: &Mat<f64>, tol_rel: f64) {
         for row in 0..y_ref.nrows() {
-            let diff  = (y[(row, 0)] - y_ref[(row, 0)]).abs();
+            let diff = (y[(row, 0)] - y_ref[(row, 0)]).abs();
             let scale = y_ref[(row, 0)].abs().max(1e-8);
-            let tol   = tol_rel * scale;
+            let tol = tol_rel * scale;
             assert!(
                 diff < tol,
                 "{label} component[{row}]: got {:.8}, RK4={:.8}, \
                  rel-err={:.2e} exceeds tol {tol_rel:.2e}",
-                y[(row, 0)], y_ref[(row, 0)],
+                y[(row, 0)],
+                y_ref[(row, 0)],
                 diff / scale
             );
         }
@@ -393,8 +412,8 @@ mod test_implicit {
     #[test]
     fn test_bdf1_jfnk() {
         let y_rk4 = rk4_reference();
-        let sys   = TestLvFdSys::new();
-        let y0    = faer::mat![[5.0,], [4.0,]];
+        let sys = TestLvFdSys::new();
+        let y0 = faer::mat![[5.0,], [4.0,]];
         let mut solver = BdfIntegrator::new(0.0, y0.as_ref(), 1, 1e-12, 1e-12);
         for _ in 0..N_STEPS {
             let res = solver.step(&sys, DT).unwrap();
@@ -410,8 +429,8 @@ mod test_implicit {
     #[test]
     fn test_bdf2_nk() {
         let y_rk4 = rk4_reference();
-        let sys   = TestLvSys::new();
-        let y0    = faer::mat![[5.0,], [4.0,]];
+        let sys = TestLvSys::new();
+        let y0 = faer::mat![[5.0,], [4.0,]];
         let mut solver = BdfIntegrator::new(0.0, y0.as_ref(), 2, 1e-12, 1e-12);
         for _ in 0..N_STEPS {
             let res = solver.step(&sys, DT).unwrap();
@@ -427,8 +446,8 @@ mod test_implicit {
     #[test]
     fn test_sdirk22_fd() {
         let y_rk4 = rk4_reference();
-        let sys   = TestLvFdSys::new();
-        let y0    = faer::mat![[5.0,], [4.0,]];
+        let sys = TestLvFdSys::new();
+        let y0 = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk22(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
@@ -440,8 +459,8 @@ mod test_implicit {
     #[test]
     fn test_sdirk22_exact_jac() {
         let y_rk4 = rk4_reference();
-        let sys   = TestLvSys::new();
-        let y0    = faer::mat![[5.0,], [4.0,]];
+        let sys = TestLvSys::new();
+        let y0 = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk22(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
@@ -454,8 +473,8 @@ mod test_implicit {
     #[test]
     fn test_sdirk32_fd() {
         let y_rk4 = rk4_reference();
-        let sys   = TestLvFdSys::new();
-        let y0    = faer::mat![[5.0,], [4.0,]];
+        let sys = TestLvFdSys::new();
+        let y0 = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
@@ -467,8 +486,8 @@ mod test_implicit {
     #[test]
     fn test_sdirk32_exact_jac() {
         let y_rk4 = rk4_reference();
-        let sys   = TestLvSys::new();
-        let y0    = faer::mat![[5.0,], [4.0,]];
+        let sys = TestLvSys::new();
+        let y0 = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
@@ -480,9 +499,15 @@ mod test_implicit {
     #[test]
     fn test_sdirk32_norsett_exact_jac() {
         let y_rk4 = rk4_reference();
-        let sys   = TestLvSys::new();
-        let y0    = faer::mat![[5.0,], [4.0,]];
-        let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk32_norsett(), 1e-12, 1e-12);
+        let sys = TestLvSys::new();
+        let y0 = faer::mat![[5.0,], [4.0,]];
+        let mut solver = DirkIntegrator::new(
+            0.0,
+            y0.as_ref(),
+            ImplicitBT::sdirk32_norsett(),
+            1e-12,
+            1e-12,
+        );
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
         println!("SDIRK32 Norsett at t={T_END}: y = {:?}", y);
@@ -494,8 +519,8 @@ mod test_implicit {
     #[test]
     fn test_sdirk33_exact_jac() {
         let y_rk4 = rk4_reference();
-        let sys   = TestLvSys::new();
-        let y0    = faer::mat![[5.0,], [4.0,]];
+        let sys = TestLvSys::new();
+        let y0 = faer::mat![[5.0,], [4.0,]];
         let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), ImplicitBT::sdirk33(), 1e-12, 1e-12);
         run_steps(&mut solver, &sys, DT, N_STEPS);
         let y = solver.state();
@@ -519,17 +544,17 @@ mod test_implicit {
 
         // (method name, ImplicitBT, expected order, relative tolerance)
         let methods: &[(&str, ImplicitBT, usize, f64)] = &[
-            ("ImplicitEuler",   ImplicitBT::implicit_euler(),    1, 5e-2),
-            ("CrankNicolson",   ImplicitBT::crank_nicolson(),    2, 5e-3),
-            ("SDIRK22",         ImplicitBT::sdirk22(),           2, 5e-3),
-            ("SDIRK32",         ImplicitBT::sdirk32(),           2, 5e-3),
-            ("SDIRK32_Norsett", ImplicitBT::sdirk32_norsett(),   2, 5e-3),
-            ("SDIRK33",         ImplicitBT::sdirk33(),           3, 5e-4),
+            ("ImplicitEuler", ImplicitBT::implicit_euler(), 1, 5e-2),
+            ("CrankNicolson", ImplicitBT::crank_nicolson(), 2, 5e-3),
+            ("SDIRK22", ImplicitBT::sdirk22(), 2, 5e-3),
+            ("SDIRK32", ImplicitBT::sdirk32(), 2, 5e-3),
+            ("SDIRK32_Norsett", ImplicitBT::sdirk32_norsett(), 2, 5e-3),
+            ("SDIRK33", ImplicitBT::sdirk33(), 3, 5e-4),
         ];
 
         for (name, bt, order, tol_rel) in methods {
             let sys = TestLvSys::new();
-            let y0  = faer::mat![[5.0_f64,], [4.0_f64,]];
+            let y0 = faer::mat![[5.0_f64,], [4.0_f64,]];
             let mut solver = DirkIntegrator::new(0.0, y0.as_ref(), bt.clone(), 1e-12, 1e-12);
             run_steps(&mut solver, &sys, DT, N_STEPS);
             let y = solver.state();
@@ -537,15 +562,20 @@ mod test_implicit {
             // Compute relative error vs RK4 for reporting
             let rel_err: Vec<f64> = (0..y_rk4.nrows())
                 .map(|r| {
-                    let diff  = (y[(r, 0)] - y_rk4[(r, 0)]).abs();
+                    let diff = (y[(r, 0)] - y_rk4[(r, 0)]).abs();
                     let scale = y_rk4[(r, 0)].abs().max(1e-8);
                     diff / scale
                 })
                 .collect();
             println!(
                 "{name} (order {order}): y={:?}  rel-err={:?}  tol={tol_rel:.2e}",
-                (0..y.nrows()).map(|r| format!("{:.6}", y[(r,0)])).collect::<Vec<_>>(),
-                rel_err.iter().map(|e| format!("{e:.2e}")).collect::<Vec<_>>()
+                (0..y.nrows())
+                    .map(|r| format!("{:.6}", y[(r, 0)]))
+                    .collect::<Vec<_>>(),
+                rel_err
+                    .iter()
+                    .map(|e| format!("{e:.2e}"))
+                    .collect::<Vec<_>>()
             );
 
             assert_close_to_rk4(name, &y, &y_rk4, *tol_rel);

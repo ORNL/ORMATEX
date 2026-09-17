@@ -13,21 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-use flexi_logger::{FileSpec, LoggerHandle, Logger, WriteMode};
-
+use flexi_logger::{FileSpec, Logger, LoggerHandle, WriteMode};
 
 /// Initialize the logger
-pub fn init_logger() -> LoggerHandle
-{
-    let logger = Logger::try_with_str("info").unwrap()
+pub fn init_logger() -> LoggerHandle {
+    let logger = Logger::try_with_str("info")
+        .unwrap()
         .log_to_file(
             FileSpec::default()
-            .basename("ormatex_rs")
-            .suppress_timestamp()
-            .suffix("log"))
+                .basename("ormatex_rs")
+                .suppress_timestamp()
+                .suffix("log"),
+        )
         .write_mode(WriteMode::BufferAndFlush)
-        .start().unwrap();
+        .start()
+        .unwrap();
     log::info!("ORMATEX Log");
     logger
 }
-
