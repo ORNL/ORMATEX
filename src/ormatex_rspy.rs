@@ -673,15 +673,16 @@ impl DensePhikvEvalRs {
     }
 
     pub fn eval_phik_v(
-        &self,
-        py: Python<'_>,
+        &self, py: Python<'_>,
         a_np: PyReadonlyArray2<f64>,
         dt: f64,
         bs_np: Vec<PyReadonlyArray2<f64>>,
-    ) -> Py<PyArray2<f64>> {
+        ks: Vec<usize>
+    ) -> Py<PyArray2<f64>>
+    {
         let a = a_np.into_faer();
         let bs: Vec<MatRef<f64>> = bs_np.iter().map(|b| b.clone().into_faer()).collect();
-        let phikv = self.evaluator.apply_phi_k_v(a, dt, &bs);
+        let phikv = self.evaluator.apply_phi_k_v(a, dt, &bs, &ks);
         let ndarray_phikv = phikv.as_ref().into_ndarray().to_owned();
         ndarray_phikv.into_pyarray(py).to_owned().into()
     }
