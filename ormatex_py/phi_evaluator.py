@@ -424,5 +424,9 @@ class PhiEvaluatorPFDRS(PhiEvaluatorModule):
     def eval_phis(self, ks, cdt, bs):
         # J = np.asarray(self.sys_lop.dense())
         J = self.J
-        result = self.phikv_dense_rs.eval_phik_v(J, cdt, list(bs[it].reshape(-1,1))).flatten()
+        result = self.phikv_dense_rs.eval_phik_v(
+                J, cdt,
+                list([np.asarray(bs[it]).reshape(-1,1) for it in range(len(bs))]),
+                list(ks)
+                ).flatten()
         return jnp.asarray(result)

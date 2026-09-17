@@ -188,17 +188,17 @@ impl DensePhikvEvaluator for CauchyExpm {
         self.phik_dense_apply_cauchy(a, dt, v0, vec![k])
     }
 
-    fn apply_phi_k_v(&self, a: MatRef<f64>, dt: f64, vb: &Vec<MatRef<f64>>) -> Mat<f64>
+    fn apply_phi_k_v(&self, a: MatRef<f64>, dt: f64, vb: &Vec<MatRef<f64>>, ks: &Vec<usize>) -> Mat<f64>
     {
         assert!(!vb.is_empty());
-        let ks: Vec<usize> = (0..vb.len()).collect();
+        assert!(vb.len() == ks.len());
         let mut vb_mat = Mat::zeros(a.nrows(), vb.len());
         for (j, v) in vb.iter().enumerate() {
             assert!(v.nrows() == a.nrows());
             assert!(v.ncols() == 1);
             vb_mat.col_mut(j).copy_from(v.col(0));
         }
-        self.phik_dense_apply_cauchy(a, dt, vb_mat.as_ref(), ks)
+        self.phik_dense_apply_cauchy(a, dt, vb_mat.as_ref(), ks.clone())
     }
 
     fn apply_prepare(&mut self, a: MatRef<f64>, dt: f64, _v0: MatRef<f64>, _k: usize)
@@ -408,7 +408,7 @@ mod test_matexp_cauchy {
         // compute using multi RHS
         cram.apply_prepare(test_a.as_ref(), dt, v0.as_ref(), 0);
         assert!(cram.lu_factors.is_some());
-        let out = cram.apply_phi_k_v(test_a.as_ref(), dt, &vb);
+        let out = cram.apply_phi_k_v(test_a.as_ref(), dt, &vb, &vec![0,1,2]);
 
         // ensure result is near expected within tol
         mat_mat_approx_eq(expected.as_ref(), out.as_ref(), 1e-10);
@@ -436,7 +436,7 @@ mod test_matexp_cauchy {
         // compute using multi RHS
         cram.apply_prepare(test_a.as_ref(), dt, v0.as_ref(), 0);
         assert!(cram.lu_factors.is_some());
-        let out = cram.apply_phi_k_v(test_a.as_ref(), dt, &vb);
+        let out = cram.apply_phi_k_v(test_a.as_ref(), dt, &vb, &vec![0,]);
 
         // ensure result is near expected within tol
         mat_mat_approx_eq(expected.as_ref(), out.as_ref(), 1e-12);
