@@ -418,13 +418,15 @@ class PhiEvaluatorPFDRS(PhiEvaluatorModule):
     def eval_phi(self, k, cdt, b):
         # J = np.asarray(self.sys_lop.dense())
         J = self.J
-        result = self.phikv_dense_rs.eval(J, cdt, np.asarray(b).reshape(-1,1), k).flatten()
+        result = self.phikv_dense_rs.eval_phik(J, cdt, np.asarray(b).reshape(-1,1), k).flatten()
         return jnp.asarray(result)
 
     def eval_phis(self, ks, cdt, bs):
         # J = np.asarray(self.sys_lop.dense())
         J = self.J
-        result = np.zeros(bs[0].shape)
-        for it, k in enumerate(ks):
-            result += self.phikv_dense_rs.eval(J, cdt, np.asarray(bs[it]).reshape(-1,1), k).flatten()
-        return result
+        result = self.phikv_dense_rs.eval_phik_v(
+                J, cdt,
+                list([np.asarray(bs[it]).reshape(-1,1) for it in range(len(bs))]),
+                list(ks)
+                ).flatten()
+        return jnp.asarray(result)

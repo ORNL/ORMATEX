@@ -50,7 +50,7 @@ where
     T: ComplexField,
     T::Real: ToPrimitive,
 {
-    fn phik_apply(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize) -> Mat<T> {
+    fn apply_phi_k(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize) -> Mat<T> {
         phi_ext((Scale(from_f64::<T>(dt)) * a).as_ref(), k) * v0
     }
 }

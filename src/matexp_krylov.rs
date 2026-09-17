@@ -144,7 +144,7 @@ impl KrylovExpm {
             // compute the dense matrix exponential of the hessenberg
             let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
             unit_vec[(0, 0)] = 1.0;
-            let phi_h = self.expmv.phik_apply(
+            let phi_h = self.expmv.apply_phi_k(
                 h.as_ref(), 1.0, unit_vec.as_ref(), k);
             res = faer::Scale(beta) * (q.as_ref() * phi_h.as_ref());
 
@@ -220,7 +220,7 @@ impl KrylovExpm {
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
-        return faer::Scale(beta) * (q.as_ref() * self.expmv.phik_apply(h.as_ref(), dt, unit_vec.as_ref(), k))
+        return faer::Scale(beta) * (q.as_ref() * self.expmv.apply_phi_k(h.as_ref(), dt, unit_vec.as_ref(), k))
     }
 
     /// This method evaluates linear combinations
