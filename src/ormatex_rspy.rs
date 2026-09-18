@@ -107,7 +107,7 @@ impl LinOp<f64> for PyJaxJacLinOp {
     fn nrows(&self) -> usize {
         let nr: usize = Python::attach(|py| {
             let dim_py = self.py_linop.call_method(py, "dim", (), None).unwrap();
-            let inner_bound = dim_py.downcast_bound(py).unwrap();
+            let inner_bound = dim_py.cast_bound(py).unwrap();
             let inner: usize = inner_bound.extract().unwrap();
             inner
         });
@@ -140,7 +140,7 @@ impl LinOp<f64> for PyJaxJacLinOp {
                 .py_linop
                 .call_method(py, "matvec_npcompat", (x_np,), None)
                 .unwrap();
-            let inner_bound = j_v_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
+            let inner_bound = j_v_py.cast_bound::<PyArray1<f64>>(py).unwrap();
             let inner: PyReadonlyArray1<f64> = inner_bound.extract().unwrap();
             out.col_mut(0).copy_from(inner.into_faer());
         });
@@ -173,7 +173,7 @@ impl OdeSys<'_> for PySysWrapped {
                 .call_method(py, "frhs", (t, x_np), None)
                 .unwrap();
             // convert np result to faer mat
-            let frhs_x_arr_bound = frhs_x_py.downcast_bound::<PyArray1<f64>>(py).unwrap();
+            let frhs_x_arr_bound = frhs_x_py.cast_bound::<PyArray1<f64>>(py).unwrap();
             let inner: PyReadonlyArray1<f64> = frhs_x_arr_bound.extract().unwrap();
             inner.into_faer().as_mat().to_owned()
         })
@@ -264,14 +264,14 @@ fn select_solver<'a, T: LinOpPhikvEvaluator + 'a>(
     ))
 }
 
-fn get_val_or_default<'py, T>(
+fn get_val_or_default<'a, 'py, T>(
     py: Python<'py>,
-    kd_hash: &HashMap<String, Py<PyAny>>,
+    kd_hash: &'a HashMap<String, Py<PyAny>>,
     key: String,
     default: T,
 ) -> T
 where
-    T: FromPyObject<'py>,
+    T: FromPyObject<'a, 'py>,
 {
     for (k, v) in kd_hash.iter() {
         if *k == key {

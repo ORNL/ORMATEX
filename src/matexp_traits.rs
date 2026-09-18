@@ -53,19 +53,19 @@ pub trait DensePhikvEvaluator<T: ComplexField = f64> {
 }
 
 /// Trait for implementors of a phi_k(A*dt)*v method for Sparse or LinOp A
-pub trait LinOpPhikvEvaluator {
+pub trait LinOpPhikvEvaluator<T: ComplexField = f64> {
     /// Evaluate a linear combination of phi-function vector prodcuts
     /// of the form [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]
     fn apply_phi_k_v(
         &mut self,
         a_lo: &DynRefExtendedLinOp,
         dt: f64,
-        vb: &Vec<MatRef<f64>>,
-    ) -> Mat<f64>;
+        vb: &Vec<MatRef<T>>,
+    ) -> Mat<T>;
 
     /// Evaluate the phi-function vector prodcut:
     /// phi_k(dt*A) * vk
-    fn apply_phi_k(&self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, k: usize) -> Mat<f64>;
+    fn apply_phi_k(&self, a_lo: &dyn LinOp<T>, dt: f64, v: MatRef<T>, k: usize) -> Mat<T>;
 
     /// Prepare for apply_*.
     ///
@@ -79,11 +79,11 @@ pub trait LinOpPhikvEvaluator {
     /// vector and `k` is the zero-prefix length.
     fn apply_prepare(
         &mut self,
-        _a_lo: &dyn LinOp<f64>,
+        _a_lo: &dyn LinOp<T>,
         _dt: f64,
-        _v: MatRef<f64>,
+        _v: MatRef<T>,
         _k: usize,
-        _ext: Option<(&DynRefExtendedLinOp, &Vec<MatRef<f64>>)>,
+        _ext: Option<(&DynRefExtendedLinOp, &Vec<MatRef<T>>)>,
     ) {
         // default is null-op
     }
