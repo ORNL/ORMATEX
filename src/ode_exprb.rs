@@ -79,19 +79,19 @@ where
         let zero_n = faer::Mat::zeros(y0.nrows(), 1);
 
         // Compute time derivative of rhs if nonautonomous correction is ON
-        let v_fdt = if self.tol_fdt < 0.0 {
+        let v = if self.tol_fdt < 0.0 {
             zero_n.clone()
         } else {
             self.frhs_fdt(sys, t, y0.as_ref(), fy0.as_ref(), 1e-8)
         };
-        let v = faer::Scale(dt.powi(2)) * v_fdt.as_ref();
+        let vb2 = faer::Scale(dt.powi(2)) * v.as_ref();
 
         // build vector of rhs for phi functions
         let vb = if self.tol_fdt >= 0.0 && v.norm_max() > self.tol_fdt {
             vec![
                 zero_n.as_ref(),
                 fy0_dt.as_ref(),
-                v.as_ref(),
+                vb2.as_ref(),
             ]
         } else {
             vec![
@@ -124,7 +124,7 @@ where
             y_2.as_ref(),
             fy0.as_ref(),
             sys_jac_lop.as_ref(),
-            Some(v_fdt.as_ref()),
+            Some(v.as_ref()),
         );
 
         // final stage
