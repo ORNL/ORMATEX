@@ -54,32 +54,6 @@ impl<T, S> StepResult<T, S> {
     }
 }
 
-pub trait IntegrateSys<'a> {
-    type TimeType;
-    type SysStateType;
-
-    /// Step solution forward by dt, proposes a new state.
-    /// This may outright fail due to numerical issue
-    fn step<'b>(
-        &mut self,
-        sys: &'b dyn OdeSys<'b>,
-        dt: Self::TimeType,
-    ) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
-
-    /// Get current time
-    fn time(&self) -> Self::TimeType;
-
-    /// Get current system state
-    fn state(&self) -> Self::SysStateType;
-
-    /// Accepts the proposed new time and state.
-    /// Records accepted state into solution history.
-    fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>);
-
-    /// Reset integrator.  Removes solution history
-    fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType);
-}
-
 /// Helper method to apply the linop to a vec but does an extra allocation to store
 /// and return the result.
 pub fn apply_linop(lop: &impl LinOp<f64>, q: MatRef<f64>) -> Mat<f64> {

@@ -377,8 +377,8 @@ mod test_matexp_cauchy {
 
     #[test]
     fn test_cauchy_cram_phik_v_apply() {
-        /// Test the ability evaluate linear combinations of phi-function-vector prods
-        /// of the form [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]
+        // Test the ability evaluate linear combinations of phi-function-vector prods
+        // of the form [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]
         let mut cram = gen_cram_expm(16);
         let test_a = _gen_test_a();
         let dt = 1.0;
@@ -404,7 +404,7 @@ mod test_matexp_cauchy {
 
     #[test]
     fn test_cauchy_cram_phi0_v_apply() {
-        /// Test [phi_0(dt*A) * v0]
+        // Test [phi_0(dt*A) * v0]
         let mut cram = gen_cram_expm(16);
         let test_a = _gen_test_a();
         let dt = 1.0;

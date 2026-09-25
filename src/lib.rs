@@ -8,9 +8,11 @@ pub mod matexp_pade;
 pub mod matexp_traits;
 pub mod newton;
 pub mod ode_epirk;
+pub mod ode_exprb;
 pub mod ode_implicit;
 pub mod ode_rk;
 pub mod ode_sys;
+pub mod ode_traits;
 pub mod tableau_implicit;
 
 // for testing only

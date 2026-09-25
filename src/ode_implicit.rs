@@ -16,6 +16,7 @@
 
 use crate::newton::*;
 use crate::ode_sys::*;
+use crate::ode_traits::IntegrateSys;
 use crate::tableau_implicit::ImplicitBT;
 /// Implicit time integration:
 ///   - Generic DIRK / SDIRK via Butcher tableau  (`DirkIntegrator`)

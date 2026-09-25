@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 use crate::ode_sys::*;
+use crate::ode_traits::IntegrateSys;
 /// Runge-Kutta explicit integrators
 use faer::prelude::*;
 use std::collections::VecDeque;

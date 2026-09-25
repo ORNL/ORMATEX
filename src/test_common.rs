@@ -149,7 +149,7 @@ pub fn gen_test_c(n: usize) -> (Mat<f64>, Mat<f64>) {
     let vs = 10.0;
     let mut test_m = faer::Mat::zeros(n, n);
     for i in 0..n {
-        let lambda: f64 = rng.gen::<f64>() * lambda_scale;
+        let lambda: f64 = rng.r#gen::<f64>() * lambda_scale;
         test_m[(i, i)] = -lambda;
         if i + 1 < n {
             test_m[(i + 1, i)] = lambda;
@@ -159,6 +159,6 @@ pub fn gen_test_c(n: usize) -> (Mat<f64>, Mat<f64>) {
     test_m[(0, 1)] -= vs;
 
     // Generate a test vector
-    let test_v = faer::Mat::from_fn(n, 1, |_i, _j| rng.gen::<f64>());
+    let test_v = faer::Mat::from_fn(n, 1, |_i, _j| rng.r#gen::<f64>());
     (test_m, test_v)
 }

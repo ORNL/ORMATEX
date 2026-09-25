@@ -1642,14 +1642,14 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
         vb: &Vec<MatRef<f64>>,
     ) -> Mat<f64> {
         let clock = std::time::Instant::now();
-        // TODO: optionally auto-run apply_prepare here!
         // remark: a_lo may contain a scaling by dt, so a_lo = dt*A
         let res = self.leja_expmv_substep(a_lo, dt, vb);
-        println!("apply time (s): {}", clock.elapsed().as_secs_f64());
+        println!("phi_k_v apply time (s): {}", clock.elapsed().as_secs_f64());
         res
     }
 
     fn apply_phi_k(&self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, k: usize) -> Mat<f64> {
+        let clock = std::time::Instant::now();
         // create an extended linop
         let mut vbk: Vec<MatRef<f64>> = vec![];
         let tmp_zeros = faer::Mat::zeros(v.nrows(), v.ncols());
@@ -1659,9 +1659,10 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
         vbk.push(v);
         // remark: ext_a_lo contains a scaling by dt, so ext_a_lo = dt*A
         let ext_a_lo = DynRefExtendedLinOp::new(dt, a_lo, &vbk);
-        // TODO: optionally auto-run apply_prepare here!
         // compute phi_k(a_lo)*v
-        self.leja_expmv_substep(&ext_a_lo, dt, &vbk)
+        let res = self.leja_expmv_substep(&ext_a_lo, 1.0, &vbk);
+        println!("phi_k apply time (s): {}", clock.elapsed().as_secs_f64());
+        res
     }
 
     fn apply_prepare(

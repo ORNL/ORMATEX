@@ -2,8 +2,7 @@
 /// and partial fraction decomposition based methods.
 use ormatex::matexp_cauchy;
 use ormatex::matexp_pade;
-#[cfg(feature = "plotters")]
-use plotters::prelude::*;
+
 
 pub fn main() {
     // example matrix
@@ -48,68 +47,4 @@ pub fn main() {
         c1.push(y[(1, 0)]);
         c2.push(y[(2, 0)]);
     }
-
-    // plot...
-    println!("c0: {:?}", &c0);
-    #[cfg(feature = "plotters")]
-    plot_time_series(t_points, c0, c1, c2);
-}
-
-#[cfg(feature = "plotters")]
-fn plot_time_series(
-    t: Vec<f64>,
-    x: Vec<f64>,
-    y: Vec<f64>,
-    z: Vec<f64>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let root = BitMapBackend::new("ex_linsys.png", (640, 480)).into_drawing_area();
-    root.fill(&WHITE)?;
-    let mut chart = ChartBuilder::on(&root)
-        .margin(5)
-        .x_label_area_size(30)
-        .y_label_area_size(30)
-        .build_cartesian_2d((0f64..10000f64).log_scale(), (1e-9f64..2.0f64).log_scale())?;
-
-    chart
-        .configure_mesh()
-        .y_desc("Population")
-        .x_desc("Time")
-        .draw()?;
-
-    chart
-        .draw_series(LineSeries::new(
-            // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-            t.clone().into_iter().zip(x),
-            &RED,
-        ))?
-        .label("n0")
-        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
-
-    chart
-        .draw_series(LineSeries::new(
-            // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-            t.clone().into_iter().zip(y),
-            &BLUE,
-        ))?
-        .label("n1")
-        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
-
-    chart
-        .draw_series(LineSeries::new(
-            // (-50..=50).map(|x| x as f32 / 50.0).map(|x| (x, x * x)),
-            t.clone().into_iter().zip(z),
-            &GREEN,
-        ))?
-        .label("n2")
-        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
-
-    chart
-        .configure_series_labels()
-        .background_style(&WHITE.mix(0.8))
-        .border_style(&BLACK)
-        .draw()?;
-
-    root.present()?;
-
-    Ok(())
 }
