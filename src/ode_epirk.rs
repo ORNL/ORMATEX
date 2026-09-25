@@ -244,3 +244,25 @@ where
 }
 
 impl<T> StepperExponential for EpirkIntegrator<T> where T: LinOpPhikvEvaluator {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::matexp_krylov::KrylovExpm;
+    use crate::matexp_pade::PadeExpm;
+    use crate::test_common::TestLvSys;
+
+    #[test]
+    fn epi3_one_step() {
+        let sys = TestLvSys::new();
+        let y0 = faer::mat![[5.0_f64], [4.0_f64]];
+        let expm = KrylovExpm::new(Box::new(PadeExpm::new(12)), 4, 80, 1e-12, Some(2));
+        let mut solver = EpirkIntegrator::new(0.0, y0.as_ref(), "epi3".to_string(), expm);
+
+        let result = solver.step(&sys, 0.01).unwrap();
+        assert_eq!(result.t, 0.01);
+        assert!(result.err.is_none());
+        solver.accept_step(result);
+        assert_eq!(solver.time(), 0.01);
+    }
+}

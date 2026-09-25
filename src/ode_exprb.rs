@@ -76,44 +76,46 @@ where
         let sys_jac_lop = sys.fjac(t, y0.as_ref());
         let fy0 = sys.frhs(t, y0);
         let fy0_dt = fy0.as_ref() * faer::Scale(dt);
-
-        // Use fy0 as a proxy Arnoldi starting vector until r_2 is available.
         let zero_n = faer::Mat::zeros(y0.nrows(), 1);
-        let vb_prep = vec![
-            zero_n.as_ref(),
-            fy0_dt.as_ref(),
-            fy0_dt.as_ref(),
-            fy0_dt.as_ref(),
-        ];
-        let ext_a_prep = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb_prep);
+
+        // Compute time derivative of rhs if nonautonomous correction is ON
+        let v_fdt = if self.tol_fdt < 0.0 {
+            zero_n.clone()
+        } else {
+            self.frhs_fdt(sys, t, y0.as_ref(), fy0.as_ref(), 1e-8)
+        };
+        let v = faer::Scale(dt.powi(2)) * v_fdt.as_ref();
+
+        // build vector of rhs for phi functions
+        let vb = if self.tol_fdt >= 0.0 && v.norm_max() > self.tol_fdt {
+            vec![
+                zero_n.as_ref(),
+                fy0_dt.as_ref(),
+                v.as_ref(),
+            ]
+        } else {
+            vec![
+                zero_n.as_ref(),
+                fy0_dt.as_ref(),
+            ]
+        };
+
+        // extended linear operator
+        let ext_a_lo = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb);
         self.expm.apply_prepare(
             sys_jac_lop.as_ref(),
             dt,
             y0.as_ref(),
-            3,
-            Some((&ext_a_prep, &vb_prep)),
+            2,
+            Some((&ext_a_lo, &vb)),
         );
 
-        let v = if self.tol_fdt < 0.0 {
-            Mat::zeros(y0.nrows(), 1)
-        } else {
-            self.frhs_fdt(sys, t, y0.as_ref(), fy0.as_ref(), 1e-8)
-        };
-        let phi2_v = if self.tol_fdt >= 0.0 && v.norm_max() > self.tol_fdt {
-            faer::Scale(dt.powi(2))
-                * self
-                    .expm
-                    .apply_phi_k(sys_jac_lop.as_ref(), dt, v.as_ref(), 2)
-        } else {
-            Mat::zeros(y0.nrows(), 1)
-        };
-
+        // first stage
         let t_2 = t + dt;
         let y_2 = y0.as_ref()
-            + phi2_v.as_ref()
-            + self
-                .expm
-                .apply_phi_k(sys_jac_lop.as_ref(), dt, fy0_dt.as_ref(), 1);
+            + self.expm.apply_phi_k_v(&ext_a_lo, 1.0, &vb);
+
+        // nonlinear remainder
         let r_2 = self.remf(
             sys,
             t,
@@ -122,14 +124,14 @@ where
             y_2.as_ref(),
             fy0.as_ref(),
             sys_jac_lop.as_ref(),
-            Some(v.as_ref()),
+            Some(v_fdt.as_ref()),
         );
 
+        // final stage
         let y_new = y_2.as_ref()
-            + 2. * dt
-                * self
-                    .expm
-                    .apply_phi_k(sys_jac_lop.as_ref(), dt, r_2.as_ref(), 3);
+            + 2. * dt * self.expm.apply_phi_k(sys_jac_lop.as_ref(), dt, r_2.as_ref(), 3);
+
+        // embedded error estimate
         let y_err = (y_new.as_ref() - y_2.as_ref()).as_ref().norm_l1().abs();
 
         Ok(StepResult::new(t + dt, dt, y_new, Some(y_err)))
