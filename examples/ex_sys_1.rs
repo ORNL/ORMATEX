@@ -5,7 +5,7 @@ use ormatex::logger::init_logger;
 use ormatex::matexp_krylov;
 use ormatex::matexp_pade;
 use ormatex::ode_epirk;
-use ormatex::ode_sys::*;
+use ormatex::ode_traits::IntegrateSys;
 use ormatex::test_common::*;
 
 // optional deps for plotting

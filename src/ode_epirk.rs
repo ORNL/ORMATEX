@@ -13,12 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/// Exponential propagation iterative RK class of
+/// exponential integrators
 use crate::matexp_traits::LinOpPhikvEvaluator;
 use crate::ode_sys::*;
-use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
-use faer::matrix_free::LinOp;
-/// Exponential prop-iterative RK class of exponential integrators
-///
+use crate::ode_traits::{IntegrateSys, StepperExponential};
 use faer::prelude::*;
 use std::collections::VecDeque;
 
@@ -51,11 +50,8 @@ where
     pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: T) -> Self {
         let order = match method.as_str() {
             "epi2" | "exprb2" => 2,
-            "epi3" | "exprb3" => 3,
-            _ => panic!(
-                "invalid method: {:?}. Valid: epi2,epi3,exprb2,exprb3",
-                method
-            ),
+            "epi3" => 3,
+            _ => panic!("invalid method: {:?}. Valid: epi2,epi3,exprb2", method),
         };
         let mut y_hist = VecDeque::with_capacity(order);
         let mut t_hist = VecDeque::with_capacity(order);
@@ -79,61 +75,6 @@ where
             _ => panic!("bad option"),
         };
         self
-    }
-
-    /// Computes remainder R(yr) = frhs(yr) - frhs(y0) - J_y0*(yr-y0) - v*t
-    /// where if v=d(Frhs)/dt is nonzero for nonautonomous systems
-    fn remf<'b>(
-        &self,
-        sys: &'b dyn OdeSys<'b>,
-        tr: f64,
-        yr: MatRef<f64>,
-        frhs_y0: MatRef<f64>,
-        sys_jac_lop_y0: &dyn LinOp<f64>,
-        v: Option<MatRef<f64>>,
-    ) -> Mat<f64> {
-        let t = self.t_hist[0];
-        let y0 = self.y_hist[0].as_ref();
-        let frhs_yr = sys.frhs(tr, yr);
-
-        let mut jac_yd = faer::Mat::zeros(y0.nrows(), 1);
-        sys_jac_lop_y0.apply(
-            jac_yd.as_mut(),
-            (yr.as_ref() - y0.as_ref()).as_ref(),
-            faer::get_global_parallelism(),
-            MemStack::new(&mut MemBuffer::new(StackReq::empty())),
-        );
-
-        let dt = tr - t;
-        let vn_t = Scale(dt) * v.unwrap_or(Mat::zeros(yr.nrows(), yr.ncols()).as_ref());
-        frhs_yr - frhs_y0 - jac_yd - vn_t
-    }
-
-    /// Estimates the time drivative of frhs by finite difference
-    fn frhs_fdt<'b>(&self, sys: &'b dyn OdeSys<'b>, fy0: MatRef<f64>, del_t: f64) -> Mat<f64> {
-        let t = self.t;
-        let y0 = self.y_hist[0].as_ref();
-        let fy1 = sys.frhs(t + del_t, y0);
-        (fy1 - fy0) / Scale(del_t)
-    }
-
-    /// Correction for nonautonomous case
-    fn fphi2_v<'b>(
-        &self,
-        sys: &'b dyn OdeSys<'b>,
-        fy0: MatRef<f64>,
-        sys_jac_lop: &dyn LinOp<f64>,
-        dt: f64,
-    ) -> (Mat<f64>, Mat<f64>) {
-        let mut phi2_v = Mat::zeros(fy0.nrows(), fy0.ncols());
-        if self.tol_fdt < 0. {
-            return (phi2_v, Mat::zeros(fy0.nrows(), fy0.ncols()));
-        }
-        let v = self.frhs_fdt(sys, fy0.as_ref(), 1e-8);
-        if v.norm_max() > self.tol_fdt {
-            phi2_v = Scale(dt.powi(2)) * self.expm.apply_phi_k(sys_jac_lop, dt, v.as_ref(), 2);
-        }
-        (phi2_v, v)
     }
 
     /// Exponential Propagative Iterative Order 2 method (EPI3)
@@ -165,7 +106,7 @@ where
         let v: Mat<f64> = if self.tol_fdt < 0.0 {
             faer::Mat::zeros(y0.nrows(), 1)
         } else {
-            self.frhs_fdt(sys, fy0.as_ref(), 1e-8)
+            self.frhs_fdt(sys, t, y0.as_ref(), fy0.as_ref(), 1e-8)
         };
         let vb2 = dt.powi(2) * v;
 
@@ -184,77 +125,6 @@ where
 
         // return result
         Ok(StepResult::new(t + dt, dt, y_new, None))
-    }
-
-    /// EXPRB32
-    /// Exponential Rosenroack order 3 with 2nd order embedded error estimate.
-    /// Ref: Hochbruck, Marlis, Alexander Ostermann, and Julia Schweitzer.
-    /// Exponential Rosenbrock-type methods.
-    /// SIAM Journal on Numerical Analysis 47.1 (2009): 786-803.
-    fn step_exprb32<'b>(
-        &mut self,
-        sys: &'b dyn OdeSys<'b>,
-        dt: f64,
-    ) -> Result<StepResult<f64, Mat<f64>>, StepError> {
-        // current state
-        let t = self.t;
-        let y0 = self.y_hist[0].as_ref();
-
-        // setup jacobian linear operator evaluated at y0
-        let sys_jac_lop = sys.fjac(t, y0.as_ref());
-        let fy0 = sys.frhs(t, y0);
-        let fy0_dt = fy0.as_ref() * faer::Scale(dt);
-
-        // apply_prepare with a k=3 proxy using fy0_dt as stand-in for the phi_3 vector
-        // (the real phi_3 vector r_2 is not yet available).  fy0_dt gives a reasonable
-        // Arnoldi starting vector; the stored_tay path is not used by apply_phi_k.
-        let zero_n = faer::Mat::zeros(y0.nrows(), 1);
-        let vb_prep = vec![
-            zero_n.as_ref(),
-            fy0_dt.as_ref(),
-            fy0_dt.as_ref(),
-            fy0_dt.as_ref(),
-        ];
-        let ext_a_prep = DynRefExtendedLinOp::new(dt, sys_jac_lop.as_ref(), &vb_prep);
-        self.expm.apply_prepare(
-            sys_jac_lop.as_ref(),
-            dt,
-            y0.as_ref(),
-            3,
-            Some((&ext_a_prep, &vb_prep)),
-        );
-
-        // correction for nonautonomous case
-        let (phi2_v, v) = self.fphi2_v(sys, fy0.as_ref(), sys_jac_lop.as_ref(), dt);
-
-        let t_2 = t + dt;
-        let y_2 = y0.as_ref()
-            + phi2_v.as_ref()
-            + self
-                .expm
-                .apply_phi_k(sys_jac_lop.as_ref(), dt, fy0_dt.as_ref(), 1);
-        // remainder fn
-        let r_2 = self.remf(
-            sys,
-            t_2,
-            y_2.as_ref(),
-            fy0.as_ref(),
-            sys_jac_lop.as_ref(),
-            Some(v.as_ref()),
-        );
-
-        // compute final update
-        let y_new = y_2.as_ref()
-            + 2. * dt
-                * self
-                    .expm
-                    .apply_phi_k(sys_jac_lop.as_ref(), dt, r_2.as_ref(), 3);
-
-        // err est
-        let y_err = (y_new.as_ref() - y_2.as_ref()).as_ref().norm_l1().abs();
-
-        // return result
-        Ok(StepResult::new(t + dt, dt, y_new, Some(y_err)))
     }
 
     /// Exponential Propagative Iterative Order 3 method (EPI3)
@@ -283,12 +153,14 @@ where
         let v: Mat<f64> = if self.tol_fdt < 0.0 {
             faer::Mat::zeros(y0.nrows(), 1)
         } else {
-            self.frhs_fdt(sys, fy0.as_ref(), 1e-8)
+            self.frhs_fdt(sys, t, y0.as_ref(), fy0.as_ref(), 1e-8)
         };
 
         let rn_dt = faer::Scale(dt * 2.0 / 3.0)
             * self.remf(
                 sys,
+                t,
+                y0.as_ref(),
                 tp,
                 yp.as_ref(),
                 fy0.as_ref(),
@@ -338,7 +210,6 @@ where
                     self.step_order_2(sys, dt)
                 }
             }
-            "exprb3" => self.step_exprb32(sys, dt),
             _ => panic!("bad method"),
         };
         println!("EPI step time (s): {}", clock.elapsed().as_secs_f64());
@@ -371,3 +242,5 @@ where
         self.t = t0;
     }
 }
+
+impl<T> StepperExponential for EpirkIntegrator<T> where T: LinOpPhikvEvaluator {}

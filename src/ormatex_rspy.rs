@@ -54,9 +54,11 @@ use crate::matexp_leja::{complex_diag_leja_phikv_fitted, complex_diag_leja_phikv
 use crate::matexp_pade::{phi_ext, PadeExpm};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use crate::ode_epirk;
+use crate::ode_exprb;
 use crate::ode_implicit;
 use crate::ode_rk;
 use crate::ode_sys::*;
+use crate::ode_traits::IntegrateSys;
 use crate::tableau_implicit::ImplicitBT;
 
 /// Wrapper around python PySys object
@@ -257,7 +259,16 @@ fn select_solver<'a, T: LinOpPhikvEvaluator + 'a>(
     else if method.as_str() == "rk4" {
         return Rc::new(RefCell::new(ode_rk::RkIntegrator::new(t0, y0_mat, 4)));
     }
-    // exponential integrator fallthrough
+
+    // Exponential Rosenbrock integrator
+    if method.as_str() == "exprb3" {
+        return Rc::new(RefCell::new(
+            ode_exprb::ExprbIntegrator::new(t0, y0_mat, method, matexp_m)
+                .with_opt(String::from("tol_fdt"), tol_fdt),
+        ));
+    }
+
+    // EPI integrator fallthrough
     Rc::new(RefCell::new(
         ode_epirk::EpirkIntegrator::new(t0, y0_mat, method, matexp_m)
             .with_opt(String::from("tol_fdt"), tol_fdt),
