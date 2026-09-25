@@ -1,7 +1,9 @@
 use faer::matrix_free::LinOp;
 use faer::prelude::*;
 use ormatex::matexp_krylov::KrylovExpm;
-use ormatex::matexp_leja::{LejaEllipseAdapterStatic, LejaPhiEval, LejaPoints};
+use ormatex::matexp_leja::{
+    LejaEllipseAdapterArnoldiIOM, LejaEllipseAdapterStatic, LejaPhiEval, LejaPoints,
+};
 use ormatex::matexp_pade::PadeExpm;
 use ormatex::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use ormatex::ode_epirk::EpirkIntegrator;
@@ -13,7 +15,8 @@ use ormatex::test_common::TestBatemanFdSys;
 #[derive(Clone, Copy)]
 enum EvaluatorKind {
     Krylov,
-    Leja,
+    LejaStatic,
+    LejaAdaptive,
 }
 
 struct ScalarNonautoSys;
@@ -32,9 +35,15 @@ fn krylov_evaluator() -> KrylovExpm {
     KrylovExpm::new(Box::new(PadeExpm::new(12)), 6, 80, 1e-12, Some(2))
 }
 
-fn leja_evaluator(a: f64, b: f64, c: f64) -> LejaPhiEval {
+fn leja_evaluator(adaptive: bool, a: f64, b: f64, c: f64) -> LejaPhiEval {
     let points = LejaPoints::new_from_lib("leja_circle").slice(0, 160);
-    let adapter = LejaEllipseAdapterStatic::new(a, b, c);
+    let adapter: Box<dyn ormatex::matexp_leja::GetSpectrumBounds> = if adaptive {
+        Box::new(LejaEllipseAdapterArnoldiIOM::new(
+            a, b, c, -1.0, 10, 2, 1.05,
+        ))
+    } else {
+        Box::new(LejaEllipseAdapterStatic::new(a, b, c))
+    };
     LejaPhiEval::new(
         points,
         150,
@@ -42,7 +51,7 @@ fn leja_evaluator(a: f64, b: f64, c: f64) -> LejaPhiEval {
         "clapm",
         "dd_taylor",
         false,
-        Box::new(adapter),
+        adapter,
     )
 }
 
@@ -123,14 +132,24 @@ fn run_nonauto<T: LinOpPhikvEvaluator>(method: &str, expm: T) -> Mat<f64> {
 fn run_bateman_case(method: &str, evaluator: EvaluatorKind) -> Mat<f64> {
     match evaluator {
         EvaluatorKind::Krylov => run_bateman(method, krylov_evaluator()),
-        EvaluatorKind::Leja => run_bateman(method, leja_evaluator(-10.0, 0.0, 0.0)),
+        EvaluatorKind::LejaStatic => {
+            run_bateman(method, leja_evaluator(false, -10.0, 0.0, 0.0))
+        }
+        EvaluatorKind::LejaAdaptive => {
+            run_bateman(method, leja_evaluator(true, -10.0, 0.0, 0.0))
+        }
     }
 }
 
 fn run_nonauto_case(method: &str, evaluator: EvaluatorKind) -> Mat<f64> {
     match evaluator {
         EvaluatorKind::Krylov => run_nonauto(method, krylov_evaluator()),
-        EvaluatorKind::Leja => run_nonauto(method, leja_evaluator(-1.0, 0.0, 0.0)),
+        EvaluatorKind::LejaStatic => {
+            run_nonauto(method, leja_evaluator(false, -1.0, 0.0, 0.0))
+        }
+        EvaluatorKind::LejaAdaptive => {
+            run_nonauto(method, leja_evaluator(true, -1.0, 0.0, 0.0))
+        }
     }
 }
 
@@ -140,9 +159,11 @@ fn expint_regression_bateman3() {
     let reference = bateman_reference(10.0, y0.as_ref());
     let cases = [
         ("exprb3", EvaluatorKind::Krylov, "EXPRB3/Krylov"),
-        ("exprb3", EvaluatorKind::Leja, "EXPRB3/Leja"),
+        ("exprb3", EvaluatorKind::LejaStatic, "EXPRB3/LejaStatic"),
+        ("exprb3", EvaluatorKind::LejaAdaptive, "EXPRB3/LejaAdaptive"),
         ("epi3", EvaluatorKind::Krylov, "EPI3/Krylov"),
-        ("epi3", EvaluatorKind::Leja, "EPI3/Leja"),
+        ("epi3", EvaluatorKind::LejaStatic, "EPI3/LejaStatic"),
+        ("epi3", EvaluatorKind::LejaAdaptive, "EPI3/LejaAdaptive"),
     ];
 
     for (method, evaluator, label) in cases {
@@ -156,9 +177,11 @@ fn expint_regression_nonauto() {
     let reference = faer::mat![[( -0.5_f64).exp()]];
     let cases = [
         ("exprb3", EvaluatorKind::Krylov, "EXPRB3/Krylov"),
-        ("exprb3", EvaluatorKind::Leja, "EXPRB3/Leja"),
+        ("exprb3", EvaluatorKind::LejaStatic, "EXPRB3/LejaStatic"),
+        ("exprb3", EvaluatorKind::LejaAdaptive, "EXPRB3/LejaAdaptive"),
         ("epi3", EvaluatorKind::Krylov, "EPI3/Krylov"),
-        ("epi3", EvaluatorKind::Leja, "EPI3/Leja"),
+        ("epi3", EvaluatorKind::LejaStatic, "EPI3/LejaStatic"),
+        ("epi3", EvaluatorKind::LejaAdaptive, "EPI3/LejaAdaptive"),
     ];
 
     for (method, evaluator, label) in cases {
