@@ -13,6 +13,8 @@ pub mod ode_implicit;
 pub mod ode_rk;
 pub mod ode_sys;
 pub mod ode_traits;
+pub mod ode_integrator_builder;
+pub mod ode_step_controller;
 pub mod tableau_implicit;
 
 // for testing only
