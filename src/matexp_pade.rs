@@ -13,14 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/// Pade matrix exponential evaluation methods for dense faer Mats.
+///
 use crate::matexp_traits::DensePhikvEvaluator;
 use faer::complex::ComplexFloat;
 use faer::linalg::solvers::{DenseSolveCore, Solve};
-/// Matrix exponential evaluation methods for dense faer Mats.
-///
-/// All public functions are generic over `T: ComplexField` (covers both `f64`
-/// and `c64 = Complex<f64>`). The time step `dt` is always a real `f64`,
-/// consistent with the assumption that time is a real quantity.
 use faer::prelude::*;
 use faer_traits::math_utils::from_f64;
 use faer_traits::ComplexField;
