@@ -53,7 +53,14 @@ impl CauchyExpm {
         self.theta.nrows() * 2
     }
 
-    /// Computes exp(A*dt) for dense A
+    /// Computes exp(A*dt) for dense A.
+    /// Uses numerical quadtrature scheme to estimate the cauchy integral of
+    /// $$ exp(A) = \frac{1}{2\pi i} \int_\Gamma e^z (zI - A)^{-1} $$
+    /// then we approximate
+    /// $$ exp(A) \approx \sum_k^N c_k (z_k I - A)^{-1} $$
+    /// and
+    /// $$ c_k = w_k e^{z_k} / (2 \pi i) $$
+    ///
     pub fn matexp_dense_cauchy(&self, a: MatRef<f64>, dt: f64) -> Mat<f64> {
         let s = self.theta.nrows();
         let dim = a.nrows();
