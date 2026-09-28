@@ -81,44 +81,45 @@ impl CauchyExpm {
     }
 
     /// Extension formula for computing higher order phi functions
-    fn _phi_ext(&self, a: MatRef<f64>, bu: MatRef<f64>, dt: f64) -> Mat<f64> {
-        let n = a.nrows();
-        let m = a.ncols();
-        // compute extended matrix B
-        // build by blocks
-        // B = [[a, bu], [0, 0]]
-        let mut b_ext = Mat::zeros(a.nrows() * 2, a.ncols() * 2);
-        b_ext.submatrix_mut(0, 0, a.nrows(), a.ncols()).copy_from(a);
-        b_ext
-            .submatrix_mut(0, a.ncols(), a.nrows(), a.ncols())
-            .copy_from(bu);
+    fn phik_cauchy_ext(&self, z: MatRef<f64>, k: usize) -> Mat<f64> {
+        let n = z.nrows();
+        let m = z.ncols();
+        assert_eq!(n, m, "phi_ext requires a square matrix");
 
-        // compute matexp of b_ext
-        let phi_a_ext = self.matexp_dense_cauchy(b_ext.as_ref(), dt);
-
-        // extract phi_k+1
-        phi_a_ext.get(0..n, m..).to_owned()
+        let z_ext: Mat<f64> = match k {
+            0 => z.to_owned(),
+            _ => {
+                let z_ext_k_nrows = n + (k - 1) * n;
+                let z_ext_k_ncols = m;
+                let z_ext_nrows = z_ext_k_nrows + n;
+                let z_ext_ncols = z_ext_k_ncols + k * n;
+                let mut z_ext = Mat::<f64>::zeros(z_ext_nrows, z_ext_ncols);
+                z_ext.get_mut(0..n, 0..m).copy_from(z);
+                z_ext
+                    .get_mut(0..z_ext_k_nrows, z_ext_k_ncols..)
+                    .copy_from(Mat::<f64>::identity(k * n, k * n));
+                z_ext
+            }
+        };
+        let phi_ks = self.matexp_dense_cauchy(z_ext.as_ref(), 1.0);
+        phi_ks.get(0..n, phi_ks.ncols() - n..).to_owned()
     }
 
-    /// Computes phi_1(A*dt) for dense A using the extension formula
+    /// Computes phi_k(A*dt) for dense A using the extension formula.
+    ///
     /// T. Schmelzer and L. Trefethen. Evaluating Matrix Functions for
     /// Exponential Integrators via Caratheodory-Fejer Approximation
     /// and Contour Integrals. Electronic Transactions on Numerical Analysis. v 29. 2007.
     pub fn phik_dense_cauchy(&self, a: MatRef<f64>, dt: f64, k: usize) -> Mat<f64> {
-        assert!(k <= 1);
         match k {
             0 => self.matexp_dense_cauchy(a, dt),
-            1 => {
-                let tmp_zn = mat_pow(a, k);
-                let tmp_znp = mat_pow(a, k - 1);
-                let phi_k = self._phi_ext(tmp_zn.as_ref(), tmp_znp.as_ref(), dt);
-                phi_k
+            _ => {
+                self.phik_cauchy_ext((dt * a).as_ref(), k)
             }
-            _ => panic!("Only supports phi_k for k<=1 currently"),
         }
     }
 
-    /// Computes exp(A*dt)*v0 for dense A
+    /// Computes exp(A*dt)*v0 for dense A.  Alias to phik_dense_apply_cauchy with k=0.
     pub fn matexp_dense_apply_cauchy(&self, a: MatRef<f64>, dt: f64, v0: MatRef<f64>) -> Mat<f64> {
         self.phik_dense_apply_cauchy(a, dt, v0, vec![0])
     }
@@ -343,10 +344,10 @@ mod test_matexp_cauchy {
         // compare
         mat_mat_approx_eq(pade_phi1_a.as_ref(), cram_phi1_a.as_ref(), 1e-12);
 
-        // higher order phi fns (TODO: fix, broken)
-        // let pade_phi2_a = phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), 2);
-        // let cram_phi2_a = cram.phik_dense_cauchy(test_a.as_ref(), dt, 2);
-        // mat_mat_approx_eq(pade_phi2_a.as_ref(), cram_phi2_a.as_ref(), 1e-12);
+        // higher order phi fns
+        let pade_phi2_a = phi_ext((Scale(dt)*test_a.as_ref()).as_ref(), 2);
+        let cram_phi2_a = cram.phik_dense_cauchy(test_a.as_ref(), dt, 2);
+        mat_mat_approx_eq(pade_phi2_a.as_ref(), cram_phi2_a.as_ref(), 1e-10);
     }
 
     #[test]
