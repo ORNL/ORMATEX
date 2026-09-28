@@ -277,6 +277,12 @@ Expected result from the Bateman system in the second example integrated with EX
 
 ![plot](./docs/images/ex_bateman.png)
 
+### Rust docs
+
+To build the rust docs locally and view them in a web browser run:
+
+    cargo doc --no-deps --open
+
 Authors
 ========
 
