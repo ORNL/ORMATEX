@@ -75,12 +75,12 @@ impl KrylovExpm {
         self.verbose = verbose;
     }
 
-    /// Set extra verbosity for additional stdout output
+    /// Set adaptive krylov dimension increment
     pub fn set_krylov_dim_inc(&mut self, krylov_dim_inc: usize) {
         self.krylov_dim_inc = krylov_dim_inc;
     }
 
-    /// Set extra verbosity for additional stdout output
+    /// Set adaptive krylov dimension lookback
     pub fn set_krylov_dim_lookback(&mut self, krylov_dim_lookback: usize) {
         self.krylov_dim_lookback = krylov_dim_lookback;
     }
