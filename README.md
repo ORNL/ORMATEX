@@ -196,7 +196,6 @@ Available $`\varphi`$-function methods that are compatible with each integration
 | method | available phi_method |
 | -------|----------------------|
 |exprb2| krylov, leja, pfd |
-|exprb2| krylov, leja, pfd |
 |exprb3| krylov, leja, pfd |
 |pexprb4| krylov, leja, pfd |
 |epi3| krylov, leja |
