@@ -37,7 +37,9 @@ pub trait DensePhikvEvaluator<T: ComplexField = f64> {
     /// of the form [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]
     fn apply_phi_k_v(&self, a: MatRef<T>, dt: f64, vb: &Vec<MatRef<T>>, ks: &Vec<usize>) -> Mat<T>
     {
-        let mut out = Mat::zeros(a.nrows(), 1);
+        assert!(!vb.is_empty());
+        assert!(vb.len() == ks.len());
+        let mut out = Mat::zeros(a.nrows(), vb[0].ncols());
         // default loops over each phi_k function in serial
         for (v, k) in vb.iter().zip(ks) {
             // if v.norm_l2() >= 0.0 {
