@@ -31,6 +31,7 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2}
 /// on the CPU.
 ///
 use pyo3::prelude::*;
+use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyDict, PyList};
 use pyo3::{pymethods, pymodule, Python};
 
@@ -40,26 +41,23 @@ use faer::prelude::*;
 use faer::Par;
 use faer_ext::*;
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
-use std::rc::Rc;
 
 use crate::arnoldi::arnoldi_lop;
 use crate::logger::init_logger;
 use crate::matexp_cauchy;
-use crate::matexp_krylov;
-use crate::matexp_leja;
 use crate::matexp_leja::{complex_diag_leja_phikv_fitted, complex_diag_leja_phikv_static};
 use crate::matexp_pade::{phi_ext, PadeExpm};
-use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
-use crate::ode_epirk;
-use crate::ode_exprb;
-use crate::ode_implicit;
-use crate::ode_rk;
+use crate::matexp_traits::DensePhikvEvaluator;
+use crate::integrator_builder::{
+    DenseExpmMethod, ExponentialEvaluator, ExponentialIntegratorBuilder, ExponentialMethod,
+    ExplicitIntegratorBuilder, ExplicitMethod, ImplicitIntegratorBuilder, ImplicitMethod,
+    KrylovOptions, LejaDdMethod, LejaOptions, LejaSpectrum, TaylorOptions,
+};
 use crate::ode_sys::*;
-use crate::ode_traits::IntegrateSys;
-use crate::tableau_implicit::ImplicitBT;
+
+use std::str::FromStr;
 
 /// Wrapper around python PySys object
 #[pyclass]
@@ -199,82 +197,6 @@ impl OdeSys<'_> for PySysWrapped {
     }
 }
 
-/// Select ode solver
-fn select_solver<'a, T: LinOpPhikvEvaluator + 'a>(
-    t0: f64,
-    y0_mat: MatRef<'_, f64>,
-    method: String,
-    tol_fdt: f64,
-    tol_lin: f64,
-    tol_nlin: f64,
-    matexp_m: T,
-) -> Rc<RefCell<dyn IntegrateSys<'a, TimeType = f64, SysStateType = Mat<f64>> + 'a>> {
-    // backward euler
-    if method.as_str() == "bdf1" || method.as_str() == "backeuler" {
-        return Rc::new(RefCell::new(ode_implicit::BdfIntegrator::new(
-            t0, y0_mat, 1, tol_lin, tol_nlin,
-        )));
-    }
-    // backward difference formula 2
-    else if method.as_str() == "bdf2" {
-        return Rc::new(RefCell::new(ode_implicit::BdfIntegrator::new(
-            t0, y0_mat, 2, tol_lin, tol_nlin,
-        )));
-    }
-    // crank-nicolson
-    else if method.as_str() == "cn" {
-        return Rc::new(RefCell::new(ode_implicit::DirkIntegrator::new(
-            t0,
-            y0_mat,
-            ImplicitBT::crank_nicolson(),
-            tol_lin,
-            tol_nlin,
-        )));
-    }
-    // sdirk32
-    else if method.as_str() == "sdirk32" {
-        return Rc::new(RefCell::new(ode_implicit::DirkIntegrator::new(
-            t0,
-            y0_mat,
-            ImplicitBT::sdirk32(),
-            tol_lin,
-            tol_nlin,
-        )));
-    }
-    // sdirk33
-    else if method.as_str() == "sdirk33" {
-        return Rc::new(RefCell::new(ode_implicit::DirkIntegrator::new(
-            t0,
-            y0_mat,
-            ImplicitBT::sdirk33(),
-            tol_lin,
-            tol_nlin,
-        )));
-    }
-    // forward euler
-    else if method.as_str() == "rk1" || method.as_str() == "forwardeuler" {
-        return Rc::new(RefCell::new(ode_rk::RkIntegrator::new(t0, y0_mat, 1)));
-    }
-    // rk4
-    else if method.as_str() == "rk4" {
-        return Rc::new(RefCell::new(ode_rk::RkIntegrator::new(t0, y0_mat, 4)));
-    }
-
-    // Exponential Rosenbrock integrator
-    if method.as_str() == "exprb3" {
-        return Rc::new(RefCell::new(
-            ode_exprb::ExprbIntegrator::new(t0, y0_mat, method, matexp_m)
-                .with_opt(String::from("tol_fdt"), tol_fdt),
-        ));
-    }
-
-    // EPI integrator fallthrough
-    Rc::new(RefCell::new(
-        ode_epirk::EpirkIntegrator::new(t0, y0_mat, method, matexp_m)
-            .with_opt(String::from("tol_fdt"), tol_fdt),
-    ))
-}
-
 fn get_val_or_default<'a, 'py, T>(
     py: Python<'py>,
     kd_hash: &'a HashMap<String, Py<PyAny>>,
@@ -302,137 +224,148 @@ fn integrate_wrapper_rs<'py>(
     dt: f64,
     nsteps: usize,
     kwds: Option<Bound<'py, PyDict>>,
-) -> (Bound<'py, PyList>, Bound<'py, PyList>) {
+) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
     // process kwargs
     let kd: pyo3::Bound<'_, PyDict> = kwds.unwrap_or(PyDict::new(py));
     let kd_hash: HashMap<String, Py<PyAny>> = kd.extract().unwrap_or(HashMap::new());
 
-    // stepper settings
+    // integrator method settings
     let method: String =
         get_val_or_default(py, &kd_hash, String::from("method"), String::from("epi2"));
-    let phi_method: String = get_val_or_default(
-        py,
-        &kd_hash,
-        String::from("phi_method"),
-        String::from("krylov"),
-    );
-    let expmv_method: String = get_val_or_default(
-        py,
-        &kd_hash,
-        String::from("expmv_method"),
-        String::from("pade"),
-    );
+    let phi_method: String =
+        get_val_or_default(py, &kd_hash, String::from("phi_method"), String::from("krylov"));
+    let expmv_method: String =
+        get_val_or_default(py, &kd_hash, String::from("expmv_method"), String::from("pade"));
+    let tol_fdt: f64 =
+        get_val_or_default(py, &kd_hash, String::from("tol_fdt"), 1e-8);
+    let tol: f64 =
+        get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
+    let tol_lin: f64 =
+        get_val_or_default(py, &kd_hash, String::from("tol_lin"), 1e-8);
+    let tol_nlin: f64 =
+        get_val_or_default(py, &kd_hash, String::from("tol_nlin"), 1e-8);
+    let m_default: usize =
+        get_val_or_default(py, &kd_hash, String::from("max_krylov_dim"), 100);
+    let m: usize =
+        get_val_or_default(py, &kd_hash, String::from("m"), m_default);
+    let iom: usize =
+        get_val_or_default(py, &kd_hash, String::from("iom"), 2);
     let max_krylov_dim: usize =
         get_val_or_default(py, &kd_hash, String::from("max_krylov_dim"), 100);
-    let m: usize = get_val_or_default(py, &kd_hash, String::from("m"), max_krylov_dim);
-    let iom: usize = get_val_or_default(py, &kd_hash, String::from("iom"), 2);
-    let max_substeps: usize = get_val_or_default(py, &kd_hash, String::from("max_substeps"), 0);
-    let tol: f64 = get_val_or_default(py, &kd_hash, String::from("tol"), 1e-8);
-    let tol_fdt: f64 = get_val_or_default(py, &kd_hash, String::from("tol_fdt"), 1e-8);
-    let osteps: usize = get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
-    // linear and nonlinear solver settings
-    let tol_lin: f64 = get_val_or_default(py, &kd_hash, String::from("tol_lin"), 1e-8);
-    let tol_nlin: f64 = get_val_or_default(py, &kd_hash, String::from("tol_nlin"), 1e-8);
-    // jacobian spectrum analysis settings
-    let leja_a: f64 = get_val_or_default(py, &kd_hash, String::from("leja_a"), -1.0);
-    let leja_b: f64 = get_val_or_default(py, &kd_hash, String::from("leja_b"), 0.0);
-    let leja_c: f64 = get_val_or_default(py, &kd_hash, String::from("leja_c"), 1.0);
-    let spec_tol: f64 = get_val_or_default(py, &kd_hash, String::from("spec_tol"), 1.0e-8);
-    let spec_iter: usize = get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
-    let spec_method: String = get_val_or_default(
-        py,
-        &kd_hash,
-        String::from("spec_method"),
-        String::from("arnoldi"),
-    );
-    let spec_saftey_factor: f64 =
-        get_val_or_default(py, &kd_hash, String::from("spec_saftey_factor"), 1.05);
-    let dd_method: String = get_val_or_default(
-        py,
-        &kd_hash,
-        String::from("dd_method"),
-        String::from("dd_phi"),
-    );
-    let krylov_reuse: bool = get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), false);
+    let leja_a: f64 =
+        get_val_or_default(py, &kd_hash, String::from("leja_a"), -1.0);
+    let leja_b: f64 =
+        get_val_or_default(py, &kd_hash, String::from("leja_b"), 0.0);
+    let leja_c: f64 =
+        get_val_or_default(py, &kd_hash, String::from("leja_c"), 1.0);
+    let dd_method: String =
+        get_val_or_default(py, &kd_hash, String::from("dd_method"), String::from("dd_phi"));
+    let krylov_reuse: bool =
+        get_val_or_default(py, &kd_hash, String::from("krylov_reuse"), false);
+    let max_substeps: usize =
+        get_val_or_default(py, &kd_hash, String::from("max_substeps"), 0);
+    let spec_tol: f64 =
+        get_val_or_default(py, &kd_hash, String::from("spec_tol"), 1.0e-8);
+    let spec_iter: usize =
+        get_val_or_default(py, &kd_hash, String::from("spec_iter"), 20);
+    let spec_method: String =
+        get_val_or_default(py,&kd_hash,String::from("spec_method"),String::from("arnoldi"));
+    let safety_factor: f64 =
+        get_val_or_default(py,&kd_hash,String::from("spec_saftey_factor"),1.05);
+    let osteps: usize =
+        get_val_or_default(py, &kd_hash, String::from("osteps"), 1);
+    if osteps == 0 {
+        return Err(PyValueError::new_err("osteps must be >0"));
+    }
     // optional logging settings
     let logging: bool = get_val_or_default(py, &kd_hash, String::from("logging"), false);
     let _logger: Option<LoggerHandle> = if logging { Some(init_logger()) } else { None };
 
+    // initial solution state
     let y0_mat = y0.into_faer();
 
-    // setup the dense phi evaluator
-    let expmv: Box<dyn DensePhikvEvaluator> = match expmv_method.as_str() {
-        "cram" | "cram_16" => Box::new(matexp_cauchy::gen_cram_expm(16)),
-        "parabolic" => Box::new(matexp_cauchy::gen_parabolic_expm(24)),
-        // pade is default
-        _ => Box::new(PadeExpm::new(12)),
-    };
-
-    // setup the time integrator
-    let solver = match phi_method.as_str() {
-        "leja" => {
-            let lp = matexp_leja::LejaPoints::new_from_fn("leja_circle").slice(0, m + 2);
-            let mut matexp_m = match spec_method.as_str() {
-                "none" => {
-                    // user specified spectrum parameters
-                    let leja_ellipse_adapter =
-                        matexp_leja::LejaEllipseAdapterStatic::new(leja_a, leja_b, leja_c);
-                    matexp_leja::LejaPhiEval::new(
-                        lp,
-                        std::cmp::min(m, 800),
-                        tol,
-                        "clapm",
-                        dd_method.as_str(),
-                        krylov_reuse,
-                        Box::new(leja_ellipse_adapter),
-                    )
-                }
-                _ => {
-                    // adaptive specturm parameter updates
-                    let leja_ellipse_adapter = matexp_leja::LejaEllipseAdapterArnoldiIOM::new(
+    // setup the solver
+    let solver = if let Ok(explicit_method) = ExplicitMethod::from_str(&method) {
+        ExplicitIntegratorBuilder::new(t0, y0_mat, explicit_method)
+            .build()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?
+    } else if let Ok(implicit_method) = ImplicitMethod::from_str(&method) {
+        ImplicitIntegratorBuilder::new(t0, y0_mat, implicit_method)
+            .with_tol_lin(tol_lin)
+            .with_tol_nlin(tol_nlin)
+            .build()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?
+    } else if let Ok(exponential_method) = ExponentialMethod::from_str(&method) {
+        let evaluator = match phi_method.to_ascii_lowercase().as_str() {
+            "krylov" => {
+                let dense_method = DenseExpmMethod::from_str(&expmv_method)
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                ExponentialEvaluator::Krylov(
+                    KrylovOptions::default()
+                        .with_dense_method(dense_method)
+                        .with_m(m)
+                        .with_max_dim(max_krylov_dim)
+                        .with_iom(iom)
+                        .with_tol(tol),
+                )
+            }
+            "leja" => {
+                let spectrum = if spec_method.eq_ignore_ascii_case("none") {
+                    LejaSpectrum::static_bounds(leja_a, leja_b, leja_c)
+                } else if spec_method.eq_ignore_ascii_case("arnoldi") {
+                    LejaSpectrum::adaptive(
                         leja_a,
                         leja_b,
                         leja_c,
                         spec_tol,
                         spec_iter,
                         iom,
-                        spec_saftey_factor,
-                    );
-                    matexp_leja::LejaPhiEval::new(
-                        lp,
-                        std::cmp::min(m, 800),
-                        tol,
-                        "clapm",
-                        dd_method.as_str(),
-                        krylov_reuse,
-                        Box::new(leja_ellipse_adapter),
+                        safety_factor,
                     )
-                }
-            };
-            matexp_m.set_max_substeps(max_substeps);
-            select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
-        }
-        "taylor" => {
-            let lp = matexp_leja::LejaPoints::new(vec![0.0; m], vec![0.0; m]);
-            let leja_ellipse_adapter =
-                matexp_leja::LejaEllipseAdapterStatic::new(leja_a, leja_b, leja_c);
-            let matexp_m = matexp_leja::LejaPhiEval::new(
-                lp,
-                std::cmp::min(m, 800),
-                tol,
-                "taylor",
-                dd_method.as_str(),
-                krylov_reuse,
-                Box::new(leja_ellipse_adapter),
-            );
-            select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
-        }
-        // krylov is default
-        _ => {
-            let matexp_m =
-                matexp_krylov::KrylovExpm::new(expmv, std::cmp::min(50, m), m, tol, Some(iom));
-            select_solver(t0, y0_mat, method, tol_fdt, tol_lin, tol_nlin, matexp_m)
-        }
+                } else {
+                    return Err(PyValueError::new_err(format!(
+                        "unsupported Leja spectrum method: {spec_method}"
+                    )));
+                };
+                let dd_method = LejaDdMethod::from_str(&dd_method)
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                ExponentialEvaluator::Leja(
+                    LejaOptions::default()
+                        .with_m(m)
+                        .with_max_substeps(max_substeps)
+                        .with_tol(tol)
+                        .with_dd_method(dd_method)
+                        .with_krylov_reuse(krylov_reuse)
+                        .with_spectrum(spectrum),
+                )
+            }
+            "taylor" => {
+                let dd_method = LejaDdMethod::from_str(&dd_method)
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                ExponentialEvaluator::Taylor(
+                    TaylorOptions::default()
+                        .with_m(m)
+                        .with_tol(tol)
+                        .with_dd_method(dd_method)
+                        .with_krylov_reuse(krylov_reuse)
+                        .with_bounds(leja_a, leja_b, leja_c),
+                )
+            }
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unsupported phi evaluation method: {phi_method}"
+                )));
+            }
+        };
+        ExponentialIntegratorBuilder::new(t0, y0_mat, exponential_method)
+            .with_tol_fdt(tol_fdt)
+            .with_evaluator(evaluator)
+            .build()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?
+    } else {
+        return Err(PyValueError::new_err(format!(
+            "unsupported time integration method: {method}"
+        )));
     };
 
     // storage for results
@@ -440,25 +373,27 @@ fn integrate_wrapper_rs<'py>(
     let mut t_out: Vec<f64> = Vec::with_capacity(nsteps);
 
     // integrate the sys
-    let mut borrowed_solver = solver.borrow_mut();
+    let mut solver = solver;
     for i in 0..nsteps {
         if i % osteps == 0 || i == nsteps - 1 {
-            let _y = borrowed_solver.state();
-            let _t = borrowed_solver.time();
+            let _y = solver.state();
+            let _t = solver.time();
             y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
             t_out.push(_t);
         }
-        let y_new = borrowed_solver.step(sys, dt);
-        borrowed_solver.accept_step(y_new.unwrap());
+        let y_new = solver
+            .step(sys, dt)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        solver.accept_step(y_new);
     }
-    let _y = borrowed_solver.state();
-    let _t = borrowed_solver.time();
+    let _y = solver.state();
+    let _t = solver.time();
     y_out.push(_y.as_ref().into_ndarray().to_owned().into_pyarray(py));
     t_out.push(_t);
     let y_out_pylist = PyList::new(py, y_out).unwrap();
     let t_out_pylist = PyList::new(py, t_out).unwrap();
 
-    (y_out_pylist, t_out_pylist)
+    Ok((y_out_pylist, t_out_pylist))
 }
 
 /// Rust phi_k(A)

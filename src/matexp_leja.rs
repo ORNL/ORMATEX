@@ -18,13 +18,12 @@ use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::linalg::matmul::triangular::{matmul as tri_matmul, BlockStructure};
 use faer::matrix_free::LinOp;
 use faer::prelude::*;
-use faer::traits::ComplexField;
-use faer_traits::math_utils::{add, from_f64, mul};
 
 use csv;
 use statrs::function::factorial;
 use std::cmp::{max, min};
 
+use crate::matexp_taylor::phik_taylor_bidiag;
 use crate::arnoldi::arnoldi_lop_restarted;
 use crate::matexp_traits::LinOpPhikvEvaluator;
 use crate::ode_sys::DynRefExtendedLinOp;
@@ -543,117 +542,6 @@ impl LejaPoints {
             shift_scale_leja(self.leja_re.as_ref(), self.leja_im.as_ref(), a, b, c);
         (Self::new_from_col(leja_sc_re, leja_sc_im), shift, scale)
     }
-}
-
-/// Compute the dense matrix exponential using tayler series
-///
-/// # Args
-/// * `A` : the matrix
-/// * `shift` : spectrum shift parameter. 0.0 for unshifted matexp.
-/// * `scale` : spectrum shift parameter. 1.0 for unscaled matexp.
-/// * `p` : polynomial order
-/// * `k` : phi-fn order
-///
-pub fn phik_taylor<T: ComplexField>(
-    a: MatRef<T>,
-    shift: f64,
-    scale: f64,
-    p: usize,
-    k: usize,
-) -> Mat<T> {
-    let mut m: Mat<T> = scale * a.as_ref();
-    let mut ts_expm: Mat<T> = faer::Mat::identity(m.nrows(), m.ncols());
-    let mut fact = factorial::factorial(k as u64);
-    ts_expm = ts_expm / fact;
-    for i in 0..p {
-        fact *= (k + i + 1) as f64;
-        ts_expm += m.as_ref() / fact;
-        m = a.as_ref() * m.as_ref();
-    }
-    shift.exp() * ts_expm
-}
-
-/// Optimized phi_k Taylor series for lower-bidiagonal `a_bi`.
-///
-/// # Args
-/// * `a_bi` : the lower bidiagonal matrix
-/// * `shift` : spectrum shift parameter. 0.0 for unshifted matexp.
-/// * `scale` : spectrum shift parameter. 1.0 for unscaled matexp.
-/// * `p` : polynomial order
-/// * `k` : phi-fn order
-///
-pub fn phik_taylor_bidiag<T: ComplexField>(
-    a_bi: MatRef<T>,
-    shift: f64,
-    scale: f64,
-    p: usize,
-    k: usize,
-) -> Mat<T> {
-    let n = a_bi.nrows();
-
-    // m = scale * a_bi  — only write the lower-bidiagonal entries, rest stay zero.
-    let mut m: Mat<T> = faer::Mat::zeros(n, n);
-    {
-        let scale_t = from_f64::<T>(scale);
-        for i in 0..n {
-            let diag_val = a_bi[(i, i)].clone();
-            m[(i, i)] = mul(&scale_t, &diag_val);
-            if i + 1 < n {
-                let sub_val = a_bi[(i + 1, i)].clone();
-                m[(i + 1, i)] = mul(&scale_t, &sub_val);
-            }
-        }
-    }
-
-    // ts_expm = I / k!
-    let mut ts_expm: Mat<T> = faer::Mat::identity(n, n);
-    let mut fact = factorial::factorial(k as u64);
-    ts_expm = ts_expm / fact;
-
-    // `bandwidth` = number of active diagonals in `m` (diag + subdiags).
-    // Starts at 2 (= diagonal + 1 subdiagonal from scale*a_bi).
-    let mut bandwidth: usize = 2_usize.min(n);
-
-    for i in 0..p {
-        fact *= (k + i + 1) as f64;
-        let inv_fact_t = from_f64::<T>(1.0 / fact);
-
-        // ts_expm += m / fact - band-aware: m[(row,col)] =/= 0 only for col <= row < col+bandwidth.
-        for col in 0..n {
-            let row_max = (col + bandwidth).min(n);
-            for row in col..row_max {
-                let elem = mul(&inv_fact_t, &m[(row, col)].clone());
-                let old = ts_expm[(row, col)].clone();
-                ts_expm[(row, col)] = add(&old, &elem);
-            }
-        }
-
-        // m <- a_bi * m  in-place via bottom-to-top row sweep.
-        // new_m[(r,c)] = d[r]*m[(r,c)] + s[r]*m[(r-1,c)]
-        // New bandwidth = bandwidth + 1 (capped at n).
-        let new_bw = (bandwidth + 1).min(n);
-        for row in (1..n).rev() {
-            let d_row = a_bi[(row, row)].clone();
-            let s_row = a_bi[(row, row - 1)].clone();
-            // Non-zero cols for new m at this row span row.saturating_sub(new_bw-1)..=row.
-            let col_start = row.saturating_sub(new_bw - 1);
-            for col in col_start..=row {
-                let v_rc = m[(row, col)].clone();
-                // m[(row-1, col)] is zero when col == row (upper triangle), safe to read.
-                let v_prev = m[(row - 1, col)].clone();
-                m[(row, col)] = add(&mul(&d_row, &v_rc), &mul(&s_row, &v_prev));
-            }
-        }
-        // Row 0: no subdiagonal contribution.
-        {
-            let d0 = a_bi[(0, 0)].clone();
-            let v00 = m[(0, 0)].clone();
-            m[(0, 0)] = mul(&d0, &v00);
-        }
-        bandwidth = new_bw;
-    }
-
-    faer::Scale(from_f64::<T>(shift.exp())) * ts_expm
 }
 
 /// Compute leja divided differences using taylor series method
@@ -2277,7 +2165,7 @@ fn complex_diag_leja_phikv(
 #[cfg(test)]
 mod test_matexp_leja {
     use std::time::Instant;
-
+    use crate::matexp_taylor::phik_taylor_ext;
     use crate::mat_utils::mat_mat_approx_eq;
     use crate::matexp_pade::{matexp, phi};
     use crate::test_common::{gen_test_a, gen_test_b, gen_test_c};
@@ -2344,7 +2232,7 @@ mod test_matexp_leja {
         let (test_a, test_v) = gen_test_a();
 
         // compute the matrix matexp(dt*A)*v using dense impl
-        let expm_tay = phik_taylor(test_a.as_ref(), 0.0, 1.0, 16, 0);
+        let expm_tay = phik_taylor_ext(test_a.as_ref(), 0);
         let expmv_tay_dense = expm_tay.as_ref() * test_v.as_ref();
 
         // compute the matrix matexp(dt*A)*v using matfree impl
@@ -2376,7 +2264,7 @@ mod test_matexp_leja {
         mat_mat_approx_eq(expmv_tay_pm.as_ref(), expmv_tay_dense.as_ref(), 1e-8);
 
         // compute the matrix phi_2(dt*A)*v using dense impl
-        let phi2v_tay = phik_taylor((1.0 * &test_a).as_ref(), 0.0, 1.0, 16, 2) * test_v.as_ref();
+        let phi2v_tay = phik_taylor_ext((1.0 * &test_a).as_ref(), 2) * test_v.as_ref();
         let phi2v_pade = phi((1.0 * &test_a).as_ref(), 2) * test_v.as_ref();
         mat_mat_approx_eq(phi2v_pade.as_ref(), phi2v_tay.as_ref(), 1e-8);
     }
