@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,23 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+//! Python (pyo3) bindings for the Rust ORMATEX integrators.
+//!
+//! Built with the `python` feature and imported in python as
+//! `ormatex_py.ormatex`. See the readme for module install and use. The
+//! high level python entry point is `ormatex_py.integrate_wrapper.integrate`
+//! with a method name ending in `_rs` (for example `method="epi2_rs"`), which
+//! calls `integrate_wrapper_rs` here.
+//!
+//! [`PySysWrapped`] wraps a python ODE system object so that it implements
+//! the Rust [`OdeSys`] trait. This allows numpy/JAX backed ODE models to be
+//! advanced by the Rust time integrators. The primary benefit is the ability
+//! to use JAX-based automatic differentiation to compute the system Jacobian
+//! and Jacobian-vector products, while leveraging Rust dense and sparse linear
+//! algebra for performant time integration on the CPU. Also exposed are dense
+//! phi-function evaluation ([`DensePhikvEvalRs`], `phi_k_rs`), an Arnoldi
+//! routine (`arnoldi_rs`) and Leja point evaluators for diagonal matrices.
 use flexi_logger::LoggerHandle;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
-/// Python interface to Rust ormatex integrators
-///
-/// See readme for python module install and use.
-///
-/// Wraps a python ODE Sys object to be compatible
-/// with the Rust based ormatex integrators.
-/// This interface allows interoperability between
-/// numpy/jax backed ODE models with Rust based
-/// temporal integration procedures.  The primary benifit is
-/// the ability to use JAX-based AD methods to compute
-/// system jacobian and jabobian-vector products while
-/// also leveraging rust-based dense and sparse linear algebra
-/// routines for performant time integration method implementations
-/// on the CPU.
-///
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyDict, PyList};
@@ -59,15 +60,21 @@ use crate::ode_sys::*;
 
 use std::str::FromStr;
 
-/// Wrapper around python PySys object
+/// Wrapper around a python ODE system object.
+///
+/// The wrapped python object must provide `frhs(t, x)`, returning the rhs as a
+/// 1D numpy array, and `fjac(t, x)`, returning a linear operator object (see
+/// [`PyJaxJacLinOp`]). In python, create it with `PySysWrapped(ode_sys)`, see
+/// `ormatex_py.ode_sys.OdeSysNp`.
 #[pyclass]
 pub struct PySysWrapped {
-    // alias of PyObject
+    /// The wrapped python system object (alias of PyObject).
     pub py_sys: Py<PyAny>,
 }
 
 #[pymethods]
 impl PySysWrapped {
+    /// Wrap a python ODE system object.
     #[new]
     pub fn new(py_sys: Py<PyAny>) -> Self {
         // let gil = Python::acquire_gil();
@@ -75,7 +82,11 @@ impl PySysWrapped {
     }
 }
 
-/// LinOp for python JAX-based linear operator
+/// Rust `LinOp` wrapping a python (JAX-based) Jacobian linear operator.
+///
+/// The python object must provide `dim()`, the operator dimension, and
+/// `matvec_npcompat(x)`, the matrix-vector product on a 1D numpy array. Only
+/// square operators and `apply` are supported; `ncols` and `conj_apply` panic.
 #[pyclass]
 pub struct PyJaxJacLinOp {
     /// inner linop def in python
@@ -85,6 +96,7 @@ pub struct PyJaxJacLinOp {
 
 #[pymethods]
 impl PyJaxJacLinOp {
+    /// Wrap a python linear operator object.
     #[new]
     pub fn new(py_linop: Py<PyAny>) -> Self {
         // let gil = Python::acquire_gil();
@@ -197,6 +209,8 @@ impl OdeSys<'_> for PySysWrapped {
     }
 }
 
+/// Look up `key` in the keyword dict, returning `default` if the key is missing
+/// or its value cannot be converted to `T`.
 fn get_val_or_default<'a, 'py, T>(
     py: Python<'py>,
     kd_hash: &'a HashMap<String, Py<PyAny>>,
@@ -214,6 +228,49 @@ where
     default
 }
 
+/// Integrate an ODE system with a Rust integrator built from keyword options.
+///
+/// Called from python by `ormatex_py.integrate_wrapper.integrate` for methods
+/// with an `_rs` suffix. Returns `(y_list, t_list)`: lists of numpy state
+/// arrays and times. Outputs are the initial state, the state before every
+/// `osteps`-th step and before the last step, and the final state.
+///
+/// Arguments:
+///
+/// * `sys` - the wrapped python ODE system, `PySysWrapped`
+/// * `y0` - initial state, 2D numpy array of shape `(n, 1)`
+/// * `t0` - initial time
+/// * `dt` - fixed time step size
+/// * `nsteps` - number of steps
+/// * `**kwds` - options, all optional (defaults in parentheses). A value that
+///   cannot be converted to the expected type silently falls back to its
+///   default.
+///
+/// Options:
+///
+/// * `method` - integration method name (`epi2`), one of the names accepted by
+///   `ExplicitMethod`, `ImplicitMethod` or `ExponentialMethod` (case
+///   insensitive), for example `rk4`, `bdf2`, `cn`, `sdirk33`, `epi3`, `exprb3`
+/// * `osteps` - output every `osteps` steps (1); must be greater than 0
+/// * `logging` - write a log file with `init_logger` (False)
+/// * `tol_lin`, `tol_nlin` - implicit method linear and Newton tolerances (1e-8)
+/// * `tol_fdt` - exponential methods, nonautonomous correction threshold (1e-8)
+/// * `phi_method` - exponential methods, evaluator: `krylov`, `leja` or `taylor` (`krylov`)
+/// * `tol` - evaluator tolerance (1e-8)
+/// * `m` - Krylov initial dimension or Leja/Taylor polynomial degree (`max_krylov_dim`)
+/// * `max_krylov_dim` - maximum Krylov dimension (100)
+/// * `iom` - incomplete orthogonalization depth (2)
+/// * `expmv_method` - Krylov dense method: `pade`, `cram`, `cram_16`, `parabolic` (`pade`)
+/// * `dd_method` - Leja/Taylor divided differences: `dd_phi` or `dd_taylor` (`dd_phi`)
+/// * `krylov_reuse` - Leja/Taylor, re-use Krylov information (False)
+/// * `max_substeps` - Leja, number of substeps, 0 for none (0)
+/// * `leja_a`, `leja_b`, `leja_c` - Leja/Taylor spectrum bounds (-1.0, 0.0, 1.0)
+/// * `spec_method` - Leja spectrum, `arnoldi` (adaptive) or `none` (static) (`arnoldi`)
+/// * `spec_tol`, `spec_iter`, `spec_saftey_factor` - adaptive Leja spectrum
+///   options (1e-8, 20, 1.05)
+///
+/// Raises `ValueError` for an unknown method or option value, an invalid
+/// configuration, or a failed time step.
 #[pyfunction]
 #[pyo3(signature = (sys, y0, t0, dt, nsteps, **kwds))]
 fn integrate_wrapper_rs<'py>(
@@ -396,8 +453,11 @@ fn integrate_wrapper_rs<'py>(
     Ok((y_out_pylist, t_out_pylist))
 }
 
-/// Rust phi_k(A)
-/// Note: phi_0(A) == exp(A)
+/// Rust dense $\varphi_k(A)$ matrix function, with $\varphi_0(A) = \exp(A)$.
+///
+/// Arguments: `a` - 2D numpy array (square matrix), `k` - phi-function order.
+/// Returns the 2D numpy array $\varphi_k(A)$. Any time step scaling must be
+/// applied to `a` by the caller.
 #[pyfunction]
 fn phi_k_rs<'py>(py: Python<'py>, a: PyReadonlyArray2<f64>, k: usize) -> Bound<'py, PyArray2<f64>> {
     // convert a mat into fear mat
@@ -411,18 +471,23 @@ fn phi_k_rs<'py>(py: Python<'py>, a: PyReadonlyArray2<f64>, k: usize) -> Bound<'
     phik_ndarray.into_pyarray(py)
 }
 
-/// Rust Arnoldi method binding for interop with python
+/// Rust Arnoldi method binding for interop with python.
 ///
-/// * `py_linop` - python LinOp
-/// * `b` - numpy vector
+/// # Arguments
+///
+/// * `py_linop` - python LinOp (see `ormatex_py.ode_sys.LinOp`)
+/// * `a_lo_scale` - scale factor applied to the linear operator
+/// * `b` - starting vector, 2D numpy array of shape `(n, 1)`
 /// * `m` - max krylov iteration
 /// * `iom` - incomplete ortho depth
 ///
-/// returns
-/// * `H` - Upper Hessenberge
-/// * `V` - orthonormal basis
-/// * `bkdwn` - iter where happy breakdown occured
+/// # Returns
 ///
+/// A tuple `(V, H, bkdwn)`:
+///
+/// * `V` - orthonormal basis
+/// * `H` - upper Hessenberg matrix
+/// * `bkdwn` - iteration count reached (less than `m` on happy breakdown)
 #[pyfunction]
 fn arnoldi_rs<'py>(
     py: Python<'py>,
@@ -451,6 +516,23 @@ fn arnoldi_rs<'py>(
     )
 }
 
+/// Leja point evaluation of $\varphi_k(\Delta t D) v$ for a diagonal complex matrix $D$ with static spectrum bounds.
+///
+/// Wraps [`crate::matexp_leja::complex_diag_leja_phikv_static`]; see it for details.
+///
+/// # Arguments
+///
+/// * `a`, `b`, `c` - spectrum bounds: min real part, max real part, max imaginary magnitude
+/// * `dt` - time step scale
+/// * `d_diag_re`, `d_diag_im` - real and imaginary parts of the diagonal of $D$
+/// * `v_re`, `v_im` - real and imaginary parts of the vector $v$
+/// * `k` - phi-function order, 0 for the matrix exponential
+/// * `m` - maximum Leja polynomial degree
+///
+/// # Returns
+///
+/// A tuple `(phikv_re, phikv_im, leja_re, leja_im)` of real and imaginary
+/// parts of the result and of the scaled Leja points used.
 #[pyfunction]
 fn complex_diag_leja_phikv_static_rs<'py>(
     py: Python<'py>,
@@ -502,6 +584,28 @@ fn complex_diag_leja_phikv_static_rs<'py>(
     )
 }
 
+/// Leja point evaluation of $\varphi_k(\Delta t D) v$ for a diagonal complex matrix $D$ with spectrum bounds fitted by Arnoldi iteration.
+///
+/// Wraps [`crate::matexp_leja::complex_diag_leja_phikv_fitted`]; see it for details.
+///
+/// # Arguments
+///
+/// * `a` - dense matrix (2D numpy array) whose spectrum is fitted
+/// * `b` - starting vector for the Arnoldi iteration, 2D numpy array `(n, 1)`
+/// * `dt` - time step scale
+/// * `d_diag_re`, `d_diag_im` - real and imaginary parts of the diagonal of $D$
+/// * `v_re`, `v_im` - real and imaginary parts of the vector $v$
+/// * `k` - phi-function order, 0 for the matrix exponential
+/// * `m` - maximum Leja polynomial degree
+/// * `iom` - incomplete orthogonalization depth
+/// * `n_ritz` - number of Arnoldi iterations used in the spectrum fit
+/// * `krylov_reuse` - re-use Krylov information in the Leja interpolation
+/// * `spec_saftey_factor` - scale factor applied to the fitted spectrum bounds
+///
+/// # Returns
+///
+/// A tuple `(phikv_re, phikv_im, leja_re, leja_im)` of real and imaginary
+/// parts of the result and of the scaled Leja points used.
 #[pyfunction]
 fn complex_diag_leja_phikv_fitted_rs<'py>(
     py: Python<'py>,
@@ -565,7 +669,10 @@ fn complex_diag_leja_phikv_fitted_rs<'py>(
     )
 }
 
-/// Python interface for computing dense phi_k(A*dt)*v0 products
+/// Python interface for computing dense $\varphi_k(A \Delta t) v_0$ products.
+///
+/// Wraps a [`DensePhikvEvaluator`]. Used in python by
+/// `ormatex_py.phi_evaluator`.
 #[pyclass(unsendable)]
 pub struct DensePhikvEvalRs {
     _method: String,
@@ -575,6 +682,13 @@ pub struct DensePhikvEvalRs {
 
 #[pymethods]
 impl DensePhikvEvalRs {
+    /// Create a dense phi-function evaluator.
+    ///
+    /// # Arguments
+    ///
+    /// * `method` - `cram` or `cram_16` (CRAM, only order 16 is supported),
+    ///   `parabolic` (parabolic contour, even order), any other value selects Pade
+    /// * `order` - order of the method; for Pade the maximum number of squarings
     #[new]
     pub fn new(method: String, order: usize) -> Self {
         let evaluator: Box<dyn DensePhikvEvaluator> = match method.as_str() {
@@ -590,6 +704,14 @@ impl DensePhikvEvalRs {
         }
     }
 
+    /// Precompute data (for example factorizations) for the given matrix and step.
+    ///
+    /// # Arguments
+    ///
+    /// * `a_np` - 2D numpy array, the matrix $A$
+    /// * `dt` - time step scale
+    /// * `v0_np` - 2D numpy array, the vector
+    /// * `k` - phi-function order
     pub fn prepare(
         &mut self,
         _py: Python<'_>,
@@ -603,6 +725,18 @@ impl DensePhikvEvalRs {
         self.evaluator.apply_prepare(a, dt, v0, k);
     }
 
+    /// Evaluate $\varphi_k(\Delta t A) v_0$.
+    ///
+    /// # Arguments
+    ///
+    /// * `a_np` - 2D numpy array, the matrix $A$
+    /// * `dt` - time step scale
+    /// * `v0_np` - 2D numpy array, the vector $v_0$ of shape `(n, 1)`
+    /// * `k` - phi-function order
+    ///
+    /// # Returns
+    ///
+    /// The 2D numpy array $\varphi_k(\Delta t A) v_0$.
     pub fn eval_phik(
         &self,
         py: Python<'_>,
@@ -618,6 +752,18 @@ impl DensePhikvEvalRs {
         ndarray_phikv.into_pyarray(py).to_owned().into()
     }
 
+    /// Evaluate the sum $\sum_j \varphi_{k_j}(\Delta t A) b_j$.
+    ///
+    /// # Arguments
+    ///
+    /// * `a_np` - 2D numpy array, the matrix $A$
+    /// * `dt` - time step scale
+    /// * `bs_np` - list of 2D numpy arrays $b_j$ of shape `(n, 1)`
+    /// * `ks` - list of phi-function orders $k_j$, one per vector
+    ///
+    /// # Returns
+    ///
+    /// The 2D numpy array holding the summed product.
     pub fn eval_phik_v(
         &self, py: Python<'_>,
         a_np: PyReadonlyArray2<f64>,
@@ -634,6 +780,7 @@ impl DensePhikvEvalRs {
     }
 }
 
+/// ORMATEX Rust bindings: integrators and phi-function evaluators.
 #[pymodule(name = "ormatex")]
 mod ormatex {
     #[pymodule_export]

@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-//! Computes the matrix exponential using a contour integral appraoch for dense faer Mats.
+//! Contour integral (Cauchy) matrix exponential and phi-function evaluation for dense faer matrices.
+//!
+//! The matrix exponential and phi-functions are approximated by a quadrature
+//! of the Cauchy integral
+//!
+//! $$ \varphi_k(A) = \frac{1}{2 \pi i} \int_\Gamma \frac{e^z}{z^k} (zI - A)^{-1} \thinspace dz $$
+//!
+//! which yields a partial fraction (pole) expansion with complex poles
+//! $\theta_j$ and weights $\alpha_j$. Only the poles in the upper half plane
+//! are stored, and the conjugate pairs are accounted for by taking twice the
+//! real part. [`CauchyExpm`] holds the poles and weights and evaluates
+//! $\exp(A t)$ and $\varphi_k(A t)$ (as dense matrices or as products with
+//! vectors) using one complex linear solve per pole. The poles are processed
+//! in parallel with rayon. [`gen_cram_expm`] builds the Chebyshev rational
+//! approximation (CRAM) of order 16 and [`gen_parabolic_expm`] builds a
+//! quadrature on a parabolic contour.
+//!
+//! # References
+//!
+//! * T. Schmelzer, L. N. Trefethen, "Evaluating matrix functions for
+//!   exponential integrators via Caratheodory-Fejer approximation and contour
+//!   integrals", Electronic Transactions on Numerical Analysis 29 (2007) 1-18.
+//! * M. Pusa, "Rational approximations to the matrix exponential in burnup
+//!   calculations", Nuclear Science and Engineering 169(2) (2011) 155-167,
+//!   doi:10.13182/NSE10-81.
 use crate::mat_utils::{complex_mat_scale, real_mat};
 use crate::matexp_traits::DensePhikvEvaluator;
 use faer::linalg::solvers::{DenseSolveCore, PartialPivLu, Solve};
@@ -24,6 +48,25 @@ use num_traits::Float;
 use num_complex::Complex;
 use rayon::prelude::*;
 
+/// Partial fraction (contour integral) evaluator of the matrix exponential and phi-functions.
+///
+/// Stores the poles $\theta_j$ and weights $\alpha_j$, $j = 1, \ldots, s$, of a
+/// rational approximation, together with the offset $\alpha_0$, so that
+///
+/// $$ \exp(A) \approx \alpha_0 I + 2 \thinspace \mathrm{Re} \sum_{j=1}^{s} \alpha_j (A - \theta_j I)^{-1} $$
+///
+/// and, for $\varphi_k$ with $k \ge 1$ applied to a vector $v$,
+///
+/// $$ \varphi_k(A) v \approx 2 \thinspace \mathrm{Re} \sum_{j=1}^{s} \frac{\alpha_j}{\theta_j^k} (A - \theta_j I)^{-1} v $$
+///
+/// The stored poles are those in the upper half plane; their conjugates are
+/// implied. The total order of the approximation is $2 s$. The weights
+/// $\alpha_j$ absorb the quadrature weights, the factor $e^{\theta_j}$ and the
+/// sign of the resolvent. Use [`gen_cram_expm`] or [`gen_parabolic_expm`] to
+/// construct standard instances.
+///
+/// The evaluator can cache the LU factorizations of $(A\thinspace dt - \theta_j I)$ via
+/// [`DensePhikvEvaluator::apply_prepare`].
 #[derive(Debug)]
 pub struct CauchyExpm<T> {
     /// poles
@@ -44,6 +87,17 @@ where
     T: RealField + Float + Send + Sync,
     Complex<T>: ComplexField<Real = T>,
 {
+    /// Creates a contour integral evaluator from poles and weights.
+    ///
+    /// # Arguments
+    ///
+    /// * `theta` - column matrix of the $s$ poles $\theta_j$ (upper half plane)
+    /// * `alpha` - column matrix of the $s$ weights $\alpha_j$
+    /// * `alpha_0` - offset $\alpha_0$ (the limit of the approximation at infinity)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `theta` and `alpha` have different numbers of rows.
     pub fn new(theta: MatRef<Complex<T>>, alpha: MatRef<Complex<T>>, alpha_0: Complex<T>) -> Self {
         if theta.nrows() != alpha.nrows() {
             panic!("n theta must equal n alpha");
@@ -60,14 +114,31 @@ where
         self.theta.nrows() * 2
     }
 
-    /// Computes exp(A*dt) for dense A.
-    /// Uses numerical quadtrature scheme to estimate the cauchy integral of
-    /// $$ exp(A) = \frac{1}{2\pi i} \int_\Gamma e^z (zI - A)^{-1} $$
-    /// then we approximate
-    /// $$ exp(A) \approx \sum_k^N c_k (z_k I - A)^{-1} $$
-    /// and
-    /// $$ c_k = w_k e^{z_k} / (2 \pi i) $$
+    /// Computes $\exp(A \thinspace dt)$ for a dense matrix `A`.
     ///
+    /// Uses a numerical quadrature scheme to estimate the Cauchy integral
+    ///
+    /// $$ \exp(A) = \frac{1}{2\pi i} \int_\Gamma e^z (zI - A)^{-1} \thinspace dz $$
+    ///
+    /// which is approximated by
+    ///
+    /// $$ \exp(A) \approx \sum_k c_k (z_k I - A)^{-1}, \qquad
+    ///    c_k = \frac{w_k e^{z_k}}{2 \pi i} $$
+    ///
+    /// where $z_k$ are the quadrature points on the contour and $w_k$ the
+    /// quadrature weights. In terms of the stored poles and weights this
+    /// evaluates $\alpha_0 I + 2 \thinspace \mathrm{Re} \sum_j \alpha_j (A \thinspace dt - \theta_j I)^{-1}$.
+    /// A QR factorization is computed for each pole (in parallel), and the
+    /// cached LU factors are not used.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - dense square matrix $A$
+    /// * `dt` - real time step scale factor
+    ///
+    /// # Returns
+    ///
+    /// The dense real matrix approximating $\exp(A \thinspace dt)$.
     pub fn matexp_dense_cauchy(&self, a: MatRef<T>, dt: f64) -> Mat<T> {
         let s = self.theta.nrows();
         let dim = a.nrows();
@@ -94,7 +165,7 @@ where
         rexp_a
     }
 
-    /// Extension formula for computing higher order phi functions
+    // Extension formula for computing higher order phi functions
     fn phik_cauchy_ext(&self, z: MatRef<T>, k: usize) -> Mat<T> {
         let n = z.nrows();
         let m = z.ncols();
@@ -119,11 +190,33 @@ where
         phi_ks.get(0..n, phi_ks.ncols() - n..).to_owned()
     }
 
-    /// Computes phi_k(A*dt) for dense A using the extension formula.
+    /// Computes $\varphi_k(A \thinspace dt)$ for a dense matrix `A` using the extension formula.
     ///
-    /// T. Schmelzer and L. Trefethen. Evaluating Matrix Functions for
-    /// Exponential Integrators via Caratheodory-Fejer Approximation
-    /// and Contour Integrals. Electronic Transactions on Numerical Analysis. v 29. 2007.
+    /// For $k = 0$ this is [`CauchyExpm::matexp_dense_cauchy`]. For $k \ge 1$ the
+    /// matrix $A \thinspace dt$ is embedded in an $n(k+1) \times n(k+1)$ block matrix
+    /// whose exponential contains $\varphi_k(A \thinspace dt)$ in its top-right block, and
+    /// the exponential is computed by the contour integral.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - dense square matrix $A$
+    /// * `dt` - real time step scale factor
+    /// * `k` - phi-function order
+    ///
+    /// # Returns
+    ///
+    /// The dense real matrix approximating $\varphi_k(A \thinspace dt)$.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a` is not square.
+    ///
+    /// # References
+    ///
+    /// * T. Schmelzer, L. N. Trefethen, "Evaluating matrix functions for
+    ///   exponential integrators via Caratheodory-Fejer approximation and
+    ///   contour integrals", Electronic Transactions on Numerical Analysis 29
+    ///   (2007) 1-18.
     pub fn phik_dense_cauchy(&self, a: MatRef<T>, dt: f64, k: usize) -> Mat<T> {
         match k {
             0 => self.matexp_dense_cauchy(a, dt),
@@ -133,17 +226,63 @@ where
         }
     }
 
-    /// Computes exp(A*dt)*v0 for dense A.  Alias to phik_dense_apply_cauchy with k=0.
+    /// Computes $\exp(A \thinspace dt) v_0$ for a dense matrix `A`.
+    ///
+    /// Alias to [`CauchyExpm::phik_dense_apply_cauchy`] with $k = 0$.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - dense square matrix $A$
+    /// * `dt` - real time step scale factor
+    /// * `v0` - the vector (single column) to which the matrix exponential is applied
+    ///
+    /// # Returns
+    ///
+    /// The vector $\exp(A \thinspace dt) v_0$.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `v0` does not have exactly one column.
     pub fn matexp_dense_apply_cauchy(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>) -> Mat<T> {
         self.phik_dense_apply_cauchy(a, dt, v0, vec![0])
     }
 
-    /// Computes [phi_0(dt*A) * v0 + phi_1(dt*A) * v1 + ... phi_k(dt*A) * vk]
-    /// with a single solve with multiple RHS.
+    /// Computes a linear combination of phi-function vector products.
     ///
-    /// T. Schmelzer and L. Trefethen. Evaluating Matrix Functions for
-    /// Exponential Integrators via Caratheodory-Fejer Approximation
-    /// and Contour Integrals. Electronic Transactions on Numerical Analysis. v 29. 2007.
+    /// Evaluates
+    ///
+    /// $$ \sum_j \varphi_{k_j}(dt \thinspace A) \thinspace v_j $$
+    ///
+    /// where $k_j$ is `ks[j]` and $v_j$ is column `j` of `vb`. For each pole a
+    /// single linear solve with multiple right hand sides is performed, and the
+    /// columns are combined with the coefficients $2 \alpha_i / \theta_i^{k_j}$.
+    /// The offset $\alpha_0$ is applied only to the columns with $k_j = 0$.
+    ///
+    /// If [`DensePhikvEvaluator::apply_prepare`] has been called, the cached LU
+    /// factors are used and `a` and `dt` are ignored. The caller must
+    /// call `apply_prepare` again whenever `a` or `dt` change.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - dense square matrix $A$
+    /// * `dt` - real time step scale factor
+    /// * `vb` - matrix whose columns are the vectors $v_j$
+    /// * `ks` - the phi-function orders $k_j$, one per column of `vb`
+    ///
+    /// # Returns
+    ///
+    /// A single column vector holding the summed product.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of columns of `vb` differs from `ks.len()`.
+    ///
+    /// # References
+    ///
+    /// * T. Schmelzer, L. N. Trefethen, "Evaluating matrix functions for
+    ///   exponential integrators via Caratheodory-Fejer approximation and
+    ///   contour integrals", Electronic Transactions on Numerical Analysis 29
+    ///   (2007) 1-18.
     pub fn phik_dense_apply_cauchy(
         &self,
         a: MatRef<T>,
@@ -259,9 +398,31 @@ fn cast_c<T: Float>(m: MatRef<c64>) -> Mat<Complex<T>> {
     Mat::from_fn(m.nrows(), m.ncols(), |i, j| cast_c1(m[(i, j)]))
 }
 
-/// Generate expm and phi evaluator
-/// Ref:  Pusa, M. Rational Approximations to the Matrix Exponential in Burnup Calculations.
-/// Nuclear Science and Engineering, 169(2), 155–167. https://doi.org/10.13182/NSE10-81
+/// Generates a CRAM matrix exponential and phi-function evaluator.
+///
+/// Builds a [`CauchyExpm`] from the poles and weights of the Chebyshev
+/// rational approximation method (CRAM) to the exponential on the negative
+/// real axis. Only order 16 is currently available, which uses 8 poles in the
+/// upper half plane. The approximation is best suited to matrices with
+/// spectrum near the negative real axis.
+///
+/// # Arguments
+///
+/// * `order` - order of the CRAM approximation; must be 16
+///
+/// # Returns
+///
+/// A [`CauchyExpm`] evaluator with the CRAM poles, weights and offset.
+///
+/// # Panics
+///
+/// Panics if `order` is not 16.
+///
+/// # References
+///
+/// * M. Pusa, "Rational approximations to the matrix exponential in burnup
+///   calculations", Nuclear Science and Engineering 169(2) (2011) 155-167,
+///   doi:10.13182/NSE10-81.
 pub fn gen_cram_expm<T>(order: usize) -> CauchyExpm<T>
 where
     T: RealField + Float + Send + Sync,
@@ -297,7 +458,28 @@ where
     CauchyExpm::new(cast_c(theta.as_ref()).as_ref(), cast_c(alpha.as_ref()).as_ref(), cast_c1(alpha_0_cram))
 }
 
-/// Generate expm and phi evaluator
+/// Generates a contour integral evaluator on a parabolic contour.
+///
+/// Builds a [`CauchyExpm`] whose poles are the points
+///
+/// $$ z(\vartheta) = N \left( 0.1309 - 0.1194 \vartheta^2 + 0.25 i \vartheta \right) $$
+///
+/// evaluated at $\vartheta_j = \pi (2j - 1) / N$ for $j = 1, \ldots, N/2$, where
+/// $N$ is `order`. The weights are $\alpha_j = \frac{i}{N} e^{z_j} z^\prime (\vartheta_j)$
+/// (midpoint rule quadrature) and the offset is zero. Only the $N/2$ points in
+/// the upper half plane are stored.
+///
+/// # Arguments
+///
+/// * `order` - number of quadrature points $N$; must be even
+///
+/// # Returns
+///
+/// A [`CauchyExpm`] evaluator with $N/2$ poles.
+///
+/// # Panics
+///
+/// Panics if `order` is odd.
 pub fn gen_parabolic_expm<T>(order: usize) -> CauchyExpm<T>
 where
     T: RealField + Float + Send + Sync,
@@ -409,7 +591,7 @@ mod test_matexp_cauchy {
         // compute phi_k(a*dt)*v0 using pade
         let pade_phi1_av = phi_ext((Scale(dt) * test_a.as_ref()).as_ref(), 1) * v0.as_ref();
 
-        // compute phi_k(a*dt)*v0 using caratheodory-fejer aprroximation
+        // compute phi_k(a*dt)*v0 using caratheodory-fejer approximation
         let cram_phi1_av = cram.apply_phi_k(test_a.as_ref(), dt, v0.as_ref(), 1);
         println!("pade phi1(a*dt)*v0 {:?}", pade_phi1_av.as_ref());
         println!("cram phi1(a*dt)*v0 {:?}", cram_phi1_av.as_ref());
@@ -420,7 +602,7 @@ mod test_matexp_cauchy {
         for k in 0..4 {
             let pade_phik_av = phi_ext((Scale(dt) * test_a.as_ref()).as_ref(), k) * v0.as_ref();
             let cram_phik_av = cram.apply_phi_k(test_a.as_ref(), dt, v0.as_ref(), k);
-            // we expect some accuracy degredation for higher order phi functions
+            // we expect some accuracy degradation for higher order phi functions
             mat_mat_approx_eq(pade_phik_av.as_ref(), cram_phik_av.as_ref(), 1e-10);
         }
     }
@@ -490,7 +672,7 @@ mod test_matexp_cauchy {
         for k in 0..4 {
             let pade_phik_av = phi_ext((Scale(dt) * test_a.as_ref()).as_ref(), k) * v0.as_ref();
             let parabolic_phik_av = parabolic.apply_phi_k(test_a.as_ref(), dt, v0.as_ref(), k);
-            // we expect some accuracy degredation for higher order phi functions
+            // we expect some accuracy degradation for higher order phi functions
             mat_mat_approx_eq(pade_phik_av.as_ref(), parabolic_phik_av.as_ref(), 1e-8);
         }
     }

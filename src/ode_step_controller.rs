@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025,2026 UT-Battelle, LLC
+ * Copyright(c) 2025,2026 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,20 +13,57 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// Time step size controller.
-/// Used with integrators that provided an embedded error estimate
-/// such as exprb32.
-///
+//! Time step size controller.
+//!
+//! Provides the [`TimeStepController`] trait and a simple error-based
+//! implementation, [`BasicStepController`], for use with integrators that provide
+//! an embedded error estimate (such as the EXPRB3 method with a second order
+//! embedded estimate). Given a proposed step, the controller decides whether to
+//! accept it and proposes the next step size.
+//!
+//! The classical step size update is
+//!
+//! $$ \Delta t_{new} = \Delta t \cdot \mathrm{clamp}\left(
+//! \mathrm{safety} \cdot r^{-1/(p+1)}, \thickspace  f_{min}, \thickspace  f_{max} \right),
+//! \qquad r = \frac{\mathrm{err}}{\mathrm{atol} + \mathrm{rtol} \thinspace \Vert y_{n+1}\Vert_\infty} $$
+//!
+//! where $p$ is the method order. The step is accepted if $r \le 1$.
+//!
+//! # References
+//!
+//! * Hairer, E., Norsett, S. P. and Wanner, G., "Solving Ordinary Differential
+//!   Equations I: Nonstiff Problems", 2nd ed., Springer, 1993, section II.4
 use crate::ode_sys::StepResult;
 use faer::prelude::*;
 
 /// Interface for error-based time-step controllers.
 pub trait TimeStepController {
     /// Decide whether a proposed step is accepted and return the next step size.
+    ///
+    /// # Arguments
+    ///
+    /// * `step` - the proposed step, including its embedded error estimate
+    /// * `order` - order of the method used to take the step
+    ///
+    /// # Returns
+    ///
+    /// A tuple `(accepted, next_dt)` where `accepted` is `true` if the step should
+    /// be accepted, and `next_dt` is the proposed size of the next step (to be
+    /// retried if the step was rejected).
     fn control(&self, step: &StepResult<f64, Mat<f64>>, order: usize) -> (bool, f64);
 }
 
 /// Error-based time-step controller for steppers with an error estimate.
+///
+/// The error tolerance for a step is $\mathrm{atol} + \mathrm{rtol} \thinspace \Vert y_{n+1}\Vert_\infty$
+/// and the step is accepted if the error estimate of the stepper does not exceed it.
+/// The step size factor is limited to `[min_factor, max_factor]` and the
+/// resulting step size to `[min_dt, max_dt]`. The sign of the step size is
+/// preserved. Steps that carry no error estimate (`err` is `None`) are always
+/// accepted and the step size is unchanged.
+///
+/// The [`Default`] controller uses `atol = 1e-6`, `rtol = 1e-3`, `safety = 0.9`,
+/// `min_factor = 0.2`, `max_factor = 5.0`, `min_dt = 1e-14` and `max_dt = infinity`.
 pub struct BasicStepController {
     atol: f64,
     rtol: f64,
@@ -39,6 +76,20 @@ pub struct BasicStepController {
 
 impl BasicStepController {
     /// Create a controller with absolute and relative error tolerances.
+    ///
+    /// # Arguments
+    ///
+    /// * `atol` - absolute error tolerance, must be non-negative
+    /// * `rtol` - relative error tolerance, must be non-negative (`atol` and `rtol` must not both be zero)
+    /// * `safety` - safety factor applied to the step size update, in $(0, 1]$
+    /// * `min_factor` - smallest allowed step size change factor, must be positive
+    /// * `max_factor` - largest allowed step size change factor, at least `min_factor`
+    /// * `min_dt` - smallest allowed step size magnitude, must be positive
+    /// * `max_dt` - largest allowed step size magnitude, at least `min_dt`
+    ///
+    /// # Panics
+    ///
+    /// Panics if any of the arguments is outside the ranges given above.
     pub fn new(
         atol: f64,
         rtol: f64,

@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,10 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+//! Arnoldi iteration for building Krylov subspace bases.
+//!
+//! This module provides the Arnoldi process with optional incomplete
+//! orthogonalization for any faer `LinOp` (dense matrices, sparse
+//! matrices, or matrix-free operators). Given an operator $A$ and a starting
+//! vector $b$, the process builds an orthonormal basis $Q_m$ of the Krylov
+//! subspace $$ \mathcal K_m(A, b) = \mathrm{span}\lbrace b, Ab, A^2 b, \ldots, A^{m-1} b\rbrace $$
+//! and an upper Hessenberg matrix $H_m = Q_m^T A Q_m$.
+//!
+//! Key functions:
+//!
+//! * [`arnoldi_lop`] - allocating Arnoldi iteration.
+//! * [`arnoldi_lop_restarted`] - Arnoldi iteration writing into preallocated
+//!   storage, which can be continued from a previous iteration.
+//!
+//! # References
+//!
+//! * Saad, Y. "Analysis of some Krylov subspace approximations to the matrix
+//!   exponential operator", SIAM J. Numer. Anal. 29(1) (1992) 209-228.
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::matrix_free::LinOp;
-/// Contains arnoldi iteration methods
-/// Provides arnoldi methods for both faer LinOp and faer SparseColMat
 use faer::prelude::*;
 use faer_traits::RealField;
 use num_traits::Float;
@@ -26,14 +43,15 @@ use std::cmp;
 
 /// Arnoldi inner iteration with linear operator A
 ///
-/// #Args
+/// # Arguments
+///
 /// * `a_lo` - linear operator, sparse mat or method to apply mat to vec
 /// * `a_lo_scale` - scale factor on the linear operator
 /// * `k` - current krylov iteration
 /// * `n` - max krylov iteration
 /// * `iom` - incomplete ortho depth
 /// * `hs` - upper hessenberg
-/// * `qs` - orthonormal basis of kyrlov subspace
+/// * `qs` - orthonormal basis of krylov subspace
 /// * `extended` - return extended, nonsquare hessenberg
 ///
 fn arnoldi_inner_lop<T>(
@@ -99,14 +117,39 @@ where
     return breakdown_flag;
 }
 
-/// Arnoldi iteration with linear operator A
+/// Arnoldi iteration with linear operator $A$.
 ///
-/// #Args
+/// Builds an orthonormal basis $Q$ of the Krylov subspace
+/// $\mathrm{span}\lbrace b, Ab, A^2 b, \ldots\rbrace $ and the corresponding upper
+/// Hessenberg matrix $H$ such that $H = Q^T A Q$ (with $A$ scaled by
+/// `a_lo_scale`). The starting vector is normalized internally, so the first
+/// column of $Q$ is $b / \Vert b\Vert_2$; the caller is responsible for
+/// re-applying the factor $\Vert b\Vert_2$ when needed.
+///
+/// The iteration stops early on happy breakdown, in which case the returned
+/// matrices are truncated to the number of iterations performed. The
+/// effective Krylov dimension is at most `min(n, b.nrows())`.
+/// If $\Vert b\Vert_2$ is so small that its reciprocal is not finite, the vector
+/// is not normalized.
+///
+/// Only the first column of `b` is used to seed the iteration.
+///
+/// # Arguments
+///
 /// * `a_lo` - linear operator, sparse mat or method to apply mat to vec
 /// * `a_lo_scale` - scale factor on the linear operator
-/// * `b` - initial vector in [b, Ab, A^2b, ...]
+/// * `b` - initial vector $b$ (column) of the Krylov sequence `b, Ab, A^2 b, ...`
 /// * `n` - max krylov iteration
-/// * `iom` - incomplete ortho depth
+/// * `iom` - incomplete ortho depth, i.e. each new vector is orthogonalized
+///   against at most the previous `iom` basis vectors
+///
+/// # Returns
+///
+/// A tuple `(qs, hs, m)` where `qs` is the orthonormal basis (size
+/// `b.nrows()` by `m`), `hs` is the square upper Hessenberg matrix (size `m`
+/// by `m`) and `m` is the number of Arnoldi iterations actually performed
+/// (the Krylov dimension actually reached, less than the requested value
+/// upon happy breakdown).
 pub fn arnoldi_lop<T>(
     a_lo: &dyn LinOp<T>,
     a_lo_scale: T,
@@ -161,24 +204,45 @@ where
     )
 }
 
-/// Arnoldi impl that can be restarted, taking mutable hessenberg
-/// and orthonormal matricies as input and writing into them.
-/// This avoids allocating h, q inside this method, but places
-/// the burden of correctly extracting the upper-left h block
-/// on the caller.
+/// Arnoldi iteration that can be restarted, writing into preallocated storage.
 ///
-/// This is equal to the arnoldi_lop procedure if
-/// i=0 and set n=desired krylov dim.
+/// Takes mutable Hessenberg and orthonormal matrices as input and writes
+/// into them. This avoids allocating $H$ and $Q$ inside this method, but
+/// places the burden of correctly extracting the upper-left $H$ block on the
+/// caller.
 ///
-/// #Args
+/// This is equal to [`arnoldi_lop`] if `i = 0` and `n` is set to the desired
+/// Krylov dimension. To continue a previous run, pass the same `hs` and `qs`
+/// with `i` set to the number of iterations already performed.
+///
+/// Unlike [`arnoldi_lop`], the extended (non-square) Hessenberg entry
+/// `h[k+1, k]` is also written in the final iteration, and the corresponding
+/// basis vector `q[k+1]` is stored, so `qs` must have at least `i + n + 1`
+/// columns.
+///
+/// # Arguments
+///
 /// * `a_lo` - linear operator, sparse mat or method to apply mat to vec
 /// * `a_lo_scale` - scale factor on the linear operator
-/// * `b` - initial vector in [b, Ab, A^2b, ...]
+/// * `b` - initial vector $b$ (column) of the Krylov sequence `b, Ab, A^2 b, ...`.
+///   The normalized $b$ is only written to the first column of `qs` if `i == 0`.
 /// * `hs` - hessenberg matrix. View of mutable matrix
 /// * `qs` - orthonormal matrix. View of mutable matrix
 /// * `i` - index to start from.
 /// * `n` - number of additional arnoldi iterations to compute.
 /// * `iom` - incomplete ortho depth
+///
+/// # Returns
+///
+/// A tuple `(breakdown, m)`. `breakdown` is true if happy breakdown was
+/// detected (or the Krylov dimension reached the problem dimension, or $b$ is
+/// numerically zero). `m` is the total number of Arnoldi iterations performed
+/// so far, i.e. `i` plus the number of iterations run in this call.
+///
+/// # Panics
+///
+/// Panics if `hs` is not square, if `hs.ncols() <= i + n`, or if
+/// `qs.nrows() != b.nrows()`.
 ///
 pub fn arnoldi_lop_restarted<T>(
     a_lo: &dyn LinOp<T>,

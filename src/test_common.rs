@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,21 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+//! Test and example helpers: small ODE systems (quadratic, Lotka-Volterra, Bateman) and test matrices.
 use crate::ode_sys::*;
 use crate::ode_utils::{bateman_sys_rhs, lv_sys_jac, lv_sys_rhs};
 use faer::matrix_free::LinOp;
-/// Common structs and methods for testing
 use faer::prelude::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::marker::PhantomData;
 
-/// System with quadratic rhs for testing
+/// Test system with quadratic rhs $f(x) = x x - 1$, with zeros at $x = \pm 1$ (intended for 1x1 states).
 pub struct TestQuadSys<'a> {
     _sys_x: Mat<f64>,
     phantom: PhantomData<&'a ()>,
 }
 impl<'a> TestQuadSys<'a> {
+    /// Create the system from a state matrix (stored but not used by the rhs).
     pub fn new(sys_x: Mat<f64>) -> Self {
         Self {
             _sys_x: sys_x,
@@ -50,11 +51,12 @@ impl<'a> OdeSys<'a> for TestQuadSys<'a> {
     }
 }
 
-/// Lotka-volterra system with finite diff jacobian
+/// Lotka-Volterra system ([`lv_sys_rhs`]) with a finite difference Jacobian.
 pub struct TestLvFdSys<'a> {
     phantom: PhantomData<&'a ()>,
 }
 impl<'a> TestLvFdSys<'a> {
+    /// Create the Lotka-Volterra system.
     pub fn new() -> Self {
         Self {
             phantom: Default::default(),
@@ -70,11 +72,12 @@ impl<'a> OdeSys<'a> for TestLvFdSys<'a> {
     }
 }
 
-/// Lotka-volterra system with exact jacobian
+/// Lotka-Volterra system ([`lv_sys_rhs`]) with the exact Jacobian [`lv_sys_jac`].
 pub struct TestLvSys<'a> {
     phantom: PhantomData<&'a ()>,
 }
 impl<'a> TestLvSys<'a> {
+    /// Create the Lotka-Volterra system.
     pub fn new() -> Self {
         Self {
             phantom: Default::default(),
@@ -90,11 +93,12 @@ impl<'a> OdeSys<'a> for TestLvSys<'a> {
     }
 }
 
-/// Bateman system with finite diff jacobian
+/// Linear Bateman-type system ([`bateman_sys_rhs`]) with a finite difference Jacobian.
 pub struct TestBatemanFdSys<'a> {
     phantom: PhantomData<&'a ()>,
 }
 impl<'a> TestBatemanFdSys<'a> {
+    /// Create the Bateman system.
     pub fn new() -> Self {
         Self {
             phantom: Default::default(),
@@ -110,7 +114,7 @@ impl<'a> OdeSys<'a> for TestBatemanFdSys<'a> {
     }
 }
 
-/// Simple test matrix for matexp tests for real eigs
+/// Test $3 \times 3$ lower bidiagonal matrix with real eigenvalues $-0.1, -1, -10^{-3}$ and a test vector.
 pub fn gen_test_a() -> (Mat<f64>, Mat<f64>) {
     // Generate a test 3x3 matrix with pure real eigs
     let test_m = faer::mat![
@@ -123,7 +127,7 @@ pub fn gen_test_a() -> (Mat<f64>, Mat<f64>) {
     (test_m, test_v)
 }
 
-/// Simple test matrix for matexp routines for complex eigs
+/// Test $3 \times 3$ matrix with one real and one complex conjugate eigenvalue pair, and a test vector.
 pub fn gen_test_b() -> (Mat<f64>, Mat<f64>) {
     // Generate a test 3x3 matrix with one real eig and
     // conjugate complex eigen pair
@@ -142,7 +146,11 @@ pub fn gen_test_b() -> (Mat<f64>, Mat<f64>) {
     (test_m, test_v)
 }
 
-/// Larger test matrix for matexp routines
+/// Test $n \times n$ matrix (seeded random $\lambda_i$, diagonal $-\lambda_i$, subdiagonal $\lambda_i$, complex pair from a size 10 coupling of entries $(0,1)$, $(1,0)$) and a random vector.
+///
+/// # Panics
+///
+/// Panics if `n < 2`.
 pub fn gen_test_c(n: usize) -> (Mat<f64>, Mat<f64>) {
     let mut rng = StdRng::seed_from_u64(42);
     let lambda_scale = 1.0;

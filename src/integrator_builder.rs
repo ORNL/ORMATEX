@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,34 @@
  * limitations under the License.
  */
 //! Builders for ORMATEX time integrators.
+//!
+//! This module provides validated, typed builders that construct boxed
+//! integrators ([`BuiltIntegrator`]) for solving $y^\prime  = f(t, y)$. There is one
+//! builder per method family:
+//!
+//! * [`ExplicitIntegratorBuilder`] with [`ExplicitMethod`]: explicit Runge-Kutta
+//!   methods of order 1 to 4.
+//! * [`ImplicitIntegratorBuilder`] with [`ImplicitMethod`]: BDF and DIRK/SDIRK
+//!   methods that solve stage equations with a Newton-Krylov iteration.
+//! * [`ExponentialIntegratorBuilder`] with [`ExponentialMethod`]: exponential
+//!   time integrators (EPI and exponential Rosenbrock) whose
+//!   $\varphi_k$-function vector products are computed by an
+//!   [`ExponentialEvaluator`] (Krylov, Leja, or Taylor; see [`KrylovOptions`],
+//!   [`LejaOptions`], [`TaylorOptions`]).
+//!
+//! Each builder validates its options in `build()` and reports problems as an
+//! [`IntegratorBuildError`] instead of panicking. Method names can be parsed from
+//! strings with `FromStr` (case insensitive), which is used by the python
+//! bindings in `ormatex_rspy`.
+//!
+//! # References
+//!
+//! * Hairer, E., Norsett, S. P., Wanner, G. Solving Ordinary Differential
+//!   Equations I: Nonstiff Problems. Springer, 1993.
+//! * Hairer, E., Wanner, G. Solving Ordinary Differential Equations II: Stiff
+//!   and Differential-Algebraic Problems. Springer, 1996.
+//! * Hochbruck, M., Ostermann, A. Exponential integrators. Acta Numerica 19
+//!   (2010) 209-286. doi:10.1017/S0962492910000048
 mod exponential;
 mod explicit;
 mod implicit;
@@ -32,17 +60,30 @@ pub use exponential::{
 pub use explicit::{ExplicitIntegratorBuilder, ExplicitMethod};
 pub use implicit::{ImplicitIntegratorBuilder, ImplicitMethod};
 
-/// A constructed ORMATEX time integrator.
+/// A constructed, type-erased ORMATEX time integrator.
+///
+/// Boxed [`IntegrateSys`] trait object with time type `f64` and dense
+/// state type `Mat<f64>`. Returned by the `build()` method of every
+/// integrator builder.
 pub type BuiltIntegrator =
     Box<dyn IntegrateSys<'static, TimeType = f64, SysStateType = Mat<f64>>>;
 
 /// Error returned when an integrator configuration is invalid.
+///
+/// Produced by the `build()` methods of the integrator builders and by the
+/// `FromStr` implementations of the method enums (unknown method name). The
+/// human readable reason is available through `Display`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntegratorBuildError {
     message: String,
 }
 
 impl IntegratorBuildError {
+    /// Create an error from a message describing the invalid configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - human readable description of the problem
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -58,6 +99,17 @@ impl fmt::Display for IntegratorBuildError {
 
 impl Error for IntegratorBuildError {}
 
+/// Check that a named option is finite and strictly positive.
+///
+/// # Arguments
+///
+/// * `name` - option name used in the error message
+/// * `value` - value to validate
+///
+/// # Errors
+///
+/// Returns an [`IntegratorBuildError`] if `value` is NaN, infinite, or
+/// $\le 0$.
 pub(crate) fn positive_f64(name: &str, value: f64) -> Result<(), IntegratorBuildError> {
     if value.is_finite() && value > 0.0 {
         Ok(())
@@ -68,6 +120,17 @@ pub(crate) fn positive_f64(name: &str, value: f64) -> Result<(), IntegratorBuild
     }
 }
 
+/// Check that a named option is finite and non-negative.
+///
+/// # Arguments
+///
+/// * `name` - option name used in the error message
+/// * `value` - value to validate
+///
+/// # Errors
+///
+/// Returns an [`IntegratorBuildError`] if `value` is NaN, infinite, or
+/// $< 0$.
 pub(crate) fn nonnegative_f64(name: &str, value: f64) -> Result<(), IntegratorBuildError> {
     if value.is_finite() && value >= 0.0 {
         Ok(())

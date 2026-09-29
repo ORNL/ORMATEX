@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-//! Krylov matrix exponential methods for faer LinOps
+//! Krylov subspace matrix exponential and phi-function methods for linear operators.
+//!
+//! [`KrylovExpm`] approximates phi-function vector products $\varphi_k(A \thinspace dt) v$
+//! for a matrix-free linear operator $A$ by projecting onto the Krylov subspace
+//! $\mathcal K_m(A, v) = \mathrm{span}\lbrace v, Av, \ldots, A^{m-1}v\rbrace $ with an
+//! Arnoldi iteration. With the Arnoldi relation $A Q_m = Q_{m+1} \bar H_m$,
+//! the approximation is
+//!
+//! $$ \varphi_k(A \thinspace dt) v \approx \Vert v\Vert_2 \thinspace Q \thinspace \varphi_k(dt \thinspace H) \thinspace e_1 $$
+//!
+//! where the small dense Hessenberg matrix function is evaluated by a
+//! [`crate::matexp_traits::DensePhikvEvaluator`] (Pade, Taylor, Cauchy, ...).
+//! The module provides a fixed dimension evaluation, an adaptive Krylov
+//! dimension evaluation driven by an error estimate, and the evaluation of
+//! linear combinations of phi-functions through an extended (augmented) linear
+//! operator, which requires only a single exponential.
+//! [`KrylovExpm`] implements [`crate::matexp_traits::LinOpPhikvEvaluator`].
+//!
+//! # References
+//!
+//! * Y. Saad, "Analysis of some Krylov subspace approximations to the matrix
+//!   exponential operator", SIAM J. Numer. Anal. 29(1) (1992) 209-228.
+//! * S. Gaudreault, G. Rainwater, M. Tokman, "KIOPS: A fast adaptive Krylov
+//!   subspace solver for exponential integrators", J. Comput. Phys. 372 (2018)
+//!   236-255, doi:10.1016/j.jcp.2018.06.026.
+//! * M. Caliari, F. Cassini, F. Zivcovich, "BAMPHI: Chebyshev and rational
+//!   approximations of phi-functions applied to vectors", J. Comput. Appl.
+//!   Math. 423 (2023) 114973.
 use crate::arnoldi::{arnoldi_lop, arnoldi_lop_restarted};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use crate::ode_sys::DynRefExtendedLinOp;
@@ -21,8 +48,14 @@ use faer::matrix_free::LinOp;
 use faer::prelude::*;
 use std::cmp::{max, min};
 
-/// Krylov methods to compute Sparse Matrix Exponential
-/// and Phi functions
+/// Krylov methods to compute the sparse (matrix-free) matrix exponential
+/// and phi-function vector products.
+///
+/// Holds the Krylov dimension state (current, maximum, adaptive increment and
+/// lookback), the incomplete orthogonalization depth, the tolerance, and
+/// work storage for the Arnoldi basis and Hessenberg matrix. The adaptive
+/// evaluation updates the current Krylov dimension, so it persists between
+/// calls.
 pub struct KrylovExpm {
     /// dense matrix exponential and phi function evaluator
     expmv: Box<dyn DensePhikvEvaluator>,
@@ -32,12 +65,13 @@ pub struct KrylovExpm {
     krylov_dim_max: usize,
     /// krylov dim increment used in adaptive krylov subspace method
     krylov_dim_inc: usize,
-    /// number of krylov steps to lookback over in adaptive kyrlov logic
+    /// number of krylov steps to lookback over in adaptive krylov logic
     krylov_dim_lookback: usize,
     /// incomplete ortho depth
     iom: usize,
     /// storage for tmp hessenberg
     hs: Mat<f64>,
+    /// storage for tmp orthonormal krylov basis
     qs: Mat<f64>,
     /// tolerance
     tol: f64,
@@ -46,6 +80,23 @@ pub struct KrylovExpm {
 }
 
 impl KrylovExpm {
+    /// Creates a new Krylov phi-function evaluator.
+    ///
+    /// The adaptive dimension increment defaults to 20 and the lookback
+    /// to 10, and verbosity is off. See [`KrylovExpm::set_krylov_dim_inc`],
+    /// [`KrylovExpm::set_krylov_dim_lookback`] and [`KrylovExpm::set_verbosity`].
+    ///
+    /// # Arguments
+    ///
+    /// * `expmv` - dense evaluator used for the phi-function of the small Hessenberg matrix
+    /// * `m` - initial Krylov subspace dimension
+    /// * `krylov_dim_max` - maximum Krylov subspace dimension
+    /// * `tol` - tolerance on the error estimate of the adaptive method
+    /// * `iom_in` - incomplete orthogonalization depth; defaults to 2 if `None`
+    ///
+    /// # Panics
+    ///
+    /// Panics if `krylov_dim_max` is zero or if `m > krylov_dim_max`.
     pub fn new(
         expmv: Box<dyn DensePhikvEvaluator>,
         m: usize,
@@ -69,41 +120,81 @@ impl KrylovExpm {
         }
     }
 
-    /// Set extra verbosity for additional stdout output
+    /// Sets extra verbosity for additional stdout output.
+    ///
+    /// # Arguments
+    ///
+    /// * `verbose` - if true, the adaptive method prints error estimates
     pub fn set_verbosity(&mut self, verbose: bool) {
         self.verbose = verbose;
     }
 
-    /// Set adaptive krylov dimension increment
+    /// Sets the adaptive Krylov dimension increment.
+    ///
+    /// # Arguments
+    ///
+    /// * `krylov_dim_inc` - number of Arnoldi iterations added per adaptive step
     pub fn set_krylov_dim_inc(&mut self, krylov_dim_inc: usize) {
         self.krylov_dim_inc = krylov_dim_inc;
     }
 
-    /// Set adaptive krylov dimension lookback
+    /// Sets the adaptive Krylov dimension lookback.
+    ///
+    /// # Arguments
+    ///
+    /// * `krylov_dim_lookback` - number of trailing Krylov steps over which the
+    ///   error estimate is examined (values below 2 are treated as 2)
     pub fn set_krylov_dim_lookback(&mut self, krylov_dim_lookback: usize) {
         self.krylov_dim_lookback = krylov_dim_lookback;
     }
 
-    /// Computes exp(A*dt)*v0 when A is a linear operator.
-    /// Alias to apply_phik_linop with k=0.
+    /// Computes $\exp(A \thinspace dt) v_0$ when `A` is a linear operator.
     ///
-    /// Args:
-    /// * `a_lo` - Linear operator, A
-    /// * `dt` - time step scale.
+    /// Alias to [`KrylovExpm::apply_phik_linop`] with $k = 0$.
+    ///
+    /// # Arguments
+    ///
+    /// * `a_lo` - Linear operator, $A$
+    /// * `dt` - time step scale
     /// * `v0` - the vector to which the matrix exponential is applied
     ///
+    /// # Returns
+    ///
+    /// The approximation of $\exp(A \thinspace dt) v_0$.
     pub fn apply_linop(&mut self, a_lo: &dyn LinOp<f64>, dt: f64, v0: MatRef<f64>) -> Mat<f64> {
         self.apply_phik_linop(a_lo, dt, v0, 0)
     }
 
-    /// Computes phi_k(A*dt) * v0 where A is a LinOp and
-    /// adapts the krylov dimension.
+    /// Computes $\varphi_k(A \thinspace dt) v_0$ where `A` is a linear operator, adapting
+    /// the Krylov dimension.
     ///
-    /// Args:
-    /// * `a_lo` - Linear operator, A
-    /// * `dt` - time step scale.
+    /// Runs Arnoldi iterations up to the current Krylov dimension, evaluates
+    /// the approximation $\Vert v_0\Vert_2 \thinspace Q \thinspace \varphi_k(H) \thinspace e_1$ using the leading
+    /// $(m+1) \times (m+1)$ block of the Hessenberg matrix, and estimates the
+    /// error from the norm of the contribution of the last $p$ Krylov basis
+    /// vectors, $p = 1, \ldots, $ `krylov_dim_lookback`. If the estimate does not
+    /// meet the tolerance, more Arnoldi iterations are added
+    /// (by at most `krylov_dim_inc`, limited by the available storage) and the
+    /// evaluation is repeated. When converged, the stored Krylov dimension
+    /// is reset to the smallest tail dimension that met the tolerance plus a
+    /// buffer of 2, for use by later calls. The loop also terminates once the
+    /// maximum Krylov dimension is reached, in which case the result may not
+    /// satisfy the tolerance and no error is returned.
+    ///
+    /// This method mutates the stored Krylov dimension and work storage,
+    /// and prints a summary (convergence, dimension, error estimate and
+    /// timing) to stdout.
+    ///
+    /// # Arguments
+    ///
+    /// * `a_lo` - Linear operator, $A$
+    /// * `dt` - time step scale
     /// * `v0` - the vector to which the matrix phi-function is applied
     /// * `k` - the phi function order
+    ///
+    /// # Returns
+    ///
+    /// The approximation of $\varphi_k(A \thinspace dt) v_0$.
     pub fn apply_phik_linop_adapt(
         &mut self,
         a_lo: &dyn LinOp<f64>,
@@ -232,13 +323,23 @@ impl KrylovExpm {
         res
     }
 
-    /// Computes phi_k(A*dt) * v0 where A is a LinOp
+    /// Computes $\varphi_k(A \thinspace dt) v_0$ where `A` is a linear operator.
     ///
-    /// Args:
-    /// * `a_lo` - Linear operator, A
-    /// * `dt` - time step scale.
+    /// Uses a fixed Krylov dimension (the current dimension `m`) and no
+    /// error control. The Arnoldi iteration is run on $A$ and the time step
+    /// `dt` is applied in the dense evaluation of the Hessenberg matrix
+    /// phi-function.
+    ///
+    /// # Arguments
+    ///
+    /// * `a_lo` - Linear operator, $A$
+    /// * `dt` - time step scale
     /// * `v0` - the vector to which the matrix phi-function is applied
     /// * `k` - the phi function order
+    ///
+    /// # Returns
+    ///
+    /// The approximation of $\varphi_k(A \thinspace dt) v_0$.
     pub fn apply_phik_linop(
         &self,
         a_lo: &dyn LinOp<f64>,
@@ -254,25 +355,44 @@ impl KrylovExpm {
             * (q.as_ref() * self.expmv.apply_phi_k(h.as_ref(), dt, unit_vec.as_ref(), k));
     }
 
-    /// This method evaluates linear combinations
-    /// of phi functions using only a single matexp call, thus reducing the
-    /// number of calls to arnoldi.
+    /// Evaluates a linear combination of phi-functions applied to vectors.
     ///
-    /// S. Gaudreault, G. Rainwater, and M. Tokman.
-    /// "KIOPS: A fast adaptive Krylov subspace solver for exponential integrators."
-    /// Journal of Computational Physics 372 (2018): 236-255.
+    /// Computes
     ///
-    /// NOTE: Currently krylov apply_phik_linop_adapt implements an
-    /// adptive krylov subspace dimension procedure via the
+    /// $$ \sum_{j=0}^{n} \varphi_j(\tau A) \thinspace v_j $$
+    ///
+    /// using only a single phi-function (matrix exponential) evaluation on an
+    /// extended (augmented) linear operator, thus reducing the number of
+    /// calls to Arnoldi. The extended right hand side is built by
+    /// `ext_a_lo.get_v(vb)`, $\varphi_0(\tau A_{ext})$ is applied to it with
+    /// [`KrylovExpm::apply_phik_linop_adapt`], and the first $n_{rows}$ rows of
+    /// the result (the size of `vb[0]`) are returned.
+    ///
+    /// NOTE: Currently `apply_phik_linop_adapt` implements an
+    /// adaptive Krylov subspace dimension procedure via the
     /// error estimate noted in the reference.
     /// TODO: Implement substepping adaptivity.
     ///
-    /// Args:
-    /// * `ext_a_lo` - Linear operator, A, in [phi_0(A*tau) * v_0 + phi_1(A*tau) * v_1 + ...]
-    /// * `tau` - time step scale.
-    /// * `vb` - Vec of rhs, [v0, ..vn] in
-    ///          [phi_0(A*tau)*v_0 + ..., phi_n(A*tau)*v_n]
+    /// # Arguments
     ///
+    /// * `ext_a_lo` - Extended linear operator built from $A$ and the vectors
+    ///   $v_1, \ldots, v_n$. It carries its own time scale, so `tau` is normally 1.0.
+    /// * `tau` - additional time step scale applied to `ext_a_lo`
+    /// * `vb` - Vec of right hand sides $[v_0, \ldots, v_n]$ in
+    ///   $\sum_{j=0}^{n} \varphi_j(A \tau) v_j$
+    ///
+    /// # Returns
+    ///
+    /// A column vector with the same number of rows as `vb[0]`.
+    ///
+    /// # References
+    ///
+    /// * S. Gaudreault, G. Rainwater, M. Tokman, "KIOPS: A fast adaptive Krylov
+    ///   subspace solver for exponential integrators", J. Comput. Phys. 372
+    ///   (2018) 236-255, doi:10.1016/j.jcp.2018.06.026.
+    /// * M. Caliari, F. Cassini, F. Zivcovich, "BAMPHI: Chebyshev and rational
+    ///   approximations of phi-functions applied to vectors", J. Comput. Appl.
+    ///   Math. 423 (2023) 114973.
     pub fn apply_linop_ext(
         &mut self,
         ext_a_lo: &DynRefExtendedLinOp,

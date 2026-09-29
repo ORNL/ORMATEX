@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,19 +13,57 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+//! Explicit Runge-Kutta time integrators.
+//!
+//! Provides the classical explicit Runge-Kutta methods of order 1 to 4 for
+//! the system $y^\prime  = f(t, y)$. The methods are defined by a Butcher tableau
+//! ([`BT`], built by [`bt_factory`]) and applied by [`RkIntegrator`], which
+//! implements [`crate::ode_traits::IntegrateSys`]. The methods use a fixed step
+//! size and provide no embedded error estimate. A mass matrix supplied by
+//! `OdeSys::fmass` is ignored.
+//!
+//! An $s$-stage explicit method advances the solution by
+//!
+//! $$ k_i = f\left(t_n + c_i \Delta t, \thickspace y_n + \Delta t \sum_{j<i} a_{ij} k_j\right),
+//! \qquad y_{n+1} = y_n + \Delta t \sum_{i=1}^{s} b_i k_i $$
+//!
+//! # References
+//!
+//! * Hairer, E., Norsett, S. P. and Wanner, G., "Solving Ordinary Differential
+//!   Equations I: Nonstiff Problems", 2nd ed., Springer Series in Computational
+//!   Mathematics 8, Springer, 1993
 use crate::ode_sys::*;
 use crate::ode_traits::IntegrateSys;
-/// Runge-Kutta explicit integrators
 use faer::prelude::*;
 use std::collections::VecDeque;
 
+/// Butcher tableau of an explicit Runge-Kutta method.
+///
+/// Stores the nodes `c`, weights `b` and the strictly lower triangular part of
+/// the coefficient matrix `a`. Row `i` of `a` holds the coefficients $a_{i+1, j}$
+/// for stage $i+1$, so `a` has `s - 1` rows for an $s$-stage method.
 pub struct BT {
     c: Vec<f64>,
     b: Vec<f64>,
     a: Vec<Vec<f64>>,
 }
 
-/// Butcher tableau
+/// Build the Butcher tableau of an explicit Runge-Kutta method.
+///
+/// Supported orders (with the number of stages equal to the order):
+///
+/// * 4 - classical RK4
+/// * 3 - Kutta's third order method
+/// * 2 - explicit midpoint method
+/// * any other value - explicit (forward) Euler, order 1
+///
+/// # Arguments
+///
+/// * `order` - order of the method
+///
+/// # Returns
+///
+/// The tableau [`BT`] of the requested method.
 pub fn bt_factory(order: usize) -> BT {
     match order {
         // RK4
@@ -59,7 +97,10 @@ pub fn bt_factory(order: usize) -> BT {
     }
 }
 
-/// Runga-Kutta ode intergrator
+/// Explicit Runge-Kutta ODE integrator with fixed step size.
+///
+/// Implements [`crate::ode_traits::IntegrateSys`]. Steps return no error estimate
+/// (`err` is `None`).
 pub struct RkIntegrator {
     /// Order
     order: usize,
@@ -75,6 +116,17 @@ pub struct RkIntegrator {
 }
 
 impl RkIntegrator {
+    /// Set the initial conditions and create a Runge-Kutta integrator.
+    ///
+    /// # Arguments
+    ///
+    /// * `t0` - initial time
+    /// * `y0` - initial state
+    /// * `order` - order of the method, one of 1, 2, 3 or 4
+    ///
+    /// # Panics
+    ///
+    /// Panics if `order` is not in 1 to 4.
     pub fn new(t0: f64, y0: MatRef<f64>, order: usize) -> Self {
         let mut y_hist = VecDeque::with_capacity(order);
         y_hist.push_front(y0.to_owned());
@@ -93,6 +145,23 @@ impl RkIntegrator {
         }
     }
 
+    /// Compute one explicit Runge-Kutta step of size `dt` from the current state.
+    ///
+    /// Does not modify the integrator; the result must be passed to
+    /// `accept_step` to be recorded.
+    ///
+    /// # Arguments
+    ///
+    /// * `sys` - the ODE system, only `frhs` is used
+    /// * `dt` - time step size
+    ///
+    /// # Returns
+    ///
+    /// The proposed step with `err` set to `None`.
+    ///
+    /// # Errors
+    ///
+    /// Currently never returns an error.
     pub fn step_rk<'b>(
         &self,
         sys: &'b dyn OdeSys<'b>,

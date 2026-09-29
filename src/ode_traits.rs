@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025,2026 UT-Battelle, LLC
+ * Copyright(c) 2025,2026 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+//! Common traits implemented by the ODE time integrators.
+//!
+//! This module defines [`IntegrateSys`], the interface shared by all time
+//! integrators (step, accept, reset), and [`StepperExponential`], a helper trait
+//! that provides the finite difference time derivative and the nonlinear
+//! remainder used by exponential integrators such as EPI and EXPRB methods.
+//!
+//! # References
+//!
+//! * Hochbruck, M. and Ostermann, A., "Exponential integrators",
+//!   Acta Numerica 19 (2010) 209-286, doi:10.1017/S0962492910000048
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::matrix_free::LinOp;
 use faer::prelude::*;
@@ -20,35 +31,92 @@ use faer::prelude::*;
 use crate::ode_sys::{OdeSys, StepError, StepResult};
 
 /// Common interface for ODE integrators.
+///
+/// An integrator holds the current time and state (and any history needed by
+/// multistep methods). A step is first proposed with [`IntegrateSys::step`]
+/// and only recorded once it is passed to [`IntegrateSys::accept_step`], which
+/// allows a step size controller to reject a step and retry with a smaller `dt`.
 pub trait IntegrateSys<'a> {
+    /// Type used to represent time (typically `f64`)
     type TimeType;
+    /// Type used to represent the system state (typically `faer::Mat<f64>`)
     type SysStateType;
 
-    /// Step solution forward by dt, proposes a new state.
-    /// This may outright fail due to numerical issue
+    /// Step solution forward by `dt`, proposes a new state.
+    ///
+    /// This does not modify the recorded solution history. It may outright fail
+    /// due to a numerical issue.
+    ///
+    /// # Arguments
+    ///
+    /// * `sys` - the ODE system to integrate
+    /// * `dt` - time step size
+    ///
+    /// # Returns
+    ///
+    /// The proposed [`StepResult`] (new time, state and optional error estimate).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`StepError`] if the step fails.
     fn step<'b>(
         &mut self,
         sys: &'b dyn OdeSys<'b>,
         dt: Self::TimeType,
     ) -> Result<StepResult<Self::TimeType, Self::SysStateType>, StepError>;
 
-    /// Get current time
+    /// Get current (accepted) time.
     fn time(&self) -> Self::TimeType;
 
-    /// Get current system state
+    /// Get current (accepted) system state.
     fn state(&self) -> Self::SysStateType;
 
     /// Accepts the proposed new time and state.
+    ///
     /// Records accepted state into solution history.
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - a step result previously returned by [`IntegrateSys::step`]
     fn accept_step(&mut self, s: StepResult<Self::TimeType, Self::SysStateType>);
 
-    /// Reset integrator. Removes solution history
+    /// Reset integrator. Removes solution history.
+    ///
+    /// # Arguments
+    ///
+    /// * `t0` - new initial time
+    /// * `y0` - new initial state
     fn reset_ic(&mut self, t0: Self::TimeType, y0: Self::SysStateType);
 }
 
-/// Trait for exponential time integration implementors
+/// Trait for exponential time integration implementors.
+///
+/// Provides default helper methods shared by exponential integrators, which
+/// linearize the system about the current state $y_0$ as
+///
+/// $$ f(t, y) = f(t_0, y_0) + J (y - y_0) + (t - t_0) v + R(t, y) $$
+///
+/// where $J$ is the Jacobian, $v = \partial f / \partial t$ is the time
+/// derivative of the rhs (nonautonomous correction) and $R$ is the nonlinear
+/// remainder.
 pub trait StepperExponential {
     /// Estimate the time derivative of the RHS by a forward finite difference.
+    ///
+    /// Computes
+    ///
+    /// $$ v \approx \frac{f(t_0 + \delta t, y_0) - f(t_0, y_0)}{\delta t} $$
+    ///
+    /// # Arguments
+    ///
+    /// * `sys` - the ODE system
+    /// * `t0` - current time
+    /// * `y0` - current state
+    /// * `frhs_y0` - the rhs already evaluated at $(t_0, y_0)$
+    /// * `del_t` - finite difference step in time, $\delta t$
+    ///
+    /// # Returns
+    ///
+    /// The estimate of $\partial f / \partial t$ at $(t_0, y_0)$.
     fn frhs_fdt(
         &self,
         sys: &dyn OdeSys<'_>,
@@ -61,6 +129,30 @@ pub trait StepperExponential {
         (frhs_t1 - frhs_y0) / Scale(del_t)
     }
 
+    /// Compute the nonlinear remainder of the rhs at a point $(t_r, y_r)$.
+    ///
+    /// Evaluates
+    ///
+    /// $$ R(t_r, y_r) = f(t_r, y_r) - f(t_0, y_0) - J (y_r - y_0) - (t_r - t_0) v $$
+    ///
+    /// where $J$ is the Jacobian at $(t_0, y_0)$ and $v$ is the (optional)
+    /// time derivative of the rhs. This is the quantity appended to the
+    /// $\varphi_k$ terms in EPI and EXPRB methods.
+    ///
+    /// # Arguments
+    ///
+    /// * `sys` - the ODE system
+    /// * `t0` - linearization time
+    /// * `y0` - linearization state
+    /// * `tr` - time at which to evaluate the remainder
+    /// * `yr` - state at which to evaluate the remainder
+    /// * `frhs_y0` - the rhs already evaluated at $(t_0, y_0)$
+    /// * `sys_jac_lop_y0` - the Jacobian operator $J$ at $(t_0, y_0)$
+    /// * `v` - optional time derivative of the rhs $v$; `None` is treated as zero
+    ///
+    /// # Returns
+    ///
+    /// The remainder $R(t_r, y_r)$.
     fn remf<'b>(
         &self,
         sys: &'b dyn OdeSys<'b>,

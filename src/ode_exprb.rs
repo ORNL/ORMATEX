@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025,2026 UT-Battelle, LLC
+ * Copyright(c) 2025,2026 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,61 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// Exponential Rosenbrock class of exponential integrators.
+//! Exponential Rosenbrock (EXPRB) exponential integrators.
+//!
+//! Provides [`ExprbIntegrator`], an implementation of the third order
+//! exponential Rosenbrock method EXPRB3 (also known as exprb32) with an
+//! embedded second order error estimate, for the system $y^\prime  = f(t, y)$. The
+//! solution is linearized about the current state $(t_n, y_n)$ as
+//!
+//! $$ f(t, y) = f_n + J_n (y - y_n) + (t - t_n) v_n + R_n(t, y) $$
+//!
+//! where $f_n = f(t_n, y_n)$, $J_n$ is the Jacobian, $v_n = \partial f / \partial t$
+//! is the time derivative of the rhs (nonautonomous correction) and $R_n$ is the
+//! nonlinear remainder. With $h = \Delta t$ and the phi-functions
+//! $\varphi_k(z)$:
+//!
+//! EXPRB2 (exponential Rosenbrock-Euler, also the stage $Y_2$ below):
+//!
+//! $$ y_{n+1} = y_n + h \thinspace \varphi_1(h J_n) f_n + h^2 \varphi_2(h J_n) v_n $$
+//!
+//! EXPRB3, with second order stage $Y_2$ and third order solution $y_{n+1}$:
+//!
+//! $$ Y_2 = y_n + h \thinspace \varphi_1(h J_n) f_n + h^2 \varphi_2(h J_n) v_n $$
+//!
+//! $$ y_{n+1} = Y_2 + 2 h \thinspace \varphi_3(h J_n) R_n(t_n + h, Y_2) $$
+//!
+//! The $v_n$ terms are only included when the nonautonomous correction is
+//! enabled and significant (see [`ExprbIntegrator::with_opt`]). The difference
+//! $y_{n+1} - Y_2$ is used as the embedded error estimate (the norm used is
+//! described in [`ExprbIntegrator`]), which can drive a step size controller
+//! such as [`crate::ode_step_controller::BasicStepController`].
+//!
+//! The first stage is evaluated with a single matrix exponential action of an
+//! extended operator ([`crate::ode_sys::DynRefExtendedLinOp`]) by the
+//! phi-function evaluator ([`crate::matexp_traits::LinOpPhikvEvaluator`]).
+//!
+//! # References
+//!
+//! * Hochbruck, M., Ostermann, A. and Schweitzer, J., "Exponential Rosenbrock-type
+//!   methods", SIAM J. Numer. Anal. 47(1) (2009) 786-803, doi:10.1137/080717717
+//! * Hochbruck, M. and Ostermann, A., "Exponential integrators", Acta Numerica
+//!   19 (2010) 209-286, doi:10.1017/S0962492910000048
 use crate::matexp_traits::LinOpPhikvEvaluator;
 use crate::ode_sys::*;
 use crate::ode_traits::{IntegrateSys, StepperExponential};
 use faer::prelude::*;
 use std::collections::VecDeque;
 
+/// Exponential Rosenbrock (EXPRB3) integrator with embedded error estimate.
+///
+/// Only the method `"exprb3"` is supported. See the module documentation for
+/// the method formulas. Implements [`crate::ode_traits::IntegrateSys`]. Each
+/// step returns an error estimate `err`, computed as the 1-norm of
+/// $y_{n+1} - Y_2$, the difference between the third order solution and the
+/// second order stage.
+///
+/// A mass matrix supplied by `OdeSys::fmass` is ignored.
 pub struct ExprbIntegrator<T: LinOpPhikvEvaluator> {
     /// Matrix exponential evaluator
     expm: T,
@@ -38,6 +86,19 @@ impl<T> ExprbIntegrator<T>
 where
     T: LinOpPhikvEvaluator,
 {
+    /// Set the initial conditions and setup the EXPRB integrator.
+    ///
+    /// # Arguments
+    ///
+    /// * `t0` - initial time
+    /// * `y0` - initial state
+    /// * `method` - method name, must be `"exprb3"`
+    /// * `expm` - phi-function evaluator used to compute the matrix
+    ///   exponential and phi-function products
+    ///
+    /// # Panics
+    ///
+    /// Panics if `method` is not `"exprb3"`.
     pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: T) -> Self {
         assert_eq!(method, "exprb3", "ExprbIntegrator only supports exprb3");
         let mut y_hist = VecDeque::with_capacity(1);
@@ -51,6 +112,24 @@ where
     }
 
     /// Builder function to set optional solver parameters.
+    ///
+    /// Valid options:
+    ///
+    /// * `"tol_fdt"` - tolerance for the nonautonomous correction. If the value
+    ///   is non-negative, the time derivative of the rhs, $v_n$, is estimated
+    ///   with a forward finite difference (time step $10^{-8}$) and the
+    ///   $h^2 \varphi_2(h J_n) v_n$ term is included in the update only if
+    ///   $\Vert v_n\Vert_\infty$ exceeds `tol_fdt`. The default is `-1.0`
+    ///   (disabled, $v_n = 0$).
+    ///
+    /// # Arguments
+    ///
+    /// * `option_str` - name of the option
+    /// * `option_val` - value of the option
+    ///
+    /// # Panics
+    ///
+    /// Panics if `option_str` is not a valid option name.
     pub fn with_opt(mut self, option_str: String, option_val: f64) -> Self {
         match option_str.as_str() {
             "tol_fdt" => self.tol_fdt = option_val,
@@ -59,12 +138,17 @@ where
         self
     }
 
-    /// Exponential Rosenroack order 3 with 2nd order embedded error estimate.
+    /// Exponential Rosenbrock order 3 with 2nd order embedded error estimate.
     ///
-    /// Ref: Hochbruck, Marlis, Alexander Ostermann, and Julia Schweitzer.
-    /// Exponential Rosenbrock-type methods.
-    /// SIAM Journal on Numerical Analysis 47.1 (2009): 786-803.
+    /// $$ Y_2 = y_n + h \thinspace \varphi_1(h J_n) f_n + h^2 \varphi_2(h J_n) v_n $$
+    /// $$ y_{n+1} = Y_2 + 2 h \thinspace \varphi_3(h J_n) R_n(t_n + h, Y_2) $$
     ///
+    /// The error estimate is the 1-norm of $y_{n+1} - Y_2$.
+    ///
+    /// # References
+    ///
+    /// * Hochbruck, M., Ostermann, A. and Schweitzer, J., "Exponential
+    ///   Rosenbrock-type methods", SIAM J. Numer. Anal. 47(1) (2009) 786-803
     fn step_exprb32<'b>(
         &mut self,
         sys: &'b dyn OdeSys<'b>,
