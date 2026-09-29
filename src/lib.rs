@@ -35,7 +35,6 @@
 //! | [`matexp_cauchy`] | Contour integral (CRAM, parabolic contour) via partial fractions | dense matrices with spectrum near the negative real axis |
 //! | [`matexp_krylov`] | Krylov subspace (Arnoldi with optional incomplete orthogonalization) | large sparse or matrix-free operators |
 //! | [`matexp_leja`] | Leja interpolation with divided differences | large sparse or matrix-free operators |
-//! | [`arnoldi`] | Arnoldi iteration used by the Krylov and Leja evaluators | |
 //!
 //! The evaluator interfaces are the traits
 //! [`matexp_traits::DensePhikvEvaluator`] (dense $A$) and
