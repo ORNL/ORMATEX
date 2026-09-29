@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-//! Computes the matrix exponential using a contour integral appraoch
+//! Computes the matrix exponential using a contour integral appraoch for dense faer Mats.
 use crate::mat_utils::{complex_mat_scale, real_mat};
 use crate::matexp_traits::DensePhikvEvaluator;
 use faer::linalg::solvers::{DenseSolveCore, PartialPivLu, Solve};
