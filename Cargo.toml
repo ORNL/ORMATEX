@@ -1,6 +1,6 @@
 [package]
 name = "ormatex"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -48,3 +48,6 @@ module-name = "ormatex"
 profile = "release"
 editable-profile = "release"
 features = ["python"]
+
+[package.metadata.docs.rs]
+rustdoc-args = [ "--html-in-header", "katex.html" ]

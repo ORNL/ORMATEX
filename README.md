@@ -196,7 +196,6 @@ Available $`\varphi`$-function methods that are compatible with each integration
 | method | available phi_method |
 | -------|----------------------|
 |exprb2| krylov, leja, pfd |
-|exprb2| krylov, leja, pfd |
 |exprb3| krylov, leja, pfd |
 |pexprb4| krylov, leja, pfd |
 |epi3| krylov, leja |
@@ -277,6 +276,12 @@ Expected resulting images from running the first example of the Lotka-Volterra s
 Expected result from the Bateman system in the second example integrated with EXPRB2:
 
 ![plot](./docs/images/ex_bateman.png)
+
+### Rust docs
+
+To build the rust docs locally and view them in a web browser run:
+
+    cargo doc --no-deps --open
 
 Authors
 ========
