@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,14 +13,65 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// Exponential propagation iterative RK class of
-/// exponential integrators
+//! Exponential Propagation Iterative Runge-Kutta (EPI) exponential integrators.
+//!
+//! Provides [`EpirkIntegrator`], an implementation of the EPI2 and EPI3
+//! exponential time integration methods for the system $y^\prime  = f(t, y)$. The
+//! solution is linearized about the current state $(t_n, y_n)$ as
+//!
+//! $$ f(t, y) = f_n + J_n (y - y_n) + (t - t_n) v_n + R_n(t, y) $$
+//!
+//! where $f_n = f(t_n, y_n)$, $J_n$ is the Jacobian, $v_n = \partial f / \partial t$
+//! is the time derivative of the rhs (nonautonomous correction) and $R_n$ is the
+//! nonlinear remainder. With $h = \Delta t$ and the phi-functions
+//! $\varphi_k(z)$, the implemented methods are:
+//!
+//! EPI2 (exponential Euler, identical to EXPRB2):
+//!
+//! $$ y_{n+1} = y_n + h \thinspace \varphi_1(h J_n) f_n + h^2 \varphi_2(h J_n) v_n $$
+//!
+//! EPI3 (two-step, uses the previous state $y_{n-1}$ at $t_{n-1} = t_n - h$):
+//!
+//! $$ y_{n+1} = y_n + h \thinspace \varphi_1(h J_n) f_n +
+//!   h^2 \varphi_2(h J_n) v_n +
+//!   \frac{2}{3} h \thinspace \varphi_2(h J_n) R_n(t_{n-1}, y_{n-1}) $$
+//!
+//! with $R_n(t_{n-1}, y_{n-1}) = f(t_{n-1}, y_{n-1}) - f_n - J_n (y_{n-1} - y_n) -
+//! (t_{n-1} - t_n) v_n$. The $v_n$ terms are only included when the
+//! nonautonomous correction is enabled (see [`EpirkIntegrator::with_opt`]). The
+//! EPI3 coefficient $2/3$ assumes a constant step size. The first EPI3 step,
+//! for which no previous state is available, is taken with EPI2.
+//!
+//! The combination of phi-function products is evaluated with a single
+//! matrix exponential action of an extended operator
+//! ([`crate::ode_sys::DynRefExtendedLinOp`]) by the phi-function evaluator
+//! ([`crate::matexp_traits::LinOpPhikvEvaluator`]). These methods provide no
+//! embedded error estimate.
+//!
+//! # References
+//!
+//! * Tokman, M., "Efficient integration of large stiff systems of ODEs with
+//!   exponential propagation iterative (EPI) methods", J. Comput. Phys. 213(2)
+//!   (2006) 748-776, doi:10.1016/j.jcp.2005.08.032
+//! * Gaudreault, S. and Pudykiewicz, J. A., "An efficient exponential time
+//!   integration method for the numerical solution of the shallow water
+//!   equations on the sphere", J. Comput. Phys. 322 (2016) 827-848
+//! * Hochbruck, M. and Ostermann, A., "Exponential integrators", Acta Numerica
+//!   19 (2010) 209-286, doi:10.1017/S0962492910000048
 use crate::matexp_traits::LinOpPhikvEvaluator;
 use crate::ode_sys::*;
 use crate::ode_traits::{IntegrateSys, StepperExponential};
 use faer::prelude::*;
 use std::collections::VecDeque;
 
+/// Exponential propagation iterative (EPI) integrator.
+///
+/// Supports the methods `"epi2"`, `"exprb2"` (both the exponential Euler method,
+/// order 2) and `"epi3"` (order 3). See the module documentation for the
+/// method formulas. Implements [`crate::ode_traits::IntegrateSys`]. Each step
+/// prints timing information to stdout.
+///
+/// A mass matrix supplied by `OdeSys::fmass` is ignored.
 pub struct EpirkIntegrator<T: LinOpPhikvEvaluator> {
     /// Matrix exponential evaluator
     expm: T,
@@ -46,7 +97,19 @@ impl<T> EpirkIntegrator<T>
 where
     T: LinOpPhikvEvaluator,
 {
-    /// Set the initial conditions and seteup bdf integrator
+    /// Set the initial conditions and setup the EPI integrator.
+    ///
+    /// # Arguments
+    ///
+    /// * `t0` - initial time
+    /// * `y0` - initial state
+    /// * `method` - method name, one of `"epi2"`, `"exprb2"` or `"epi3"`
+    /// * `expm` - phi-function evaluator used to compute the matrix
+    ///   exponential and phi-function products
+    ///
+    /// # Panics
+    ///
+    /// Panics if `method` is not one of the valid method names.
     pub fn new(t0: f64, y0: MatRef<f64>, method: String, expm: T) -> Self {
         let order = match method.as_str() {
             "epi2" | "exprb2" => 2,
@@ -68,7 +131,25 @@ where
         }
     }
 
-    /// builder fn to set optional solver parameters
+    /// Builder function to set optional solver parameters.
+    ///
+    /// Valid options:
+    ///
+    /// * `"tol_fdt"` - enables the nonautonomous correction if the value is
+    ///   non-negative. The time derivative of the rhs, $v_n$, is then estimated
+    ///   with a forward finite difference (time step $10^{-8}$) and included in
+    ///   the update. The default is `-1.0` (disabled, $v_n = 0$). In this
+    ///   integrator the value is only used as an on/off switch, it is not
+    ///   compared against the size of $v_n$.
+    ///
+    /// # Arguments
+    ///
+    /// * `option_str` - name of the option
+    /// * `option_val` - value of the option
+    ///
+    /// # Panics
+    ///
+    /// Panics if `option_str` is not a valid option name.
     pub fn with_opt(mut self, option_str: String, option_val: f64) -> Self {
         match option_str.as_str() {
             "tol_fdt" => self.tol_fdt = option_val,
@@ -77,17 +158,21 @@ where
         self
     }
 
-    /// Exponential Propagative Iterative Order 2 method (EPI3)
+    /// Exponential Propagation Iterative order 2 method (EPI2)
     ///
-    /// Gaudreault, Stéphane, and Janusz A. Pudykiewicz.
-    /// An efficient exponential time integration method for the numerical
-    /// solution of the shallow water equations on the sphere.
-    /// Journal of Computational Physics 322 (2016): 827-848.
+    /// $$ y_{n+1} = y_n + h \thinspace \varphi_1(h J_n) f_n + h^2 \varphi_2(h J_n) v_n $$
     ///
-    /// Tokman, Mayya. Efficient integration of large stiff systems of ODEs
-    /// with exponential propagation iterative (EPI) methods.
-    /// Journal of Computational Physics 213.2 (2006): 748-776.
-    /// EPI2
+    /// where the $v_n$ term is only present if the nonautonomous correction
+    /// is enabled.
+    ///
+    /// # References
+    ///
+    /// * Gaudreault, S. and Pudykiewicz, J. A., "An efficient exponential time
+    ///   integration method for the numerical solution of the shallow water
+    ///   equations on the sphere", J. Comput. Phys. 322 (2016) 827-848
+    /// * Tokman, M., "Efficient integration of large stiff systems of ODEs with
+    ///   exponential propagation iterative (EPI) methods", J. Comput. Phys.
+    ///   213(2) (2006) 748-776
     fn step_order_2<'b>(
         &mut self,
         sys: &'b dyn OdeSys<'b>,
@@ -127,13 +212,19 @@ where
         Ok(StepResult::new(t + dt, dt, y_new, None))
     }
 
-    /// Exponential Propagative Iterative Order 3 method (EPI3)
+    /// Exponential Propagation Iterative order 3 method (EPI3)
     ///
-    /// Gaudreault, Stéphane, and Janusz A. Pudykiewicz.
-    /// An efficient exponential time integration method for the numerical
-    /// solution of the shallow water equations on the sphere.
-    /// Journal of Computational Physics 322 (2016): 827-848.
-    /// solution of the shallow water equations.
+    /// $$ y_{n+1} = y_n + h \thinspace \varphi_1(h J_n) f_n + h^2 \varphi_2(h J_n) v_n +
+    ///   \frac{2}{3} h \thinspace \varphi_2(h J_n) R_n(t_{n-1}, y_{n-1}) $$
+    ///
+    /// Requires the previous state $y_{n-1}$ in the solution history and assumes
+    /// it was computed with the same step size.
+    ///
+    /// # References
+    ///
+    /// * Gaudreault, S. and Pudykiewicz, J. A., "An efficient exponential time
+    ///   integration method for the numerical solution of the shallow water
+    ///   equations on the sphere", J. Comput. Phys. 322 (2016) 827-848
     fn step_order_3<'b>(
         &mut self,
         sys: &'b dyn OdeSys<'b>,

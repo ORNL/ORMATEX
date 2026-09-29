@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// Useful tools for testing ODE integration methods
+//! Test and example helpers: right hand sides of small ODE systems (Lotka-Volterra, Bateman, Robertson).
 use faer::prelude::*;
 
-/// define Lotka-Volterra system for testing ONLY
+/// Lotka-Volterra rhs (test use only) with all parameters 1: $u^\prime  = u - u v$, $v^\prime  = u v - v$ for $x = (u, v)$.
 pub fn lv_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
     let alpha = 1.0;
     let beta = 1.0;
@@ -29,7 +29,7 @@ pub fn lv_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
     ]
 }
 
-/// define Lotka-Volterra jacobian for testing ONLY
+/// Sparse $2 \times 2$ Jacobian of [`lv_sys_rhs`] (test use only): $J = \begin{pmatrix} 1 - v & -u \cr v & u - 1 \end{pmatrix}$.
 pub fn lv_sys_jac(_t: f64, x: MatRef<f64>) -> SparseColMat<usize, f64> {
     let alpha = 1.0;
     let beta = 1.0;
@@ -54,7 +54,9 @@ pub fn lv_sys_jac(_t: f64, x: MatRef<f64>) -> SparseColMat<usize, f64> {
 }
 
 // Bateman
-/// Linear stiff.  Best-case scinario for ETD methods
+/// Linear stiff Bateman-type rhs $x^\prime  = M x$ (test use only), best case for exponential integrators.
+///
+/// $M$ is upper bidiagonal with diagonal $(-10^{-3}, -10, -10^{-1})$ and superdiagonal $(10, 10^{-1})$.
 pub fn bateman_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
     // slow decay
     let lambda_0 = 1.0e-3;
@@ -75,8 +77,7 @@ pub fn bateman_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
     xdot
 }
 
-/// Robertson
-/// Nonlinear stiff example system.
+/// Robertson stiff kinetics rhs (test use only): $x^\prime  = -0.04 x + 10^4 y z$, $y^\prime  = 0.04 x - 10^4 y z - 3 \cdot 10^7 y^2$, $z^\prime  = 3 \cdot 10^7 y^2$.
 pub fn rob_sys_rhs(_t: f64, x_in: MatRef<f64>) -> Mat<f64> {
     let x = x_in[(0, 0)];
     let y = x_in[(1, 0)];

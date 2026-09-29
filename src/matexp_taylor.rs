@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025,2026 UT-Battelle, LLC
+ * Copyright(c) 2025,2026 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-//! Taylor series matrix exponential evaluation methods for dense faer Mats.
+//! Taylor series matrix exponential and phi-function evaluation for dense faer matrices.
+//!
+//! This module evaluates $\exp(A)$ and $\varphi_k(A)$ for dense real or complex
+//! matrices from truncated Taylor series. The phi-functions are obtained from
+//! the augmented-matrix (extension) formula combined with Taylor scaling and
+//! squaring ([`phik_taylor_ext`], [`matexp_taylor`]). A specialized routine
+//! for lower-bidiagonal matrices is provided by [`phik_taylor_bidiag`].
+//! [`TaylorExpm`] wraps [`phik_taylor_ext`] as a
+//! [`crate::matexp_traits::DensePhikvEvaluator`].
+//!
+//! # References
+//!
+//! * M. Caliari, F. Cassini, F. Zivcovich, "BAMPHI: Chebyshev and rational
+//!   approximations of phi-functions applied to vectors", J. Comput. Appl.
+//!   Math. 423 (2023) 114973.
+//! * N. J. Higham, "Functions of Matrices: Theory and Computation", SIAM, 2008.
 use faer::prelude::*;
 use faer::linalg::matmul;
 use faer_traits::math_utils::{add, mul};
@@ -23,11 +38,12 @@ use faer_traits::math_utils::from_f64;
 use statrs::function::factorial;
 use crate::matexp_traits::DensePhikvEvaluator;
 
-/// Compute the dense matrix exponential using the taylor series.
+/// Compute the dense matrix exponential using the Taylor series.
 ///
-/// # Args
-/// * `A` : the matrix
-/// * `p` : taylor polynomial order
+/// # Arguments
+///
+/// * `a` - the matrix
+/// * `p` - Taylor polynomial order
 ///
 fn matexp_ts<T: ComplexField>(
     a: MatRef<T>,
@@ -54,12 +70,13 @@ fn matexp_ts<T: ComplexField>(
     ts_expm
 }
 
-/// Compute the dense matrix exponential using the taylor series with
+/// Compute the dense matrix exponential using the Taylor series with
 /// scaling and squaring.
 ///
-/// # Args
-/// * `A` : the matrix
-/// * `p` : taylor polynomial order
+/// # Arguments
+///
+/// * `a` - the matrix
+/// * `p` - Taylor polynomial order
 ///
 fn matexp_ts_ss<T>(
     a: MatRef<T>,
@@ -99,13 +116,29 @@ where
     matexp_a
 }
 
-/// Computes the phi_k function using the taylor series with scaling and squaring
-/// and the extension formula.
+/// Computes the matrix phi-function $\varphi_k(Z)$ using a Taylor series with
+/// scaling and squaring and the extension formula.
 ///
-/// # Args
-/// * `A` : the matrix
-/// * `k` : phi-fn order
+/// For $k \ge 1$ the matrix `z` is embedded in the block matrix of size
+/// $n(k+1) \times n(k+1)$ with `z` in the top-left block and identity blocks on
+/// the first block superdiagonal. Its exponential is computed with a degree 16
+/// Taylor polynomial and scaling and squaring, and the top-right
+/// $n \times n$ block, which equals $\varphi_k(Z)$, is returned. For $k = 0$
+/// the matrix exponential $\exp(Z)$ is returned. The scaling power is
+/// $\lceil \log_2 \Vert Z_{ext}\Vert_{\max} \rceil$ when the max-norm exceeds one.
 ///
+/// # Arguments
+///
+/// * `z` - square matrix $Z$
+/// * `k` - phi-function order
+///
+/// # Returns
+///
+/// The dense matrix $\varphi_k(Z)$, same size as `z`.
+///
+/// # Panics
+///
+/// Panics if `z` is not square.
 pub fn phik_taylor_ext<T>(z: MatRef<T>, k: usize) -> Mat<T>
 where
     T: ComplexField,
@@ -134,10 +167,21 @@ where
     phi_ks.get(0..n, phi_ks.ncols() - n..).to_owned()
 }
 
-/// Alias to phik_taylor_ext with k=0
+/// Computes the matrix exponential $\exp(A)$ using the Taylor series.
 ///
-/// # Args
-/// * `A` : the matrix
+/// Alias to [`phik_taylor_ext`] with $k = 0$.
+///
+/// # Arguments
+///
+/// * `a` - square matrix $A$
+///
+/// # Returns
+///
+/// The dense matrix $\exp(A)$, same size as `a`.
+///
+/// # Panics
+///
+/// Panics if `a` is not square.
 pub fn matexp_taylor<T>(a: MatRef<T>) -> Mat<T>
 where
     T: ComplexField,
@@ -146,15 +190,34 @@ where
     phik_taylor_ext(a, 0)
 }
 
-/// Optimized phi_k Taylor series for lower-bidiagonal `a_bi`.
+/// Truncated Taylor series for $\varphi_k$ of a lower-bidiagonal matrix.
 ///
-/// # Args
-/// * `a_bi` : the lower bidiagonal matrix
-/// * `shift` : spectrum shift parameter. 0.0 for unshifted matexp.
-/// * `scale` : spectrum shift parameter. 1.0 for unscaled matexp.
-/// * `p` : polynomial order
-/// * `k` : phi-fn order
+/// Exploits the banded structure of the powers of a lower-bidiagonal matrix
+/// (the bandwidth grows by one with each power), and only reads the diagonal
+/// and first subdiagonal of `a_bi`. The sum evaluated is
 ///
+/// $$ e^{\text{shift}} \sum_{j=0}^{p} \frac{M_j}{(k+j)!}, $$
+///
+/// where $M_0 = I$ and, as implemented, $M_j = \text{scale} \cdot A_{bi}^j$ for
+/// $j \ge 1$ (`scale` multiplies the sum terms once, it is not raised to the
+/// $j$-th power). For `scale = 1` the sum is the degree `p` Taylor truncation
+/// of $\varphi_k(A_{bi})$. No scaling and squaring is
+/// applied, so accuracy degrades for matrices of large norm.
+///
+/// # Arguments
+///
+/// * `a_bi` - the lower bidiagonal matrix
+/// * `shift` - spectrum shift parameter; the result is multiplied by
+///   $e^{\text{shift}}$. Use 0.0 for an unshifted evaluation.
+/// * `scale` - scale factor applied to the series terms as described above.
+///   Use 1.0 for an unscaled evaluation.
+/// * `p` - Taylor polynomial order (number of series terms beyond the first)
+/// * `k` - phi-function order
+///
+/// # Returns
+///
+/// The dense matrix approximating $e^{\text{shift}} \varphi_k(A_{bi})$, same
+/// size as `a_bi`.
 pub fn phik_taylor_bidiag<T: ComplexField>(
     a_bi: MatRef<T>,
     shift: f64,
@@ -164,7 +227,7 @@ pub fn phik_taylor_bidiag<T: ComplexField>(
 ) -> Mat<T> {
     let n = a_bi.nrows();
 
-    // m = scale * a_bi  — only write the lower-bidiagonal entries, rest stay zero.
+    // m = scale * a_bi  - only write the lower-bidiagonal entries, rest stay zero.
     let mut m: Mat<T> = faer::Mat::zeros(n, n);
     {
         let scale_t = from_f64::<T>(scale);
@@ -229,6 +292,12 @@ pub fn phik_taylor_bidiag<T: ComplexField>(
     faer::Scale(from_f64::<T>(shift.exp())) * ts_expm
 }
 
+/// Dense Taylor series evaluator of the phi-function vector products $\varphi_k(A t) v$.
+///
+/// Implements [`crate::matexp_traits::DensePhikvEvaluator`] by forming the
+/// dense matrix $\varphi_k(A t)$ with [`phik_taylor_ext`] and multiplying it with
+/// the given vector(s). The stored polynomial order is not currently used, since
+/// [`phik_taylor_ext`] uses a fixed order of 16.
 #[derive(Debug)]
 pub struct TaylorExpm {
     _order: usize,

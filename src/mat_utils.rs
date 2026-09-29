@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+//! Dense and sparse matrix helpers and linear operators.
+//!
+//! This module collects small utilities used throughout the crate and its
+//! tests: random matrix generators, approximate matrix comparison, real and
+//! complex conversions, matrix powers, sparse conversions, and a factorial.
+//! It also defines a crate-local [`LinOp`] trait, whose method
+//! `apply_linop_to_vec` applies a (possibly state dependent) linear operator
+//! to a vector, together with implementations for a finite difference
+//! Jacobian-vector product ([`JacobianRhsLinOp`]), a sparse matrix
+//! ([`JacobianMatLinOp`]) and the enum [`MatrixLinOp`] combining them.
 use faer::prelude::*;
 use faer_traits::ComplexField;
 use faer_traits::RealField;
@@ -21,7 +31,19 @@ use rand::prelude::*;
 use rand_distr::{StandardNormal, Uniform};
 use std::cell::RefCell;
 
-/// create a matrix filled with standard normal samples
+/// Creates a matrix filled with standard normal samples.
+///
+/// Entries are independent samples of $N(0, 1)$ drawn from the thread local
+/// random number generator.
+///
+/// # Arguments
+///
+/// * `n_rows` - number of rows
+/// * `n_cols` - number of columns
+///
+/// # Returns
+///
+/// An `n_rows` by `n_cols` random matrix.
 pub fn random_mat_normal<T>(n_rows: usize, n_cols: usize) -> Mat<T>
 where
     T: RealField + Float,
@@ -32,7 +54,25 @@ where
     omega
 }
 
-/// create a matrix filled with uniform random samples
+/// Creates a matrix filled with uniform random samples.
+///
+/// Entries are independent samples drawn uniformly from the half-open
+/// interval $[lb, ub)$ using the thread local random number generator.
+///
+/// # Arguments
+///
+/// * `n_rows` - number of rows
+/// * `n_cols` - number of columns
+/// * `lb` - lower bound of the sampling interval
+/// * `ub` - upper bound of the sampling interval
+///
+/// # Returns
+///
+/// An `n_rows` by `n_cols` random matrix.
+///
+/// # Panics
+///
+/// Panics if `lb >= ub`.
 pub fn random_mat_uniform<T>(n_rows: usize, n_cols: usize, lb: f64, ub: f64) -> Mat<T>
 where
     T: RealField + Float,
@@ -44,7 +84,21 @@ where
     omega
 }
 
-/// Helper function to ensure two matrix are almost equal
+/// Asserts that two matrices are approximately equal.
+///
+/// Checks that the shapes match and that every pair of entries agrees to
+/// within `tol`, using `assert_approx_eq!` (absolute difference).
+///
+/// # Arguments
+///
+/// * `a` - first matrix
+/// * `b` - second matrix
+/// * `tol` - absolute tolerance for each entry
+///
+/// # Panics
+///
+/// Panics if the shapes of `a` and `b` differ or if any entries differ by
+/// `tol` or more.
 pub fn mat_mat_approx_eq<T>(a: MatRef<T>, b: MatRef<T>, tol: T)
 where
     T: RealField + Float,
@@ -59,12 +113,29 @@ where
     }
 }
 
-/// Only the real part of mat
+/// Extracts the real part of a complex matrix.
+///
+/// # Arguments
+///
+/// * `a` - complex matrix
+///
+/// # Returns
+///
+/// A real matrix of the same size holding the real part of each entry of `a`.
 pub fn real_mat<T: RealField + Float>(a: MatRef<num_complex::Complex<T>>) -> Mat<T> {
     Mat::from_fn(a.nrows(), a.ncols(), |i, j| a[(i, j)].re)
 }
 
-/// Convert real mat to complex and scale by dt
+/// Converts a real matrix to a complex matrix and scales it by `dt`.
+///
+/// # Arguments
+///
+/// * `a` - real matrix
+/// * `dt` - real scale factor, e.g. a time step
+///
+/// # Returns
+///
+/// The complex matrix $dt \cdot A$ with zero imaginary part, same size as `a`.
 pub fn complex_mat_scale<T: RealField + Float>(a: MatRef<T>, dt: f64) -> Mat<num_complex::Complex<T>> {
     let dt = T::from(dt).unwrap();
     Mat::from_fn(a.nrows(), a.ncols(), |i, j| {
@@ -72,7 +143,19 @@ pub fn complex_mat_scale<T: RealField + Float>(a: MatRef<T>, dt: f64) -> Mat<num
     })
 }
 
-/// Take powers of a real matrix
+/// Computes the integer power $A^p$ of a square matrix.
+///
+/// Uses `p` successive matrix multiplications, so it costs $O(p n^3)$ for an
+/// $n \times n$ matrix. For `p = 0` the identity matrix is returned.
+///
+/// # Arguments
+///
+/// * `a` - square matrix $A$
+/// * `p` - non-negative integer power
+///
+/// # Returns
+///
+/// The matrix $A^p$, same size as `a`.
 pub fn mat_pow<T>(a: MatRef<T>, p: usize) -> Mat<T>
 where
     T: ComplexField,
@@ -84,8 +167,17 @@ where
     ap_out
 }
 
-// Helper function to convert a dense mat to a sparse mat.
-// For testing ONLY
+/// Converts a dense matrix to a sparse column-major matrix.
+///
+/// Entries that are exactly zero are dropped. For testing ONLY.
+///
+/// # Arguments
+///
+/// * `a` - dense matrix
+///
+/// # Returns
+///
+/// A sparse matrix of the same size holding the nonzero entries of `a`.
 pub fn dense_to_sprs<T>(a: MatRef<T>) -> SparseColMat<usize, T>
 where
     T: RealField + Float,
@@ -104,22 +196,57 @@ where
     out
 }
 
-/// computes the factorial
+/// Computes the factorial $n!$ as an `f64`.
+///
+/// The product is accumulated in `usize` before conversion, so it overflows
+/// for `num > 20` on 64-bit targets. `ufactorial(0)` is 1.
+///
+/// # Arguments
+///
+/// * `num` - the integer $n$
+///
+/// # Returns
+///
+/// The value $n!$.
 pub fn ufactorial(num: usize) -> f64 {
     (1..=num).product::<usize>() as f64
 }
 
-/// Linear Operator
+/// Linear operator that may depend on the time and the state.
+///
+/// This is a crate-local trait, distinct from `faer::matrix_free::LinOp`.
 pub trait LinOp<T>
 where
     T: RealField + Float,
 {
+    /// Applies the linear operator to a vector.
+    ///
+    /// For an operator $A(t, x)$ this computes $s \thinspace A(t, x) \thinspace w$.
+    ///
+    /// # Arguments
+    ///
+    /// * `t` - time at which the operator is evaluated
+    /// * `x` - state at which the operator is linearized (ignored by state
+    ///   independent operators)
+    /// * `w` - the vector to which the operator is applied
+    /// * `s` - optional scale factor applied to the product; defaults to 1
+    ///
+    /// # Returns
+    ///
+    /// The product $s \thinspace A(t, x) \thinspace w$.
     fn apply_linop_to_vec(&self, t: T, x: MatRef<T>, w: MatRef<T>, s: Option<T>) -> Mat<T>;
 }
 
-/// If A is a Jacobian, a Jacobian-vector product can be
-/// given as $`A q \approx (F(x + \eps w) - F(x)) / \eps `$
-/// where $`F`$ is `frhs`
+/// Finite difference Jacobian-vector product operator.
+///
+/// If $A$ is the Jacobian of the right hand side $F$ (`frhs`), the
+/// Jacobian-vector product is approximated by the forward difference
+///
+/// $$ A w \approx \frac{F(x + \varepsilon w) - F(x)}{\varepsilon} $$
+///
+/// with $\varepsilon = 0.5 \times 10^{-8} \Vert x\Vert_1$. The evaluation
+/// $F(x)$ is cached and reused when the $\ell_1$ norm of `x` is unchanged
+/// from the previous call.
 #[derive(Clone)]
 pub struct JacobianRhsLinOp<'a, T>
 where
@@ -165,6 +292,12 @@ impl<'a, T> JacobianRhsLinOp<'a, T>
 where
     T: RealField + Float,
 {
+    /// Creates a finite difference Jacobian operator from a right hand side function.
+    ///
+    /// # Arguments
+    ///
+    /// * `frhs` - the right hand side function $F(t, x)$
+    /// * `dim` - dimension used to allocate the internal caches
     pub fn new(frhs: &'a dyn Fn(T, MatRef<T>) -> Mat<T>, dim: usize) -> Self {
         Self {
             frhs,
@@ -174,7 +307,9 @@ where
     }
 }
 
-/// Wrapper around a sparse matrix ref to apply it to a vec
+/// Wrapper around a sparse matrix reference to apply it to a vector.
+///
+/// The operator is state and time independent.
 pub struct JacobianMatLinOp<'a, T>
 where
     T: RealField + Float,
@@ -185,6 +320,11 @@ impl<'a, T> JacobianMatLinOp<'a, T>
 where
     T: RealField + Float,
 {
+    /// Creates an operator wrapping a sparse matrix.
+    ///
+    /// # Arguments
+    ///
+    /// * `a_mat` - reference to the sparse matrix $A$
     pub fn new(a_mat: SparseColMatRef<'a, usize, T>) -> Self {
         Self { a_mat }
     }
@@ -198,14 +338,17 @@ where
     }
 }
 
-/// Enum of linear operators
+/// Enum of linear operators.
 #[derive(Clone)]
 pub enum MatrixLinOp<'a, T>
 where
     T: RealField + Float,
 {
+    /// A general linear operator object, applied through its `apply_linop_to_vec`
     Lop(&'a dyn LinOp<T>),
+    /// A constant sparse matrix
     MatLop(SparseColMatRef<'a, usize, T>),
+    /// A function $(t, x) \mapsto A(t, x)$ returning a sparse matrix
     FMatLop(&'a dyn Fn(T, MatRef<T>) -> SparseColMat<usize, T>),
 }
 
@@ -226,7 +369,15 @@ where
     }
 }
 
-/// sparse identity
+/// Creates a sparse identity matrix.
+///
+/// # Arguments
+///
+/// * `dim` - the number of rows and columns
+///
+/// # Returns
+///
+/// The `dim` by `dim` sparse identity matrix.
 pub fn sparse_ident<T>(dim: usize) -> SparseColMat<usize, T>
 where
     T: RealField + Float,
@@ -278,7 +429,7 @@ mod test_matexp_rs {
         // compute exact jacobian at x0
         let true_jac = lv_sys_jac(1.0, x0.as_ref());
 
-        // comput jacobian vector product, J*w
+        // compute jacobian vector product, J*w
         let w = faer::mat![[0.50], [0.75],];
         let true_jac_w = true_jac.as_ref() * w.as_ref();
 

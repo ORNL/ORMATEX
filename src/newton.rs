@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,24 +13,64 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+//! Jacobian-free Newton-Krylov solvers for implicit time integration.
+//!
+//! Provides [`jac_newton`], a general Newton solver for a nonlinear residual
+//! $G(x) = 0$ with a user supplied linearization, and [`jac_newton_sys`], a
+//! solver that works directly on an [`crate::ode_sys::OdeSys`]. In both cases the
+//! linear system in each Newton iteration is solved matrix-free with GMRES
+//! (`faer_gmres`), so the Jacobian is only accessed through matrix-vector
+//! products. Progress is printed to stdout.
+//!
+//! # References
+//!
+//! * Knoll, D. A. and Keyes, D. E., "Jacobian-free Newton-Krylov methods: a survey
+//!   of approaches and applications", J. Comput. Phys. 193(2) (2004) 357-397,
+//!   doi:10.1016/j.jcp.2003.08.010
 use crate::ode_sys::*;
-/// Newtons methods for implicit methods
 use faer::prelude::*;
 use faer_gmres::gmres;
 
-/// Newton's method. Solves G(x)=0 for x.
-/// Jacobian-free newton krylov
+/// Newton's method. Solves $G(x) = 0$ for $x$.
 ///
-/// Iterates x_k+1 = x_k - J^-1 * G(x_k)
-/// or
-/// G(x_k) = J * (x_k - x_k+1) = J * a
-/// solve J * a = G(x_k) for a. with a = x_k - x_k+1 then
-/// x_k+1 = x_k - a
+/// Jacobian-free Newton-Krylov. Iterates
+///
+/// $$ x_{k+1} = x_k - J^{-1} G(x_k) $$
+///
+/// where each Newton step is computed by solving $J a = G(x_k)$ for
+/// $a = x_k - x_{k+1}$ with GMRES, and then setting $x_{k+1} = x_k - a$.
+///
+/// The iteration returns $x_k$ when $\Vert G(x_k)\Vert_2 < \mathrm{tol}$ and either
+/// the last step was small, $\Vert a\Vert_2 < 0.1 \thinspace (1 + \Vert x_k\Vert_2)$, or at most
+/// one Newton step has been taken.
 ///
 /// `'jac` is the lifetime of the Jacobian linear operator (tied to the ODE
 /// system object). `x0` is the initial guess and is cloned immediately, so
 /// its lifetime is decoupled from `'jac`.
 ///
+/// # Arguments
+///
+/// * `t` - time passed to `gf` and `gf_jac`
+/// * `x0` - initial guess
+/// * `gf` - residual function, `gf(t, x)` returns $G(x)$
+/// * `gf_jac` - linearization, `gf_jac(t, x)` returns the operator $J$ at $x$
+/// * `tol` - convergence tolerance on the 2-norm of the residual $G(x)$
+/// * `tol_lin` - tolerance passed to the GMRES linear solver
+/// * `iters` - maximum number of Newton iterations
+/// * `iters_lin` - maximum number of GMRES iterations per Newton iteration
+///
+/// # Returns
+///
+/// The solution $x$ with $G(x) \approx 0$.
+///
+/// # Errors
+///
+/// Returns a [`StepError`] with `error_code` 1 if Newton's method does not
+/// converge within `iters` iterations.
+///
+/// # Panics
+///
+/// Panics if the GMRES linear solve returns an error.
 pub fn jac_newton<'jac>(
     t: f64,
     x0: MatRef<'_, f64>,
@@ -92,9 +132,46 @@ pub fn jac_newton<'jac>(
     Err(err)
 }
 
-/// Newton's method. Solves G(x)=0 for x.
-/// Iterates x_k+1 = x_k - J^-1 * G(x_k)
+/// Newton's method applied directly to an ODE system.
 ///
+/// Iterates
+///
+/// $$ x_{k+1} = x_k - W^{-1} f(t, x_k), \qquad W = \gamma M + s J(t, x_k) $$
+///
+/// where $f$ is the system rhs, $J$ its Jacobian, $M$ the optional mass matrix
+/// and $W$ is obtained from [`crate::ode_sys::OdeSys::fjac_shifted`]. Each step
+/// solves $W a = f(t, x_k)$ with GMRES and sets $x_{k+1} = x_k - a$. With
+/// $s = 1$ and $\gamma = 0$ this is the standard Newton iteration for
+/// $f(t, x) = 0$.
+///
+/// The iteration returns when the 2-norm of the Newton step, $\Vert a\Vert_2$, is
+/// less than `tol`. Note that the GMRES solution buffer is not reset between
+/// iterations, so the previous step is used as the initial guess.
+///
+/// # Arguments
+///
+/// * `t` - time at which the rhs and Jacobian are evaluated
+/// * `scale` - Jacobian scale factor $s$
+/// * `gamma` - shift factor $\gamma$
+/// * `x0` - initial guess
+/// * `sys` - the ODE system
+/// * `tol` - convergence tolerance on the 2-norm of the Newton step
+/// * `tol_lin` - tolerance passed to the GMRES linear solver
+/// * `iters` - maximum number of Newton iterations
+/// * `iters_lin` - maximum number of GMRES iterations per Newton iteration
+///
+/// # Returns
+///
+/// The converged state $x$.
+///
+/// # Errors
+///
+/// Returns a [`StepError`] with `error_code` 1 if Newton's method does not
+/// converge within `iters` iterations.
+///
+/// # Panics
+///
+/// Panics if the GMRES linear solve returns an error.
 pub fn jac_newton_sys<'a>(
     t: f64,
     scale: f64,

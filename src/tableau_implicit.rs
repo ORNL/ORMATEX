@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,59 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+//! Butcher tableaux for diagonally implicit Runge-Kutta methods.
+//!
+//! Provides [`ImplicitBT`], the Butcher tableau of a DIRK / SDIRK / ESDIRK
+//! method, together with constructors for the methods used by the implicit
+//! integrators in [`crate::ode_implicit`]: implicit Euler, Crank-Nicolson,
+//! and several L-stable SDIRK methods. An $s$-stage method advances
+//! $y^\prime  = f(t, y)$ by
+//!
+//! $$ Y_i = y_n + \Delta t \sum_{j=1}^{i} a_{ij} f(t_n + c_j \Delta t, Y_j),
+//! \qquad y_{n+1} = y_n + \Delta t \sum_{i=1}^{s} b_i f(t_n + c_i \Delta t, Y_i) $$
+//!
+//! The method is defined by its Butcher tableau, with the stage times $c$, the
+//! lower-triangular matrix $A = (a_{ij})$ and the weights $b$:
+//!
+//! $$ \begin{array}{c|c} c & A \cr \hline & b^T \end{array} $$
+//!
+//! # FSAL and stiff accuracy
+//!
+//! A method has the FSAL (First Same As Last) property when the last row of $A$
+//! equals the weight vector and the last stage time is one:
+//!
+//! $$ a_{sj} = b_j \quad (j = 1, \ldots, s), \qquad c_s = 1 . $$
+//!
+//! Then the last stage value is the new solution, $Y_s = y_{n+1}$, and the last
+//! stage derivative $f(t_{n+1}, Y_s)$ is the derivative at the start of the next
+//! step. For explicit and ESDIRK methods that derivative can be reused as the
+//! first stage of the next step, saving one evaluation of $f$. For diagonally
+//! implicit methods the same condition is called stiff accuracy. If in addition
+//! $A$ is invertible, the stability function satisfies
+//!
+//! $$ R(\infty) = 1 - b^T A^{-1} e = 0, \qquad e = (1, \ldots, 1)^T, $$
+//!
+//! so an A-stable method is L-stable, which damps stiff components completely.
+//! It also means the method is well suited to differential-algebraic systems,
+//! as the algebraic constraints hold exactly at the end of the step. Note that
+//! the stage implementation in this crate does not currently reuse the last
+//! stage derivative in the next step.
+//!
+//! # References
+//!
+//! * Norsett, S. P., "Semi-explicit Runge-Kutta methods", Report Mathematics and
+//!   Computation No. 6/74, Department of Mathematics, University of Trondheim, 1974
+//! * Alexander, R., "Diagonally implicit Runge-Kutta methods for stiff O.D.E.'s",
+//!   SIAM J. Numer. Anal. 14(6) (1977) 1006-1021
 
 /// Butcher tableau for implicit Runge-Kutta methods (DIRK / SDIRK / ESDIRK).
 ///
-/// Layout convention
-/// -----------------
-/// `a[i]` has exactly `i + 1` entries — the full lower-triangular row including
+/// # Layout convention
+///
+/// `a[i]` has exactly `i + 1` entries - the full lower-triangular row including
 /// the diagonal.  `a[i][i]` is the implicit (diagonal) coefficient for stage `i`.
 /// When `a[i][i] == 0.0` the stage is explicit (used for ESDIRK methods such as
-/// Crank–Nicolson where the first stage is always explicit).
+/// Crank-Nicolson where the first stage is always explicit).
 ///
 /// This is different from the explicit `BT` in `ode_rk.rs`, where `a[i]` has
 /// only `i` entries (the zero diagonal is omitted entirely).
@@ -30,24 +74,22 @@
 pub struct ImplicitBT {
     /// Number of stages
     pub s: usize,
-    /// Stage abscissas c[i], length s.  c[i] = sum_j a[i][j].
+    /// Stage abscissas `c[i]`, length `s`, with $c_i = \sum_j a_{ij}$.
     pub c: Vec<f64>,
-    /// Final accumulation weights b[i], length s.  sum(b) = 1.
+    /// Final accumulation weights `b[i]`, length `s`, with $\sum_i b_i = 1$.
     pub b: Vec<f64>,
-    /// Runge–Kutta matrix, lower-triangular.
-    /// a[i] has i+1 entries; a[i][i] is the diagonal (implicit) coefficient.
-    /// a[i][i] == 0.0 means stage i is explicit.
+    /// Runge-Kutta matrix, lower-triangular.
+    /// `a[i]` has i+1 entries; `a[i][i]` is the diagonal (implicit) coefficient.
+    /// `a[i][i]` == 0.0 means stage i is explicit.
     pub a: Vec<Vec<f64>>,
 }
 
 impl ImplicitBT {
-    /// Implicit (Backward) Euler — order 1, L-stable.
+    /// Implicit (Backward) Euler, order 1, L-stable.
     ///
-    /// Equivalent to BDF1.  Single implicit stage at c = 1.
+    /// Equivalent to BDF1. It has a single implicit stage at $c_1 = 1$:
     ///
-    ///   c | a       b
-    ///   --+---    -----
-    ///   1 | 1       1
+    /// $$ \begin{array}{c|c} 1 & 1 \cr \hline & 1 \end{array} $$
     pub fn implicit_euler() -> Self {
         ImplicitBT {
             s: 1,
@@ -57,15 +99,19 @@ impl ImplicitBT {
         }
     }
 
-    /// Crank–Nicolson (trapezoidal rule) — order 2, A-stable, ESDIRK.
+    /// Crank-Nicolson (trapezoidal rule), order 2, A-stable, ESDIRK.
     ///
-    /// Stage 0 is *explicit* (a[0][0] = 0); stage 1 is implicit (a[1][1] = 0.5).
-    /// This is the standard trapezoidal / CN method.
+    /// The first stage is explicit ($a_{11} = 0$) and the second stage is
+    /// implicit ($a_{22} = 1/2$). This is the standard trapezoidal method:
     ///
-    ///   c | a            b
-    ///   --+----------  -----
-    ///   0 | 0   0        0.5
-    ///   1 | 0.5 0.5      0.5
+    /// $$ \begin{array}{c|cc}
+    /// 0 & 0 & 0 \cr
+    /// 1 & 1/2 & 1/2 \cr \hline
+    ///   & 1/2 & 1/2
+    /// \end{array} $$
+    ///
+    /// Because the first stage is explicit, $A$ is singular and the method is not
+    /// L-stable. Note that `a[0]` stores only the single entry `0.0` (the diagonal).
     pub fn crank_nicolson() -> Self {
         ImplicitBT {
             s: 2,
@@ -75,16 +121,22 @@ impl ImplicitBT {
         }
     }
 
-    /// SDIRK(2,2) — 2 stages, order 2, L-stable.  Norsett (1974).
+    /// SDIRK(2,2), 2 stages, order 2, L-stable. Norsett (1974).
     ///
-    /// γ = 1 − 1/sqrt(2) ≈ 0.2929
+    /// The diagonal coefficient is $\gamma = 1 - 1/\sqrt{2} \approx 0.2929$:
     ///
-    ///   c  | a           b
-    ///   ---+---------  -----
-    ///   γ  | γ            1−γ
-    ///   1  | 1−γ  γ       γ
+    /// $$ \begin{array}{c|cc}
+    /// \gamma & \gamma & 0 \cr
+    /// 1 & 1 - \gamma & \gamma \cr \hline
+    ///   & 1 - \gamma & \gamma
+    /// \end{array} $$
     ///
-    /// Reference: Norsett (1974), "Semi-explicit Runge–Kutta methods".
+    /// The method is FSAL (see the module documentation).
+    ///
+    /// # References
+    ///
+    /// * Norsett, S. P., "Semi-explicit Runge-Kutta methods", Report Mathematics
+    ///   and Computation No. 6/74, University of Trondheim, 1974
     pub fn sdirk22() -> Self {
         let gamma = 1.0 - 1.0 / 2.0_f64.sqrt();
         ImplicitBT {
@@ -95,17 +147,18 @@ impl ImplicitBT {
         }
     }
 
-    /// SDIRK(3,2) — 3 stages, order 2, L-stable (default).
+    /// SDIRK(3,2), 3 stages, order 2, L-stable (default).
     ///
-    /// γ = 1/4,  c = [1/4, 1/2, 1].
-    /// Uses FSAL (b = a[2]), guaranteeing L-stability for any valid γ.
+    /// The diagonal coefficient is $\gamma = 1/4$ and $c = (1/4, 1/2, 1)$.
+    /// The method is FSAL, $b = $ `a[2]` (see the module documentation), which
+    /// gives $R(\infty) = 0$ and hence L-stability.
     ///
-    ///   c   | a                     b
-    ///   ----+------------------   ------
-    ///   1/4 | 1/4                   1/2
-    ///   1/2 | 1/4  1/4              1/4
-    ///   1   | 1/2  1/4  1/4         1/4
-    ///
+    /// $$ \begin{array}{c|ccc}
+    /// 1/4 & 1/4 & 0 & 0 \cr
+    /// 1/2 & 1/4 & 1/4 & 0 \cr
+    /// 1 & 1/2 & 1/4 & 1/4 \cr \hline
+    ///   & 1/2 & 1/4 & 1/4
+    /// \end{array} $$
     pub fn sdirk32() -> Self {
         ImplicitBT {
             s: 3,
@@ -115,16 +168,33 @@ impl ImplicitBT {
         }
     }
 
-    /// SDIRK(3,2) Norsett variant — 3 stages, order 2, L-stable.
+    /// SDIRK(3,2) Norsett variant, 3 stages, order 2, L-stable.
     ///
-    /// γ_N = (3−sqrt(3))/6,  c = [γ_N, 1/2, 1].
-    /// Uses FSAL (b = a[2]).  Smaller diagonal γ means less implicit dissipation
-    /// (closer to the Norsett optimal accuracy parameter).
+    /// The diagonal coefficient is $\gamma_N = (3 - \sqrt{3})/6$ and
+    /// $c = (\gamma_N, 1/2, 1)$. The method is FSAL, $b = $ `a[2]` (see the
+    /// module documentation). The smaller diagonal $\gamma_N$ means less
+    /// implicit dissipation (closer to the Norsett optimal accuracy parameter).
     ///
-    /// Exact coefficients (α = sqrt(3)):
-    ///   b0 = (α−1)/2,   b1 = (α−1)/α = 1 − 1/α,   b2 = γ_N
+    /// With $\alpha = \sqrt{3}$ the weights are
     ///
-    /// Reference: Norsett (1974) SDIRK family, L-stable variant via FSAL.
+    /// $$ b_1 = \frac{\alpha - 1}{2}, \qquad
+    /// b_2 = \frac{\alpha - 1}{\alpha} = 1 - \frac{1}{\alpha}, \qquad
+    /// b_3 = \gamma_N , $$
+    ///
+    /// and the tableau is
+    ///
+    /// $$ \begin{array}{c|ccc}
+    /// \gamma_N & \gamma_N & 0 & 0 \cr
+    /// 1/2 & 1/2 - \gamma_N & \gamma_N & 0 \cr
+    /// 1 & b_1 & b_2 & \gamma_N \cr \hline
+    ///   & b_1 & b_2 & \gamma_N
+    /// \end{array} $$
+    ///
+    /// # References
+    ///
+    /// * Norsett, S. P., "Semi-explicit Runge-Kutta methods", Report Mathematics
+    ///   and Computation No. 6/74, University of Trondheim, 1974 (SDIRK family,
+    ///   L-stable variant via FSAL)
     pub fn sdirk32_norsett() -> Self {
         let sq3 = 3.0_f64.sqrt();
         let gamma = (3.0 - sq3) / 6.0;
@@ -138,21 +208,29 @@ impl ImplicitBT {
         }
     }
 
-    /// SDIRK(3,3) Alexander - 3 stages, order 3, L-stable.
+    /// SDIRK(3,3) Alexander, 3 stages, order 3, L-stable.
     ///
-    /// γ ≈ 0.4358665215454664
+    /// The diagonal coefficient $\gamma \approx 0.4358665215454664$ is a root of
+    /// $\gamma^3 - 3 \gamma^2 + \frac{3}{2} \gamma - \frac{1}{6} = 0$. The weights are
     ///
-    ///   c        | a                        b
-    ///   ---------+-------------------    -------
-    ///   γ        | γ                        b1
-    ///   (1+γ)/2  | (1−γ)/2   γ              b2
-    ///   1        | b1        b2    γ        γ
+    /// $$ b_1 = -\frac{6 \gamma^2 - 16 \gamma + 1}{4}, \qquad
+    /// b_2 = \frac{6 \gamma^2 - 20 \gamma + 5}{4}, $$
     ///
-    ///   b1 = −(6γ^2−16γ+1)/4
-    ///   b2 =  (6γ^2−20γ+5)/4
+    /// and the tableau is
     ///
-    /// Reference: Alexander (1977), "Diagonally implicit Runge–Kutta methods for
-    /// stiff ODEs", SIAM J. Numer. Anal. 14(6), pp. 1006–1021.
+    /// $$ \begin{array}{c|ccc}
+    /// \gamma & \gamma & 0 & 0 \cr
+    /// (1 + \gamma)/2 & (1 - \gamma)/2 & \gamma & 0 \cr
+    /// 1 & b_1 & b_2 & \gamma \cr \hline
+    ///   & b_1 & b_2 & \gamma
+    /// \end{array} $$
+    ///
+    /// The method is FSAL (see the module documentation).
+    ///
+    /// # References
+    ///
+    /// * Alexander, R., "Diagonally implicit Runge-Kutta methods for stiff O.D.E.'s",
+    ///   SIAM J. Numer. Anal. 14(6) (1977) 1006-1021
     pub fn sdirk33() -> Self {
         const GAMMA: f64 = 0.435_866_521_545_466_4;
         let g = GAMMA;
@@ -168,8 +246,8 @@ impl ImplicitBT {
 }
 
 impl ImplicitBT {
-    /// Check sum(b) = 1 (consistency) and sum(b*c) = 1/2 (order-2 condition).
-    /// Returns (sum_b, sum_bc).
+    /// Check $\sum_i b_i = 1$ (consistency) and $\sum_i b_i c_i = 1/2$ (order-2 condition).
+    /// Returns `(sum_b, sum_bc)`.
     #[cfg(test)]
     pub fn check_order2(&self) -> (f64, f64) {
         let sum_b: f64 = self.b.iter().sum();
@@ -177,7 +255,7 @@ impl ImplicitBT {
         (sum_b, sum_bc)
     }
 
-    /// Check that each row sum of a equals c[i] (consistency condition).
+    /// Check that each row sum of $A$ equals `c[i]` (consistency condition).
     #[cfg(test)]
     pub fn check_consistency(&self) -> Vec<f64> {
         (0..self.s)
@@ -185,15 +263,18 @@ impl ImplicitBT {
             .collect()
     }
 
-    /// L-stability check: compute b^T A^{-1} e by forward substitution.
-    /// Returns the value; should equal 1.0 for an L-stable method.
+    /// L-stability check: compute $b^T A^{-1} e$ by forward substitution.
+    /// Returns the value, which should equal 1 for an L-stable method.
     ///
-    /// L-stability note
-    /// ----------------
-    /// All multi-stage methods below use the FSAL (First Same As Last) property
-    /// `b == a[s-1]`, which guarantees L-stability:
-    ///   b^T A^{-1} e  =  (last row of A) * A^{-1} * e  =  e_{s-1} * e  =  1
-    ///   R(\infty) = 1 - b^T A^{-1} e = 0  => L-stable.
+    /// # L-stability
+    ///
+    /// The stability function at infinity is $R(\infty) = 1 - b^T A^{-1} e$.
+    /// The multi-stage methods above are FSAL (see the module documentation), so
+    /// $b^T$ is the last row of $A$ and
+    ///
+    /// $$ b^T A^{-1} e = e_s^T A A^{-1} e = 1 , $$
+    ///
+    /// hence $R(\infty) = 0$.
     #[cfg(test)]
     pub fn check_l_stability(&self) -> f64 {
         // Solve A x = e (e = all-ones) by forward substitution on lower-triangular A.
@@ -277,17 +358,17 @@ mod test_tableau {
         let bt = ImplicitBT::sdirk33();
         // Check order-2 conditions (subsumed by order-3)
         check_bt("SDIRK33", &bt, 2);
-        // Check order-3 conditions: Σb·c² = 1/3 and b^T A c = 1/6
+        // Check order-3 conditions: sum(b*c^2) = 1/3 and b^T A c = 1/6
         // Note: for DIRK methods A is the full lower-triangular matrix
         // including the diagonal, so the inner sum runs j = 0..=i.
         let sum_bc2: f64 = bt.b.iter().zip(bt.c.iter()).map(|(b, c)| b * c * c).sum();
         println!("SDIRK33 Σb·c² = {sum_bc2:.6}");
         assert_approx_eq!(sum_bc2, 1.0 / 3.0, 1e-10);
-        // b^T A c  =  Σ_i b_i * (Σ_{j=0..=i} a[i][j] * c[j])
+        // b^T A c  =  sum_i b_i * (sum_{j=0..=i} a[i][j] * c[j])
         let mut sum_bac = 0.0_f64;
         for i in 0..bt.s {
             for j in 0..=i {
-                // j ≤ i, includes diagonal
+                // j <= i, includes diagonal
                 sum_bac += bt.b[i] * bt.a[i][j] * bt.c[j];
             }
         }

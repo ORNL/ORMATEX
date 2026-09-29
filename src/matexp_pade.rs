@@ -1,5 +1,5 @@
 /*
- * Copyright© 2025 UT-Battelle, LLC
+ * Copyright(c) 2025 UT-Battelle, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-//! Pade matrix exponential evaluation methods for dense faer Mats.
+//! Pade matrix exponential and phi-function evaluation for dense faer matrices.
+//!
+//! This module provides a dense matrix exponential $\exp(A t)$ based on the
+//! scaling and squaring method with diagonal Pade approximants of degree 3, 5,
+//! 7, 9 and 13 ([`matexp`], [`matexp_pade`]). The phi-functions
+//! $\varphi_k(Z)$ are available through a direct recurrence ([`phi`]), through
+//! the numerically preferred augmented-matrix (extension) formula
+//! ([`phi_ext`]), and for scalar arguments ([`phi_scaler`]). [`PadeExpm`]
+//! wraps these routines as a [`crate::matexp_traits::DensePhikvEvaluator`].
+//! All matrix routines are generic over real (`f64`) and complex (`c64`)
+//! matrices, while the time step `dt` is always a real `f64`.
+//!
+//! # References
+//!
+//! * N. J. Higham, "The scaling and squaring method for the matrix exponential
+//!   revisited", SIAM J. Matrix Anal. Appl. 26(4) (2005) 1179-1193,
+//!   doi:10.1137/04061101X.
+//! * M. Caliari, F. Cassini, F. Zivcovich, "BAMPHI: Chebyshev and rational
+//!   approximations of phi-functions applied to vectors", J. Comput. Appl.
+//!   Math. 423 (2023) 114973.
 use crate::matexp_traits::DensePhikvEvaluator;
 use faer::complex::ComplexFloat;
 use faer::linalg::solvers::{DenseSolveCore, Solve};
@@ -24,19 +43,30 @@ use libm::frexp;
 use num_traits::ToPrimitive;
 use statrs::function::factorial;
 
+/// Dense Pade evaluator of the phi-function vector products $\varphi_k(A t) v$.
+///
+/// Implements [`crate::matexp_traits::DensePhikvEvaluator`] by forming the
+/// dense matrix $\varphi_k(A t)$ with [`phi_ext`] and multiplying it with the
+/// given vector(s). The `max_squarings` setting is stored but is not currently
+/// used by the evaluation routines.
 #[derive(Debug)]
 pub struct PadeExpm {
     _max_squarings: usize,
 }
 
 impl PadeExpm {
+    /// Create a new Pade evaluator.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_squarings` - maximum number of squarings (stored, currently unused)
     pub fn new(max_squarings: usize) -> Self {
         Self { _max_squarings: max_squarings }
     }
 }
 
-/// Generic implementation — works for both `f64` and `c64` matrices.
-/// `dt` is kept as `f64` (real time step).
+// Generic implementation - works for both `f64` and `c64` matrices.
+// `dt` is kept as `f64` (real time step).
 impl<T> DensePhikvEvaluator<T> for PadeExpm
 where
     T: ComplexField,
@@ -47,9 +77,20 @@ where
     }
 }
 
-/// Computes exp(A * dt) for real or complex matrix `A`.
+/// Computes the matrix exponential $\exp(A \thinspace dt)$ for a real or complex matrix `A`.
 ///
-/// `dt` is a real scalar time step.
+/// Uses the scaling and squaring method with a Pade approximant chosen by
+/// [`matexp_pade`]. The rational approximant $r(A) = (V - U)^{-1}(V + U)$ is
+/// evaluated by a QR solve and then squared `alpha` times.
+///
+/// # Arguments
+///
+/// * `a` - square matrix $A$
+/// * `dt` - real scalar time step
+///
+/// # Returns
+///
+/// The dense matrix $\exp(A \thinspace dt)$, same size as `a`.
 pub fn matexp<T>(a: MatRef<T>, dt: f64) -> Mat<T>
 where
     T: ComplexField,
@@ -70,18 +111,30 @@ where
     r
 }
 
-/// Computes phi_k(Z) for a square matrix `Z` via the recurrence relation.
+/// Computes $\varphi_k(Z)$ for a square matrix `Z` via the recurrence relation.
 ///
-/// The phi functions satisfy the recurrence (derived from the series definition):
-/// ```text
-/// phi_0(Z) = exp(Z)
-/// phi_k(Z) = Z^{-1} (phi_{k-1}(Z) - 1/(k-1)! · I)    for k ≥ 1
-/// ```
-/// Note the `(k-1)!` factor — not `k!`.  At step k=1 this subtracts `1/0! = 1`,
-/// at k=2 it subtracts `1/1! = 1`, at k=3 it subtracts `1/2! = 0.5`, etc.
+/// The phi-functions satisfy the recurrence (derived from the series definition)
 ///
-/// For better numerical stability, prefer [`phi_ext`] which uses the
-/// augmented-matrix formula.
+/// $$ \varphi_0(Z) = \exp(Z), \qquad
+///    \varphi_k(Z) = Z^{-1} \left( \varphi_{k-1}(Z) - \frac{1}{(k-1)!} I \right),
+///    \quad k \ge 1 $$
+///
+/// Note the $(k-1)!$ factor - not $k!$. At step $k=1$ this subtracts
+/// $1/0! = 1$, at $k=2$ it subtracts $1/1! = 1$, at $k=3$ it subtracts
+/// $1/2! = 0.5$, etc.
+///
+/// `Z` must be invertible, and the recurrence is numerically unstable when `Z`
+/// is small or ill-conditioned. For better numerical stability, prefer
+/// [`phi_ext`] which uses the augmented-matrix formula.
+///
+/// # Arguments
+///
+/// * `z` - square, invertible matrix $Z$
+/// * `k` - phi-function order
+///
+/// # Returns
+///
+/// The dense matrix $\varphi_k(Z)$, same size as `z`.
 pub fn phi<T>(z: MatRef<T>, k: usize) -> Mat<T>
 where
     T: ComplexField,
@@ -95,7 +148,7 @@ where
     let z_inv = qr.inverse();
     let id = Mat::<T>::identity(z.nrows(), z.ncols());
     for i in 1..=k {
-        // the phi recurrence: phi_k = Z^{-1}(phi_{k-1} - 1/(k-1)! · I).
+        // the phi recurrence: phi_k = Z^{-1}(phi_{k-1} - 1/(k-1)! * I).
         let fact = (1..i).product::<usize>() as f64;
         let fact = if fact == 0.0 { 1.0 } else { fact };
         phi_k = z_inv.as_ref() * (phi_k.as_ref() - Scale(from_f64::<T>(1.0 / fact)) * id.as_ref());
@@ -103,15 +156,36 @@ where
     phi_k
 }
 
-/// Computes phi_k(Z) using the numerically stable augmented-matrix formula.
+/// Computes $\varphi_k(Z)$ using the numerically stable augmented-matrix formula.
 ///
-/// Constructs the block extension
+/// For $k \ge 1$ this constructs the block matrix of size $n(k+1) \times n(k+1)$
+///
 /// ```text
-/// Z_ext = [ Z | I_k ]
-///         [ 0 | K  ]
+/// Z_ext = [ Z  I  0  ...  0 ]
+///         [ 0  0  I  ...  0 ]
+///         [ :         .   : ]
+///         [ 0  0  0  ...  I ]
+///         [ 0  0  0  ...  0 ]
 /// ```
-/// of size `n(k+1) × n(k+1)`, computes `exp(Z_ext)`, and extracts the
-/// top-right `n × n` block which equals `phi_k(Z)`.
+///
+/// i.e. `Z` in the top-left block, `n x n` identity blocks on the first block
+/// superdiagonal and zeros elsewhere. It then computes $\exp(Z_{ext})$ with
+/// [`matexp`] and extracts the top-right $n \times n$ block, which equals
+/// $\varphi_k(Z)$. For $k = 0$ the matrix is used directly, so the result is
+/// $\exp(Z)$.
+///
+/// # Arguments
+///
+/// * `z` - square matrix $Z$
+/// * `k` - phi-function order
+///
+/// # Returns
+///
+/// The dense matrix $\varphi_k(Z)$, same size as `z`.
+///
+/// # Panics
+///
+/// Panics if `z` is not square.
 pub fn phi_ext<T>(z: MatRef<T>, k: usize) -> Mat<T>
 where
     T: ComplexField,
@@ -141,15 +215,31 @@ where
     phi_ks.get(0..n, phi_ks.ncols() - n..).to_owned()
 }
 
-/// Selects and applies the cheapest Padé approximant to `A` based on its
-/// 1-norm, following:
+/// Selects the cheapest Pade approximant of $\exp(A)$ based on the norm of `A`.
 ///
-/// > N. J. Higham. *The Scaling and Squaring Method for the Matrix Exponential
-/// > Revisited.* SIAM J. Matrix Anal. Appl. 26(4):1179–1193, 2005.
+/// The norm `a_1norm` returned by faer's `norm_l1` is compared against the
+/// thresholds of Higham (2005) to choose the degree 3, 5, 7 or 9 approximant
+/// with no scaling. Above the last threshold, `A` is scaled by $2^{-\alpha}$
+/// so that the degree 13 approximant applies. The returned matrices $U$ and
+/// $V$ are the odd and even parts of the Pade numerator, so that
+///
+/// $$ \exp(A) \approx \left[ (V - U)^{-1} (V + U) \right]^{2^{\alpha}} $$
+///
+/// # Arguments
+///
+/// * `a` - square matrix $A$ (already multiplied by the time step)
 ///
 /// # Returns
-/// `(U, V, alpha)` where `exp(A) ≈ (V - U)⁻¹(V + U)` after squaring
+///
+/// A tuple `(U, V, alpha)`. When `alpha > 0`, `U` and `V` were built from the
+/// scaled matrix $A / 2^{\alpha}$ and the rational function must be squared
 /// `alpha` times.
+///
+/// # References
+///
+/// * N. J. Higham, "The scaling and squaring method for the matrix exponential
+///   revisited", SIAM J. Matrix Anal. Appl. 26(4) (2005) 1179-1193,
+///   doi:10.1137/04061101X.
 pub fn matexp_pade<T>(a: MatRef<T>) -> (Mat<T>, Mat<T>, isize)
 where
     T: ComplexField,
@@ -179,7 +269,7 @@ where
         return (u, v, alpha);
     } else {
         let maxnorm: f64 = 5.371920351148152;
-        // Convert T::Real → f64 for the frexp call (f64 is the real type for
+        // Convert T::Real -> f64 for the frexp call (f64 is the real type for
         // both f64 and c64 matrices).
         let a_1norm_f64 = a_1norm
             .to_f64()
@@ -204,10 +294,10 @@ where
     }
 }
 
-// ── Private Padé polynomial helpers ──────────────────────────────────────────
+// Private Pade polynomial helpers
 //
 // Each function receives pre-computed even powers of A and returns (U, V)
-// such that the [p/p] Padé approximant of exp(A) equals (V-U)^{-1}(V+U).
+// such that the [p/p] Pade approximant of exp(A) equals (V-U)^{-1}(V+U).
 
 fn pade3<T: ComplexField>(a: MatRef<T>, a2: MatRef<T>) -> (Mat<T>, Mat<T>) {
     const B3: [f64; 4] = [120.0, 60.0, 12.0, 1.0];
@@ -311,7 +401,7 @@ fn pade13<T: ComplexField>(
     ];
     let ident = Mat::<T>::identity(a.ncols(), a.nrows());
 
-    // U polynomial (odd Padé numerator)
+    // U polynomial (odd Pade numerator)
     let v1 = a6 * Scale(from_f64::<T>(B13[13]))
         + a4 * Scale(from_f64::<T>(B13[11]))
         + a2 * Scale(from_f64::<T>(B13[9]));
@@ -322,7 +412,7 @@ fn pade13<T: ComplexField>(
         + ident.as_ref() * Scale(from_f64::<T>(B13[1]));
     let u = a * temp;
 
-    // V polynomial (even Padé denominator)
+    // V polynomial (even Pade denominator)
     let temp2 = a6 * Scale(from_f64::<T>(B13[12]))
         + a4 * Scale(from_f64::<T>(B13[10]))
         + a2 * Scale(from_f64::<T>(B13[8]));
@@ -334,13 +424,25 @@ fn pade13<T: ComplexField>(
     (u, v2)
 }
 
-/// Computes phi_k(z) for a scalar real or complex `z`.
+/// Computes $\varphi_k(z)$ for a scalar real or complex `z`.
 ///
-/// Recurrence:
-/// ```text
-/// phi_0(z) = exp(z)
-/// phi_k(z) = (phi_{k-1}(z) - 1/k!) / z
-/// ```
+/// As implemented, the recurrence is
+///
+/// $$ \varphi_0(z) = e^z, \qquad
+///    \varphi_k(z) = \frac{\varphi_{k-1}(z) - 1/k!}{z} $$
+///
+/// Note that the correct phi-function recurrence subtracts $1/(k-1)!$ rather
+/// than $1/k!$, so this routine agrees with $\varphi_k(z)$ only for $k \le 1$.
+/// The recurrence is also numerically unstable for small $|z|$.
+///
+/// # Arguments
+///
+/// * `z` - scalar argument
+/// * `k` - phi-function order
+///
+/// # Returns
+///
+/// The value computed by the recurrence above.
 pub fn phi_scaler<T: ComplexFloat>(z: T, k: usize) -> T {
     let mut phi_z = z.exp();
     if k == 0 {
@@ -360,7 +462,7 @@ mod test_matexp_pade {
     use std::f64::consts::PI;
 
     /// Verify that the recurrence formula and the extension formula for phi_k
-    /// agree to within 1e-9 on a random 5×5 real matrix.
+    /// agree to within 1e-9 on a random 5x5 real matrix.
     #[test]
     fn test_phi_ext() {
         let dense_a: Mat<f64> = random_mat_normal(5, 5);
@@ -373,9 +475,9 @@ mod test_matexp_pade {
 
     /// Verify the matrix exponential on a real diagonal matrix.
     ///
-    /// For a diagonal matrix A = diag(a1, ..., an), exp(A·dt) is simply
-    /// diag(exp(a1·dt), ..., exp(an·dt)).  Off-diagonal entries must remain
-    /// zero.  The 1-norm of A·dt ≈ 2.0 routes through the **pade9** branch.
+    /// For a diagonal matrix A = diag(a1, ..., an), exp(A*dt) is simply
+    /// diag(exp(a1*dt), ..., exp(an*dt)).  Off-diagonal entries must remain
+    /// zero.  The 1-norm of A*dt ~= 2.0 routes through the **pade9** branch.
     #[test]
     fn test_matexp_real_diagonal() {
         // A = diag(1.0, 2.0, -1.0),  dt = 1.0
@@ -420,11 +522,11 @@ mod test_matexp_pade {
     /// The skew-symmetric generator of 2-D rotations has the exact result:
     ///
     /// ```text
-    /// A  = [[  0, -θ ],       exp(A·dt) = [[ cos(θ·dt), -sin(θ·dt) ],
-    ///       [  θ,  0 ]]                    [ sin(θ·dt),  cos(θ·dt) ]]
+    /// A  = [[  0, -theta ],       exp(A*dt) = [[ cos(theta*dt), -sin(theta*dt) ],
+    ///       [  theta,  0 ]]                    [ sin(theta*dt),  cos(theta*dt) ]]
     /// ```
     ///
-    /// With θ = 1.0 and dt = 1.0 the 1-norm of A·dt is 1.0, routing through
+    /// With theta = 1.0 and dt = 1.0 the 1-norm of A*dt is 1.0, routing through
     /// the **pade7** branch.  All four entries are non-trivially non-zero.
     #[test]
     fn test_matexp_real_skew_symmetric() {
@@ -467,7 +569,7 @@ mod test_matexp_pade {
 
     /// Verify the matrix exponential on a complex diagonal matrix.
     ///
-    /// A = diag(iπ, iπ/2)  →  exp(A) = diag(exp(iπ), exp(iπ/2)) = diag(-1, i)
+    /// A = diag(i*pi, i*pi/2)  ->  exp(A) = diag(exp(i*pi), exp(i*pi/2)) = diag(-1, i)
     /// via Euler's identity.
     #[test]
     fn test_matexp_complex_diagonal() {
@@ -479,7 +581,7 @@ mod test_matexp_pade {
 
         let tol = 1e-12_f64;
 
-        // exp(iπ) = -1 + 0i
+        // exp(i*pi) = -1 + 0i
         assert!(
             (result[(0, 0)].re + 1.0).abs() < tol,
             "Re(exp(iπ)) expected -1, got {}",
@@ -491,7 +593,7 @@ mod test_matexp_pade {
             result[(0, 0)].im
         );
 
-        // exp(iπ/2) = 0 + 1i
+        // exp(i*pi/2) = 0 + 1i
         assert!(
             result[(1, 1)].re.abs() < tol,
             "Re(exp(iπ/2)) expected 0, got {}",
@@ -519,18 +621,18 @@ mod test_matexp_pade {
     /// Verify the matrix exponential on a complex non-diagonal matrix.
     ///
     /// The anti-Hermitian matrix `A = [[0, i], [i, 0]]` shares its
-    /// eigenvectors with the real Pauli-X matrix and has eigenvalues `±i`.
+    /// eigenvectors with the real Pauli-X matrix and has eigenvalues `+/-i`.
     /// The exact result follows from the spectral decomposition
-    /// `exp(A) = Q diag(e^i, e^{-i}) Q†`:
+    /// `exp(A) = Q diag(e^i, e^{-i}) Q^H`:
     ///
     /// ```text
-    /// A  = [[ 0,  i ],       exp(A) = [[ cos(1),   i·sin(1) ],
-    ///       [ i,  0 ]]                 [ i·sin(1),  cos(1)   ]]
+    /// A  = [[ 0,  i ],       exp(A) = [[ cos(1),   i*sin(1) ],
+    ///       [ i,  0 ]]                 [ i*sin(1),  cos(1)   ]]
     /// ```
     ///
     /// With `dt = 1.0` the 1-norm of `A` is 1.0, routing through **pade7**.
     /// All four entries are non-trivially non-zero, and the off-diagonal
-    /// entries are purely imaginary — a case that cannot arise in any real
+    /// entries are purely imaginary - a case that cannot arise in any real
     /// matrix test.
     #[test]
     fn test_matexp_complex_off_diagonal() {
@@ -558,7 +660,7 @@ mod test_matexp_pade {
             );
         }
 
-        // Off-diagonal: 0 + i·sin(1), by symmetry of A
+        // Off-diagonal: 0 + i*sin(1), by symmetry of A
         for (r, ci) in [(0, 1), (1, 0)] {
             assert!(
                 result[(r, ci)].re.abs() < tol,
