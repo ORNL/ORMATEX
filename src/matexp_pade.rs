@@ -13,8 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// Pade matrix exponential evaluation methods for dense faer Mats.
-///
+//! Pade matrix exponential evaluation methods for dense faer Mats.
 use crate::matexp_traits::DensePhikvEvaluator;
 use faer::complex::ComplexFloat;
 use faer::linalg::solvers::{DenseSolveCore, Solve};

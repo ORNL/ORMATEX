@@ -60,17 +60,16 @@ where
 }
 
 /// Only the real part of mat
-pub fn real_mat(a: MatRef<c64>) -> Mat<f64> {
-    let rm: Mat<f64> = Mat::from_fn(a.nrows(), a.ncols(), |i, j| a[(i, j)].re);
-    rm
+pub fn real_mat<T: RealField + Float>(a: MatRef<num_complex::Complex<T>>) -> Mat<T> {
+    Mat::from_fn(a.nrows(), a.ncols(), |i, j| a[(i, j)].re)
 }
 
-/// Convert mat to complex and scale by dt
-pub fn complex_mat_scale(a: MatRef<f64>, dt: f64) -> Mat<c64> {
-    let a_dt: Mat<c64> = Mat::from_fn(a.nrows(), a.ncols(), |i, j| {
-        c64::from(a[(i, j)]) * c64::from(dt)
-    });
-    a_dt
+/// Convert real mat to complex and scale by dt
+pub fn complex_mat_scale<T: RealField + Float>(a: MatRef<T>, dt: f64) -> Mat<num_complex::Complex<T>> {
+    let dt = T::from(dt).unwrap();
+    Mat::from_fn(a.nrows(), a.ncols(), |i, j| {
+        num_complex::Complex::new(a[(i, j)] * dt, T::from(0.0).unwrap())
+    })
 }
 
 /// Take powers of a real matrix

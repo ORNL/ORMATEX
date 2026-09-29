@@ -13,8 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// Taylor series matrix exponential evaluation methods for dense faer Mats.
-///
+//! Taylor series matrix exponential evaluation methods for dense faer Mats.
 use faer::prelude::*;
 use faer::linalg::matmul;
 use faer_traits::math_utils::{add, mul};
