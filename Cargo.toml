@@ -9,6 +9,8 @@ name = "ormatex"
 crate-type = ["cdylib", "rlib"]
 path = 'src/lib.rs'
 
+readme = "src/README.md"
+
 [features]
 default = ["python"]
 plot = ["dep:kuva"]

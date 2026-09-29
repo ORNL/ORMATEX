@@ -19,7 +19,7 @@
 //! $$ \frac{dy}{dt} = f(t, y), \qquad y(t_0) = y_0, $$
 //!
 //! together with classic explicit and implicit Runge-Kutta and BDF integrators
-//! for comparison. The linear algebra is built on [`faer`].
+//! for comparison. The linear algebra is built on [`faer`](https://docs.rs/faer/latest/faer/).
 //!
 //! ORMATEX is a mixed Rust and Python package. The Rust integrators are also
 //! available from Python through the `ormatex_rspy` module (cargo feature
@@ -31,8 +31,8 @@
 //! | Module | Method | Best suited for |
 //! | ------ | ------ | --------------- |
 //! | [`matexp_pade`] | Pade approximation with scaling and squaring (Higham) | small dense matrices, real or complex |
-//! | [`matexp_taylor`] | Taylor series | small dense matrices, phi-functions |
-//! | [`matexp_cauchy`] | Contour integral (CRAM, parabolic contour) via partial fractions | dense matrices with spectrum near the negative real axis |
+//! | [`matexp_taylor`] | Taylor series | small dense matrices, real or complex |
+//! | [`matexp_cauchy`] | Contour integral (CRAM, parabolic contour) via partial fractions | real dense matrices with spectrum near the negative real axis |
 //! | [`matexp_krylov`] | Krylov subspace (Arnoldi with optional incomplete orthogonalization) | large sparse or matrix-free operators |
 //! | [`matexp_leja`] | Leja interpolation with divided differences | large sparse or matrix-free operators |
 //!
@@ -130,6 +130,9 @@
 //!
 //! ## References
 //!
+//! * Kazdadi, S. Q. E., (2026). faer: A linear algebra library for the Rust
+//!   programming language. Journal of Open Source Software, 11(123), 6099,
+//!   <https://doi.org/10.21105/joss.06099>
 //! * Hochbruck, M., Ostermann, A. Exponential integrators. Acta Numerica 19
 //!   (2010) 209-286. doi:10.1017/S0962492910000048
 //! * Higham, N. J. The scaling and squaring method for the matrix exponential
@@ -156,10 +159,11 @@
 //!
 //! ## Citation
 //!
-//! If you find this software useful in your work, please cite: Gurecky,
-//! William, and Pieper, Konstantin. ORMATEX. Computer Software.
-//! <https://github.com/ORNL/ORMATEX>. USDOE. 24 Jan. 2025.
-//! doi:10.11578/dc.20250124.7.
+//! If you find this software useful in your work, please cite:
+//!
+//! * Gurecky, William, and Pieper, Konstantin. ORMATEX. Computer Software.
+//!   <https://github.com/ORNL/ORMATEX>. USDOE. 24 Jan. 2025.
+//!   [doi:10.11578/dc.20250124.7](https://doi.org/10.11578/dc.20250124.7).
 #![warn(missing_docs)]
 
 pub mod arnoldi;
