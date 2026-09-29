@@ -76,7 +76,7 @@
 //!
 //! ## Example: exponential time integrator
 //!
-//! Integrate the linear decay chain $y^\prime  = A y$ with the second order EPI2
+//! Integrate the linear system $y^\prime  = A y$ with the second order EPI2
 //! method, using a Krylov evaluator for the $\varphi$-function products.
 //! A system supplies its right hand side $f(t, y)$ and a Jacobian
 //! operator (here a finite difference Jacobian from [`ode_sys::get_fd_jac`]).
@@ -90,9 +90,9 @@
 //! use ormatex::ode_sys::{get_fd_jac, OdeSys};
 //!
 //! /// y0' = -y0,  y1' = y0 - 2 y1
-//! struct DecayChain;
+//! struct LinearSys;
 //!
-//! impl<'a> OdeSys<'a> for DecayChain {
+//! impl<'a> OdeSys<'a> for LinearSys {
 //!     fn frhs(&self, _t: f64, y: MatRef<f64>) -> Mat<f64> {
 //!         faer::mat![[-y[(0, 0)]], [y[(0, 0)] - 2.0 * y[(1, 0)]]]
 //!     }
@@ -102,7 +102,7 @@
 //!     }
 //! }
 //!
-//! let sys = DecayChain;
+//! let sys = LinearSys;
 //! let y0 = faer::mat![[1.0], [0.0]];
 //!
 //! // build an EPI2 integrator with Krylov phi-function evaluation
