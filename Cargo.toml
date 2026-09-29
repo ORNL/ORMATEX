@@ -48,3 +48,6 @@ module-name = "ormatex"
 profile = "release"
 editable-profile = "release"
 features = ["python"]
+
+[package.metadata.docs.rs]
+rustdoc-args = [ "--html-in-header", "katex.html" ]
