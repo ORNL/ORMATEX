@@ -13,8 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-// Krylov Matrix Exponential Methods
-//
+//! Krylov matrix exponential methods for faer LinOps
 use crate::arnoldi::{arnoldi_lop, arnoldi_lop_restarted};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use crate::ode_sys::DynRefExtendedLinOp;

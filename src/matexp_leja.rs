@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+//! Leja polynomial matrix exponential methods for faer LinOps
 use faer::complex::{Complex64, ComplexFloat};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::linalg::matmul::triangular::{matmul as tri_matmul, BlockStructure};
