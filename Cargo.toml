@@ -2,14 +2,13 @@
 name = "ormatex"
 version = "0.0.1"
 edition = "2024"
+readme = "src/README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "ormatex"
 crate-type = ["cdylib", "rlib"]
 path = 'src/lib.rs'
-
-readme = "src/README.md"
 
 [features]
 default = ["python"]
