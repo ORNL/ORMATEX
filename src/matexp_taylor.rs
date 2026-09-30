@@ -25,9 +25,6 @@
 //!
 //! # References
 //!
-//! * M. Caliari, F. Cassini, F. Zivcovich, "BAMPHI: Chebyshev and rational
-//!   approximations of phi-functions applied to vectors", J. Comput. Appl.
-//!   Math. 423 (2023) 114973.
 //! * N. J. Higham, "Functions of Matrices: Theory and Computation", SIAM, 2008.
 use faer::prelude::*;
 use faer::linalg::matmul;
