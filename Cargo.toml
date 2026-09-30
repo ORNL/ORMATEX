@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 path = 'src/lib.rs'
 
 [features]
-default = ["python"]
+default = []
 plot = ["dep:kuva"]
 python = ["dep:pyo3", "dep:numpy", "dep:faer-ext"]
 
