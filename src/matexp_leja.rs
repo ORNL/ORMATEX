@@ -2741,7 +2741,7 @@ mod test_matexp_leja {
         let (test_a, test_v) = gen_test_a();
 
         // compute the matrix matexp(dt*A)*v using dense impl
-        let expm_tay = phik_taylor_ext(test_a.as_ref(), 0);
+        let expm_tay = phik_taylor_ext(test_a.as_ref(), 0, faer::Par::Seq);
         let expmv_tay_dense = expm_tay.as_ref() * test_v.as_ref();
 
         // compute the matrix matexp(dt*A)*v using matfree impl
@@ -2773,8 +2773,8 @@ mod test_matexp_leja {
         mat_mat_approx_eq(expmv_tay_pm.as_ref(), expmv_tay_dense.as_ref(), 1e-8);
 
         // compute the matrix phi_2(dt*A)*v using dense impl
-        let phi2v_tay = phik_taylor_ext((1.0 * &test_a).as_ref(), 2) * test_v.as_ref();
-        let phi2v_pade = phi((1.0 * &test_a).as_ref(), 2) * test_v.as_ref();
+        let phi2v_tay = phik_taylor_ext((1.0 * &test_a).as_ref(), 2, faer::Par::Seq) * test_v.as_ref();
+        let phi2v_pade = phi((1.0 * &test_a).as_ref(), 2, faer::Par::Seq) * test_v.as_ref();
         mat_mat_approx_eq(phi2v_pade.as_ref(), phi2v_tay.as_ref(), 1e-8);
     }
 
@@ -2820,7 +2820,7 @@ mod test_matexp_leja {
             let expmv_leja_pm = leja_phikv_eval.apply_phi_k(&test_m, 1.0, test_v.as_ref(), 0);
 
             // Ensure results are consistent with pade methods.
-            let expmv_pade_dense = matexp(test_m.as_ref(), 1.0) * test_v.as_ref();
+            let expmv_pade_dense = matexp(test_m.as_ref(), 1.0, faer::Par::Seq) * test_v.as_ref();
             println!("leja expmv: {:?}", &expmv_leja_pm);
             println!("pade expmv: {:?}", &expmv_pade_dense);
             mat_mat_approx_eq(expmv_leja_pm.as_ref(), expmv_pade_dense.as_ref(), 1e-8);
@@ -2862,7 +2862,7 @@ mod test_matexp_leja {
         let phi0mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, dt, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi0mv_pade_dense = matexp(test_b.as_ref(), 1.0) * test_v.as_ref();
+        let phi0mv_pade_dense = matexp(test_b.as_ref(), 1.0, faer::Par::Seq) * test_v.as_ref();
         println!("leja phi0mv: {:?}", &phi0mv_leja_pm);
         println!("pade phi0mv: {:?}", &phi0mv_pade_dense);
         mat_mat_approx_eq(phi0mv_leja_pm.as_ref(), phi0mv_pade_dense.as_ref(), 1e-8);
@@ -2876,7 +2876,7 @@ mod test_matexp_leja {
         let phi1mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, dt, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi1mv_pade_dense = phi(test_b.as_ref(), 1) * test_v.as_ref();
+        let phi1mv_pade_dense = phi(test_b.as_ref(), 1, faer::Par::Seq) * test_v.as_ref();
         println!("leja phi1mv: {:?}", &phi1mv_leja_pm);
         println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
         mat_mat_approx_eq(phi1mv_leja_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);
@@ -2929,7 +2929,7 @@ mod test_matexp_leja {
         let phi0mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi0mv_pade_dense = matexp(test_b.as_ref(), dt) * test_v.as_ref();
+        let phi0mv_pade_dense = matexp(test_b.as_ref(), dt, faer::Par::Seq) * test_v.as_ref();
         println!("leja_ritz phi0mv: {:?}", &phi0mv_leja_pm);
         println!("pade phi0mv: {:?}", &phi0mv_pade_dense);
         mat_mat_approx_eq(phi0mv_leja_pm.as_ref(), phi0mv_pade_dense.as_ref(), 1e-7);
@@ -2945,7 +2945,7 @@ mod test_matexp_leja {
         let phi1mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi1mv_pade_dense = phi((dt * test_b.as_ref()).as_ref(), 1) * test_v.as_ref();
+        let phi1mv_pade_dense = phi((dt * test_b.as_ref()).as_ref(), 1, faer::Par::Seq) * test_v.as_ref();
         println!("leja_ritz phi1mv: {:?}", &phi1mv_leja_pm);
         println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
         mat_mat_approx_eq(phi1mv_leja_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-7);
@@ -2961,7 +2961,7 @@ mod test_matexp_leja {
         let phi2mv_leja_pm: Mat<f64> = leja_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi2mv_pade_dense = phi((dt * test_b.as_ref()).as_ref(), 2) * test_v.as_ref();
+        let phi2mv_pade_dense = phi((dt * test_b.as_ref()).as_ref(), 2, faer::Par::Seq) * test_v.as_ref();
         println!("leja_ritz phi2mv: {:?}", &phi2mv_leja_pm);
         println!("pade phi2mv: {:?}", &phi2mv_pade_dense);
         mat_mat_approx_eq(phi2mv_leja_pm.as_ref(), phi2mv_pade_dense.as_ref(), 1e-7);

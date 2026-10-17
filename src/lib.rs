@@ -65,7 +65,8 @@
 //! // exp(dt * A) for a 2x2 matrix with eigenvalues -1 and -3
 //! let a = faer::mat![[-2.0, 1.0], [1.0, -2.0]];
 //! let dt = 0.5;
-//! let e = matexp_pade::matexp(a.as_ref(), dt);
+//! // Par::Seq is usually best for matrices of this size
+//! let e = matexp_pade::matexp(a.as_ref(), dt, faer::Par::Seq);
 //!
 //! // exact result: 1/2 * [[e^-0.5 + e^-1.5, e^-0.5 - e^-1.5], [.., ..]]
 //! let (e1, e3) = ((-0.5_f64).exp(), (-1.5_f64).exp());

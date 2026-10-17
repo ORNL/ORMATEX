@@ -551,11 +551,13 @@ mod test_arnoldi {
                 }
             }
         }
-        old_times.sort();
-        new_times.sort();
         println!(
-            "Arnoldi n={n}, m={m}, iom=2 median: allocating={:?}, reused={:?}",
-            old_times[4], new_times[4]
+            "Arnoldi n={n}, m={m}, iom=2 sum: allocating={:?}, reused={:?}",
+            old_times.iter().sum::<std::time::Duration>(), new_times.iter().sum::<std::time::Duration>()
+        );
+        println!(
+            "Arnoldi n={n}, m={m}, iom=2 mean: allocating={:?}, reused={:?}",
+            old_times.iter().sum::<std::time::Duration>() / 8, new_times.iter().sum::<std::time::Duration>() / 8
         );
     }
 

@@ -27,7 +27,8 @@
 //!
 //! * N. J. Higham, "Functions of Matrices: Theory and Computation", SIAM, 2008.
 use faer::prelude::*;
-use faer::linalg::matmul;
+use faer::linalg::matmul::matmul;
+use faer::{Accum, Par};
 use faer_traits::math_utils::{add, mul};
 use faer::traits::ComplexField;
 use num_traits::ToPrimitive;
@@ -41,10 +42,12 @@ use crate::matexp_traits::DensePhikvEvaluator;
 ///
 /// * `a` - the matrix
 /// * `p` - Taylor polynomial order
+/// * `par` - faer parallelism for the dense products
 ///
 fn matexp_ts<T: ComplexField>(
     a: MatRef<T>,
     p: usize,
+    par: Par,
 ) -> Mat<T> {
     let mut m: Mat<T> = a.to_owned();
     let mut m_next = Mat::<T>::zeros(m.nrows(), m.ncols());
@@ -54,13 +57,13 @@ fn matexp_ts<T: ComplexField>(
     for i in 0..p {
         fact *= (i + 1) as f64;
         ts_expm += m.as_ref() / fact;
-        matmul::matmul(
+        matmul(
             m_next.as_mut(),
-            faer::Accum::Replace,
+            Accum::Replace,
             a,
             m.as_ref(),
             from_f64::<T>(1.0),
-            faer::get_global_parallelism(),
+            par,
         );
         std::mem::swap(&mut m, &mut m_next);
     }
@@ -74,10 +77,12 @@ fn matexp_ts<T: ComplexField>(
 ///
 /// * `a` - the matrix
 /// * `p` - Taylor polynomial order
+/// * `par` - faer parallelism for the dense products
 ///
 fn matexp_ts_ss<T>(
     a: MatRef<T>,
     p: usize,
+    par: Par,
 ) -> Mat<T>
 where
     T: ComplexField,
@@ -96,17 +101,17 @@ where
     let hs = 1.0 / (2.0_f64).powi(s as i32);
 
     // compute exp(hs*a)
-    let mut matexp_a = matexp_ts((hs * a).as_ref(), p);
+    let mut matexp_a = matexp_ts((hs * a).as_ref(), p, par);
     let mut matexp_a_next = Mat::<T>::zeros(matexp_a.nrows(), matexp_a.ncols());
 
     for _ in 0..s {
-        matmul::matmul(
+        matmul(
             matexp_a_next.as_mut(),
-            faer::Accum::Replace,
+            Accum::Replace,
             matexp_a.as_ref(),
             matexp_a.as_ref(),
             from_f64::<T>(1.0),
-            faer::get_global_parallelism(),
+            par,
         );
         std::mem::swap(&mut matexp_a, &mut matexp_a_next);
     }
@@ -128,6 +133,7 @@ where
 ///
 /// * `z` - square matrix $Z$
 /// * `k` - phi-function order
+/// * `par` - faer parallelism for the dense products
 ///
 /// # Returns
 ///
@@ -136,7 +142,7 @@ where
 /// # Panics
 ///
 /// Panics if `z` is not square.
-pub fn phik_taylor_ext<T>(z: MatRef<T>, k: usize) -> Mat<T>
+pub fn phik_taylor_ext<T>(z: MatRef<T>, k: usize, par: Par) -> Mat<T>
 where
     T: ComplexField,
     T::Real: ToPrimitive,
@@ -160,7 +166,7 @@ where
             z_ext
         }
     };
-    let phi_ks = matexp_ts_ss(z_ext.as_ref(), 16);
+    let phi_ks = matexp_ts_ss(z_ext.as_ref(), 16, par);
     phi_ks.get(0..n, phi_ks.ncols() - n..).to_owned()
 }
 
@@ -171,6 +177,7 @@ where
 /// # Arguments
 ///
 /// * `a` - square matrix $A$
+/// * `par` - faer parallelism for the dense products
 ///
 /// # Returns
 ///
@@ -179,12 +186,12 @@ where
 /// # Panics
 ///
 /// Panics if `a` is not square.
-pub fn matexp_taylor<T>(a: MatRef<T>) -> Mat<T>
+pub fn matexp_taylor<T>(a: MatRef<T>, par: Par) -> Mat<T>
 where
     T: ComplexField,
     T::Real: ToPrimitive,
 {
-    phik_taylor_ext(a, 0)
+    phik_taylor_ext(a, 0, par)
 }
 
 /// Truncated Taylor series for $\varphi_k$ of a lower-bidiagonal matrix.
@@ -311,8 +318,11 @@ where
     T: ComplexField,
     T::Real: ToPrimitive,
 {
-    fn apply_phi_k(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize) -> Mat<T> {
-        phik_taylor_ext((Scale(from_f64::<T>(dt)) * a).as_ref(), k) * v0
+    fn apply_phi_k(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize, par: Par) -> Mat<T> {
+        let phi_k = phik_taylor_ext((Scale(from_f64::<T>(dt)) * a).as_ref(), k, par);
+        let mut out = Mat::zeros(phi_k.nrows(), v0.ncols());
+        matmul(out.as_mut(), Accum::Replace, phi_k.as_ref(), v0, T::one_impl(), par);
+        out
     }
 }
 
@@ -329,8 +339,8 @@ mod test_matexp_taylor {
     fn test_taylor_phi_k() {
         let dense_a: Mat<f64> = random_mat_normal(5, 5);
         for k in 0..=3 {
-            let pade_phi_k = phi_ext(dense_a.as_ref(), k);
-            let taylor_phi_k = phik_taylor_ext(dense_a.as_ref(), k);
+            let pade_phi_k = phi_ext(dense_a.as_ref(), k, Par::Seq);
+            let taylor_phi_k = phik_taylor_ext(dense_a.as_ref(), k, Par::Seq);
             mat_mat_approx_eq(taylor_phi_k.as_ref(), pade_phi_k.as_ref(), 1e-9);
         }
     }
@@ -339,8 +349,8 @@ mod test_matexp_taylor {
     fn test_taylor_matexp_real_scaling_and_squaring() {
         let a = faer::mat![[0.0_f64, -4.0], [4.0, 0.0]];
 
-        let taylor = matexp_taylor(a.as_ref());
-        let pade = matexp(a.as_ref(), 1.0);
+        let taylor = matexp_taylor(a.as_ref(), Par::Seq);
+        let pade = matexp(a.as_ref(), 1.0, Par::Seq);
 
         mat_mat_approx_eq(taylor.as_ref(), pade.as_ref(), 1e-12);
     }
@@ -349,8 +359,8 @@ mod test_matexp_taylor {
     fn test_taylor_matexp_real_diagonal() {
         let a = faer::mat![[1.0_f64, 0.0], [0.0, -2.0]];
 
-        let taylor = matexp_taylor(a.as_ref());
-        let pade = matexp(a.as_ref(), 1.0);
+        let taylor = matexp_taylor(a.as_ref(), Par::Seq);
+        let pade = matexp(a.as_ref(), 1.0, Par::Seq);
 
         mat_mat_approx_eq(taylor.as_ref(), pade.as_ref(), 1e-12);
     }
@@ -362,8 +372,8 @@ mod test_matexp_taylor {
             [c64::new(0.0, 1.0), c64::new(0.0, 0.0)],
         ];
 
-        let taylor = matexp_taylor(a.as_ref());
-        let pade = matexp(a.as_ref(), 1.0);
+        let taylor = matexp_taylor(a.as_ref(), Par::Seq);
+        let pade = matexp(a.as_ref(), 1.0, Par::Seq);
 
         for j in 0..a.ncols() {
             for i in 0..a.nrows() {

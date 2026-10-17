@@ -52,6 +52,7 @@
 use std::str::FromStr;
 
 use faer::prelude::*;
+use faer::Par;
 
 use crate::matexp_cauchy;
 use crate::matexp_krylov::KrylovExpm;
@@ -189,7 +190,7 @@ impl FromStr for DenseExpmMethod {
 /// The action of $\varphi_k(hA)$ on a vector is approximated in the Krylov
 /// subspace $\mathcal K_m(A, v)$ built by Arnoldi iteration. The default
 /// values (see the `Default` impl) are: dense method `Pade`, `m = 100`,
-/// `max_dim = 100`, `iom = 2`, `tol = 1e-8`.
+/// `max_dim = 100`, `iom = 2`, `tol = 1e-8`, `dense_par = Par::Seq`.
 ///
 /// Options are validated when the integrator is built; see
 /// [`ExponentialIntegratorBuilder::build`].
@@ -208,6 +209,7 @@ pub struct KrylovOptions {
     max_dim: usize,
     iom: usize,
     tol: f64,
+    dense_par: Par,
 }
 
 impl Default for KrylovOptions {
@@ -218,6 +220,7 @@ impl Default for KrylovOptions {
             max_dim: 100,
             iom: 2,
             tol: 1e-8,
+            dense_par: Par::Seq,
         }
     }
 }
@@ -293,6 +296,23 @@ impl KrylovOptions {
         self
     }
 
+    /// Set the parallelism of the dense phi-function evaluation of the
+    /// projected (Hessenberg) matrix.
+    ///
+    /// Default: `Par::Seq`. The projected matrix is small (at most `max_dim`
+    /// rows), so threads rarely pay off, and a threaded setting can
+    /// oversubscribe cores for matrices of a few hundred rows. This setting
+    /// does not affect the Arnoldi iteration or the product of the Krylov
+    /// basis with the dense result, which use faer's global parallelism.
+    ///
+    /// # Arguments
+    ///
+    /// * `dense_par` - faer parallelism for the dense evaluator
+    pub fn with_dense_par(mut self, dense_par: Par) -> Self {
+        self.dense_par = dense_par;
+        self
+    }
+
     /// Check the Krylov options.
     ///
     /// # Errors
@@ -320,13 +340,15 @@ impl KrylovOptions {
             DenseExpmMethod::Cram16 => Box::new(matexp_cauchy::gen_cram_expm(16)),
             DenseExpmMethod::Parabolic => Box::new(matexp_cauchy::gen_parabolic_expm(24)),
         };
-        KrylovExpm::new(
+        let mut krylov = KrylovExpm::new(
             dense,
             self.m.min(50),
             self.max_dim,
             self.tol,
             Some(self.iom),
-        )
+        );
+        krylov.set_dense_par(self.dense_par);
+        krylov
     }
 }
 

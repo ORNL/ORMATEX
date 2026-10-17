@@ -42,11 +42,13 @@
 //!   approximations of phi-functions applied to vectors", J. Comput. Appl.
 //!   Math. 423 (2023) 114973.
 use crate::arnoldi::{arnoldi_lop, arnoldi_lop_restarted};
-use crate::mat_utils::dense_matmul;
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use crate::ode_sys::DynRefExtendedLinOp;
+use crate::mat_utils::scaled_mm;
+use faer::linalg::matmul::matmul;
 use faer::matrix_free::LinOp;
 use faer::prelude::*;
+use faer::{Accum, Par};
 use std::cmp::{max, min};
 
 /// Krylov methods to compute the sparse (matrix-free) matrix exponential
@@ -70,6 +72,8 @@ pub struct KrylovExpm {
     krylov_dim_lookback: usize,
     /// incomplete ortho depth
     iom: usize,
+    /// parallelism for the dense phi-function of the small Hessenberg matrix
+    dense_par: Par,
     /// storage for tmp hessenberg
     hs: Mat<f64>,
     /// storage for tmp orthonormal krylov basis
@@ -113,6 +117,7 @@ impl KrylovExpm {
             krylov_dim_max: krylov_dim_max,
             krylov_dim_inc: 20,
             krylov_dim_lookback: 10,
+            dense_par: Par::Seq,
             hs: faer::Mat::zeros(0, 0),
             qs: faer::Mat::zeros(0, 0),
             iom: iom_in.unwrap_or(2),
@@ -128,6 +133,22 @@ impl KrylovExpm {
     /// * `verbose` - if true, the adaptive method prints error estimates
     pub fn set_verbosity(&mut self, verbose: bool) {
         self.verbose = verbose;
+    }
+
+    /// Sets the parallelism used by the dense evaluator for the phi-function of
+    /// the small Hessenberg matrix.
+    ///
+    /// Defaults to `Par::Seq`, which is usually best since the Hessenberg
+    /// matrix is small (the Krylov dimension, typically a few hundred at most).
+    /// This does not affect the product of the Krylov basis with the
+    /// phi-function, which is tall and skinny and uses faer's global
+    /// parallelism.
+    ///
+    /// # Arguments
+    ///
+    /// * `par` - faer parallelism for the dense evaluator
+    pub fn set_dense_par(&mut self, par: Par) {
+        self.dense_par = par;
     }
 
     /// Sets the adaptive Krylov dimension increment.
@@ -260,8 +281,8 @@ impl KrylovExpm {
             unit_vec[(0, 0)] = 1.0;
             let phi_h = self
                 .expmv
-                .apply_phi_k(h.as_ref(), 1.0, unit_vec.as_ref(), k);
-            res = faer::Scale(beta) * dense_matmul(q.as_ref(), phi_h.as_ref());
+                .apply_phi_k(h.as_ref(), 1.0, unit_vec.as_ref(), k, self.dense_par);
+            res = scaled_mm(beta, q.as_ref(), phi_h.as_ref(), faer::get_global_parallelism());
 
             // compute error estimate
             let last_m = phi_h.nrows() - 1;
@@ -375,8 +396,10 @@ impl KrylovExpm {
         let beta = v0.norm_l2();
         let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
         unit_vec[(0, 0)] = 1.0;
-        let phi_v = self.expmv.apply_phi_k(h.as_ref(), dt, unit_vec.as_ref(), k);
-        return faer::Scale(beta) * dense_matmul(q.as_ref(), phi_v.as_ref());
+        let phi_v = self
+            .expmv
+            .apply_phi_k(h.as_ref(), dt, unit_vec.as_ref(), k, self.dense_par);
+        return scaled_mm(beta, q.as_ref(), phi_v.as_ref(), faer::get_global_parallelism());
     }
 
     /// Evaluates a linear combination of phi-functions applied to vectors.
@@ -478,7 +501,7 @@ mod test_matexp_krylov {
         let phi0mv_krylov_pm: Mat<f64> = krylov_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi0mv_pade_dense = matexp(test_b.as_ref(), dt) * test_v.as_ref();
+        let phi0mv_pade_dense = matexp(test_b.as_ref(), dt, Par::Seq) * test_v.as_ref();
         println!("krylov phi0mv: {:?}", &phi0mv_krylov_pm);
         println!("pade phi0mv: {:?}", &phi0mv_pade_dense);
         mat_mat_approx_eq(phi0mv_krylov_pm.as_ref(), phi0mv_pade_dense.as_ref(), 1e-8);
@@ -490,7 +513,7 @@ mod test_matexp_krylov {
         let phi1mv_krylov_pm: Mat<f64> = krylov_phikv_eval.apply_phi_k_v(&ext_b_lo, 1.0, &test_vb);
 
         // Ensure results are consistent with pade methods.
-        let phi1mv_pade_dense = phi_ext((dt * test_b).as_ref(), 1) * test_v.as_ref();
+        let phi1mv_pade_dense = phi_ext((dt * test_b).as_ref(), 1, Par::Seq) * test_v.as_ref();
         println!("krylov phi1mv: {:?}", &phi1mv_krylov_pm);
         println!("pade phi1mv: {:?}", &phi1mv_pade_dense);
         mat_mat_approx_eq(phi1mv_krylov_pm.as_ref(), phi1mv_pade_dense.as_ref(), 1e-8);

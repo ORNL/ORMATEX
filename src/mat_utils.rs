@@ -23,7 +23,13 @@
 //! to a vector, together with implementations for a finite difference
 //! Jacobian-vector product ([`JacobianRhsLinOp`]), a sparse matrix
 //! ([`JacobianMatLinOp`]) and the enum [`MatrixLinOp`] combining them.
+use faer::dyn_stack::{MemBuffer, MemStack};
+use faer::linalg::lu::partial_pivoting::{factor as lu_factor, solve as lu_solve};
+use faer::linalg::qr::no_pivoting::{factor as qr_factor, solve as qr_solve_mod};
+use faer::perm::PermRef;
 use faer::prelude::*;
+use faer::linalg::matmul::matmul;
+use faer::{Accum, Par};
 use faer_traits::ComplexField;
 use faer_traits::RealField;
 use num_traits::Float;
@@ -31,30 +37,137 @@ use rand::prelude::*;
 use rand_distr::{StandardNormal, Uniform};
 use std::cell::RefCell;
 
-/// Computes a dense product, avoiding thread dispatch for small matrices.
+/// Solves the square system $A X = B$ with a Householder QR factorization.
 ///
-/// Uses sequential execution when every dimension is at most 64, and faer's
-/// global parallelism otherwise. This conservative cutoff is a performance
-/// heuristic: forcing sequential execution up to 256 regresses medium square
-/// products on the release-mode benchmark below.
+/// Unlike `a.qr().solve(b)`, which always uses faer's global parallelism, the
+/// factorization and the solve both run with the caller supplied `par`.
+///
+/// # Arguments
+///
+/// * `a` - square matrix $A$
+/// * `b` - right hand side(s) $B$ with `a.nrows()` rows
+/// * `par` - faer parallelism used for the factorization and solve
 ///
 /// # Panics
 ///
-/// Panics if the inner dimensions do not match.
-pub(crate) fn dense_matmul<T: ComplexField>(a: MatRef<T>, b: MatRef<T>) -> Mat<T> {
-    assert_eq!(
-        a.ncols(),
-        b.nrows(),
-        "dense_matmul inner dimension mismatch"
+/// Panics if `a` is not square or `b` does not have `a.nrows()` rows.
+pub(crate) fn qr_solve<T: ComplexField>(a: MatRef<T>, b: MatRef<T>, par: Par) -> Mat<T> {
+    let n = a.nrows();
+    assert_eq!(n, a.ncols(), "qr_solve requires a square matrix");
+    assert_eq!(n, b.nrows(), "qr_solve rhs row mismatch");
+    let mut x = b.to_owned();
+    if n == 0 {
+        return x;
+    }
+    let mut qr = a.to_owned();
+    let block_size = qr_factor::recommended_block_size::<T>(n, n);
+    let mut q_coeff = Mat::<T>::zeros(block_size, n);
+    qr_factor::qr_in_place(
+        qr.as_mut(),
+        q_coeff.as_mut(),
+        par,
+        MemStack::new(&mut MemBuffer::new(qr_factor::qr_in_place_scratch::<T>(
+            n,
+            n,
+            block_size,
+            par,
+            Default::default(),
+        ))),
+        Default::default(),
     );
+    qr_solve_mod::solve_in_place(
+        qr.as_ref(),
+        q_coeff.as_ref(),
+        qr.as_ref(),
+        x.as_mut(),
+        par,
+        MemStack::new(&mut MemBuffer::new(
+            qr_solve_mod::solve_in_place_scratch::<T>(n, block_size, b.ncols(), par),
+        )),
+    );
+    x
+}
+
+/// Partial pivoting LU factors of a square matrix, factored and applied with
+/// a caller supplied parallelism setting.
+///
+/// This stands in for faer's `PartialPivLu`, whose constructor always uses the
+/// global parallelism.
+#[derive(Clone, Debug)]
+pub(crate) struct LuFactors<T> {
+    lu: Mat<T>,
+    perm: Vec<usize>,
+    perm_inv: Vec<usize>,
+}
+
+impl<T: ComplexField> LuFactors<T> {
+    /// Factors the square matrix `a` using `par`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a` is not square.
+    pub(crate) fn new(a: MatRef<T>, par: Par) -> Self {
+        let n = a.nrows();
+        assert_eq!(n, a.ncols(), "LuFactors requires a square matrix");
+        let mut lu = a.to_owned();
+        let mut perm = vec![0usize; n];
+        let mut perm_inv = vec![0usize; n];
+        lu_factor::lu_in_place(
+            lu.as_mut(),
+            &mut perm,
+            &mut perm_inv,
+            par,
+            MemStack::new(&mut MemBuffer::new(lu_factor::lu_in_place_scratch::<usize, T>(
+                n,
+                n,
+                par,
+                Default::default(),
+            ))),
+            Default::default(),
+        );
+        Self { lu, perm, perm_inv }
+    }
+
+    /// Solves $A X = B$ using `par`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `b` does not have as many rows as the factored matrix.
+    pub(crate) fn solve(&self, b: MatRef<T>, par: Par) -> Mat<T> {
+        let n = self.lu.nrows();
+        assert_eq!(n, b.nrows(), "LuFactors::solve rhs row mismatch");
+        let mut x = b.to_owned();
+        if n == 0 {
+            return x;
+        }
+        lu_solve::solve_in_place(
+            self.lu.as_ref(),
+            self.lu.as_ref(),
+            PermRef::<usize>::new_checked(&self.perm, &self.perm_inv, n),
+            x.as_mut(),
+            par,
+            MemStack::new(&mut MemBuffer::new(lu_solve::solve_in_place_scratch::<usize, T>(
+                n,
+                b.ncols(),
+                par,
+            ))),
+        );
+        x
+    }
+}
+
+/// Dense matrix product `a * b` evaluated with the given parallelism.
+pub(crate) fn mm<T: ComplexField>(a: MatRef<T>, b: MatRef<T>, par: Par) -> Mat<T> {
     let mut out = Mat::zeros(a.nrows(), b.ncols());
-    let max_dim = a.nrows().max(a.ncols()).max(b.ncols());
-    let par = if max_dim <= 64 {
-        faer::Par::Seq
-    } else {
-        faer::get_global_parallelism()
-    };
-    faer::linalg::matmul::matmul(out.as_mut(), faer::Accum::Replace, a, b, T::one_impl(), par);
+    matmul(out.as_mut(), Accum::Replace, a, b, T::one_impl(), par);
+    out
+}
+
+/// Computes the scaled dense matrix product `beta * (a * b)`
+/// evaluated with the given parallelism.
+pub(crate) fn scaled_mm<T: ComplexField>(beta: T, a: MatRef<T>, b: MatRef<T>, par: Par) -> Mat<T> {
+    let mut out = Mat::zeros(a.nrows(), b.ncols());
+    matmul(out.as_mut(), Accum::Replace, a, b, beta, par);
     out
 }
 
@@ -426,106 +539,30 @@ mod test_matexp_rs {
     use super::*;
 
     #[test]
-    fn test_dense_matmul_shapes_and_threshold() {
-        for (m, k, n) in [
-            (31, 31, 31),
-            (64, 3, 2),
-            (65, 3, 2),
-            (256, 3, 2),
-            (257, 3, 2),
-            (500, 20, 1),
-            (2, 257, 3),
-            (2, 3, 257),
-            (0, 3, 2),
-            (2, 0, 3),
-            (2, 3, 0),
-        ] {
-            let a = Mat::from_fn(m, k, |i, j| ((i + 3 * j) as f64).sin());
-            let b = Mat::from_fn(k, n, |i, j| ((2 * i + j) as f64).cos());
-            let actual = dense_matmul(a.as_ref(), b.as_ref());
-            let expected = a.as_ref() * b.as_ref();
-            assert_eq!((actual.nrows(), actual.ncols()), (m, n));
-            assert!((actual - expected).norm_max() < 1e-11);
+    fn test_qr_solve_matches_faer() {
+        use faer::c64;
+        for par in [Par::Seq, Par::rayon(4)] {
+            for n in [0, 1, 7, 150] {
+                let a = Mat::from_fn(n, n, |i, j| {
+                    c64::new(((i + 3 * j) as f64).sin() + if i == j { 5.0 } else { 0.0 }, (i as f64 - j as f64).cos())
+                });
+                let b = Mat::from_fn(n, 3, |i, j| c64::new((i + j) as f64, (i * j) as f64 / 7.0));
+                let x = qr_solve(a.as_ref(), b.as_ref(), par);
+                assert!((&a * &x - &b).norm_max() < 1e-9);
+            }
         }
     }
 
     #[test]
-    fn test_dense_matmul_complex_strided() {
-        use faer::c64;
-        let a = Mat::from_fn(9, 7, |i, j| c64::new(i as f64 / 9.0, j as f64 / 7.0));
-        let b = Mat::from_fn(8, 9, |i, j| c64::new(j as f64 / 9.0, -(i as f64) / 8.0));
-        let a = a.as_ref().transpose().get(1..6, 2..8);
-        let b = b.as_ref().transpose().get(2..8, 1..7);
-        let actual = dense_matmul(a, b);
-        assert!((actual - a * b).norm_max() < 1e-12);
-    }
-
-    #[test]
-    fn test_dense_matmul_f32() {
-        let a = Mat::from_fn(12, 7, |i, j| (i + j) as f32 / 12.0);
-        let b = Mat::from_fn(7, 9, |i, j| (i + 2 * j) as f32 / 9.0);
-        assert!((dense_matmul(a.as_ref(), b.as_ref()) - a * b).norm_max() < 1e-5);
-    }
-
-    #[test]
-    #[should_panic(expected = "dense_matmul inner dimension mismatch")]
-    fn test_dense_matmul_dimension_mismatch() {
-        dense_matmul(
-            Mat::<f64>::zeros(2, 3).as_ref(),
-            Mat::<f64>::zeros(4, 2).as_ref(),
-        );
-    }
-
-    /// Run alone with --release --ignored --nocapture --test-threads=1.
-    #[test]
-    #[ignore = "release-mode performance comparison"]
-    fn benchmark_dense_matmul_parallelism_policy() {
-        use std::hint::black_box;
-        use std::time::Instant;
-        for (m, k, n, iterations) in [
-            (31, 31, 31, 200),
-            (48, 48, 48, 200),
-            (64, 64, 64, 200),
-            (96, 96, 96, 100),
-            (128, 128, 128, 100),
-            (256, 256, 256, 30),
-            (257, 257, 257, 30),
-            (2000, 40, 1, 100),
-        ] {
-            let a = Mat::from_fn(m, k, |i, j| ((i + 3 * j) as f64).sin());
-            let b = Mat::from_fn(k, n, |i, j| ((2 * i + j) as f64).cos());
-            black_box(a.as_ref() * b.as_ref());
-            black_box(dense_matmul(a.as_ref(), b.as_ref()));
-            let mut global_times = Vec::new();
-            let mut policy_times = Vec::new();
-            for round in 0..6 {
-                for global in if round % 2 == 0 {
-                    [true, false]
-                } else {
-                    [false, true]
-                } {
-                    let start = Instant::now();
-                    for _ in 0..iterations {
-                        if global {
-                            black_box(black_box(a.as_ref()) * black_box(b.as_ref()));
-                        } else {
-                            black_box(dense_matmul(black_box(a.as_ref()), black_box(b.as_ref())));
-                        }
-                    }
-                    if global {
-                        global_times.push(start.elapsed());
-                    } else {
-                        policy_times.push(start.elapsed());
-                    }
-                }
+    fn test_lu_factors_solve() {
+        for par in [Par::Seq, Par::rayon(4)] {
+            for n in [0, 1, 7, 150] {
+                let a = Mat::from_fn(n, n, |i, j| ((i + 3 * j) as f64).sin() + if i == j { 0.5 } else { 0.0 });
+                let b = Mat::from_fn(n, 2, |i, j| (i + j) as f64);
+                let lu = LuFactors::new(a.as_ref(), par);
+                let x = lu.solve(b.as_ref(), par);
+                assert!((&a * &x - &b).norm_max() < 1e-8);
             }
-            global_times.sort();
-            policy_times.sort();
-            println!(
-                "matmul {m}x{k} * {k}x{n} median per call: global={:?}, policy={:?}",
-                global_times[3] / iterations,
-                policy_times[3] / iterations
-            );
         }
     }
 

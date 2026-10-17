@@ -33,11 +33,11 @@
 //! * M. Caliari, F. Cassini, F. Zivcovich, "BAMPHI: Chebyshev and rational
 //!   approximations of phi-functions applied to vectors", J. Comput. Appl.
 //!   Math. 423 (2023) 114973.
-use crate::mat_utils::dense_matmul;
+use crate::mat_utils::{qr_solve, mm};
 use crate::matexp_traits::DensePhikvEvaluator;
 use faer::complex::ComplexFloat;
-use faer::linalg::solvers::{DenseSolveCore, Solve};
 use faer::prelude::*;
+use faer::Par;
 use faer_traits::ComplexField;
 use faer_traits::math_utils::from_f64;
 use libm::frexp;
@@ -75,10 +75,10 @@ where
     T: ComplexField,
     T::Real: ToPrimitive,
 {
-    fn apply_phi_k(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize) -> Mat<T> {
+    fn apply_phi_k(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize, par: Par) -> Mat<T> {
         let scaled = Scale(from_f64::<T>(dt)) * a;
-        let phi_k = phi_ext(scaled.as_ref(), k);
-        dense_matmul(phi_k.as_ref(), v0)
+        let phi_k = phi_ext(scaled.as_ref(), k, par);
+        mm(phi_k.as_ref(), v0, par)
     }
 }
 
@@ -92,26 +92,26 @@ where
 ///
 /// * `a` - square matrix $A$
 /// * `dt` - real scalar time step
+/// * `par` - faer parallelism for the dense products and QR solve
 ///
 /// # Returns
 ///
 /// The dense matrix $\exp(A \thinspace dt)$, same size as `a`.
-pub fn matexp<T>(a: MatRef<T>, dt: f64) -> Mat<T>
+pub fn matexp<T>(a: MatRef<T>, dt: f64, par: Par) -> Mat<T>
 where
     T: ComplexField,
     T::Real: ToPrimitive,
 {
     let a_t = a * Scale(from_f64::<T>(dt));
-    let (u, v, alpha) = matexp_pade(a_t.as_ref());
+    let (u, v, alpha) = matexp_pade(a_t.as_ref(), par);
     let denom = v.as_ref() - u.as_ref();
     let numer = u.as_ref() + v.as_ref();
 
     // Solve (V - U) \ (V + U) via QR decomposition
-    let denom_qr = denom.qr();
-    let mut r = denom_qr.solve(numer);
+    let mut r = qr_solve(denom.as_ref(), numer.as_ref(), par);
 
     for _i in 0..alpha {
-        r = dense_matmul(r.as_ref(), r.as_ref());
+        r = mm(r.as_ref(), r.as_ref(), par);
     }
     r
 }
@@ -136,28 +136,28 @@ where
 ///
 /// * `z` - square, invertible matrix $Z$
 /// * `k` - phi-function order
+/// * `par` - faer parallelism for the dense products and QR solves
 ///
 /// # Returns
 ///
 /// The dense matrix $\varphi_k(Z)$, same size as `z`.
-pub fn phi<T>(z: MatRef<T>, k: usize) -> Mat<T>
+pub fn phi<T>(z: MatRef<T>, k: usize, par: Par) -> Mat<T>
 where
     T: ComplexField,
     T::Real: ToPrimitive,
 {
-    let mut phi_k = matexp(z.as_ref(), 1.0);
+    let mut phi_k = matexp(z.as_ref(), 1.0, par);
     if k == 0 {
         return phi_k;
     }
-    let qr = faer::linalg::solvers::Qr::new(z.as_ref());
-    let z_inv = qr.inverse();
     let id = Mat::<T>::identity(z.nrows(), z.ncols());
+    let z_inv = qr_solve(z.as_ref(), id.as_ref(), par);
     for i in 1..=k {
         // the phi recurrence: phi_k = Z^{-1}(phi_{k-1} - 1/(k-1)! * I).
         let fact = (1..i).product::<usize>() as f64;
         let fact = if fact == 0.0 { 1.0 } else { fact };
         let inner = phi_k.as_ref() - Scale(from_f64::<T>(1.0 / fact)) * id.as_ref();
-        phi_k = dense_matmul(z_inv.as_ref(), inner.as_ref());
+        phi_k = mm(z_inv.as_ref(), inner.as_ref(), par);
     }
     phi_k
 }
@@ -184,6 +184,7 @@ where
 ///
 /// * `z` - square matrix $Z$
 /// * `k` - phi-function order
+/// * `par` - faer parallelism for the dense products and QR solve
 ///
 /// # Returns
 ///
@@ -192,7 +193,7 @@ where
 /// # Panics
 ///
 /// Panics if `z` is not square.
-pub fn phi_ext<T>(z: MatRef<T>, k: usize) -> Mat<T>
+pub fn phi_ext<T>(z: MatRef<T>, k: usize, par: Par) -> Mat<T>
 where
     T: ComplexField,
     T::Real: ToPrimitive,
@@ -217,7 +218,7 @@ where
         }
     };
 
-    let phi_ks = matexp(z_ext.as_ref(), 1.0);
+    let phi_ks = matexp(z_ext.as_ref(), 1.0, par);
     phi_ks.get(0..n, phi_ks.ncols() - n..).to_owned()
 }
 
@@ -234,6 +235,7 @@ where
 /// # Arguments
 ///
 /// * `a` - square matrix $A$ (already multiplied by the time step)
+/// * `par` - faer parallelism for the dense products
 ///
 /// # Returns
 ///
@@ -246,32 +248,32 @@ where
 /// * N. J. Higham, "The scaling and squaring method for the matrix exponential
 ///   revisited", SIAM J. Matrix Anal. Appl. 26(4) (2005) 1179-1193,
 ///   doi:10.1137/04061101X.
-pub fn matexp_pade<T>(a: MatRef<T>) -> (Mat<T>, Mat<T>, isize)
+pub fn matexp_pade<T>(a: MatRef<T>, par: Par) -> (Mat<T>, Mat<T>, isize)
 where
     T: ComplexField,
     T::Real: ToPrimitive,
 {
     let mut alpha: isize = 0;
     let a_1norm = a.norm_l1();
-    let a2 = dense_matmul(a, a);
+    let a2 = mm(a, a, par);
 
     if a_1norm < from_f64::<T::Real>(1.495585217958292e-002) {
-        let (u, v) = pade3(a, a2.as_ref());
+        let (u, v) = pade3(a, a2.as_ref(), par);
         return (u, v, alpha);
     } else if a_1norm < from_f64::<T::Real>(2.539398330063230e-001) {
-        let a4 = dense_matmul(a2.as_ref(), a2.as_ref());
-        let (u, v) = pade5(a, a2.as_ref(), a4.as_ref());
+        let a4 = mm(a2.as_ref(), a2.as_ref(), par);
+        let (u, v) = pade5(a, a2.as_ref(), a4.as_ref(), par);
         return (u, v, alpha);
     } else if a_1norm < from_f64::<T::Real>(9.504178996162932e-001) {
-        let a4 = dense_matmul(a2.as_ref(), a2.as_ref());
-        let a6 = dense_matmul(a4.as_ref(), a2.as_ref());
-        let (u, v) = pade7(a, a2.as_ref(), a4.as_ref(), a6.as_ref());
+        let a4 = mm(a2.as_ref(), a2.as_ref(), par);
+        let a6 = mm(a4.as_ref(), a2.as_ref(), par);
+        let (u, v) = pade7(a, a2.as_ref(), a4.as_ref(), a6.as_ref(), par);
         return (u, v, alpha);
     } else if a_1norm < from_f64::<T::Real>(2.097847961257068e+000) {
-        let a4 = dense_matmul(a2.as_ref(), a2.as_ref());
-        let a6 = dense_matmul(a4.as_ref(), a2.as_ref());
-        let a8 = dense_matmul(a6.as_ref(), a2.as_ref());
-        let (u, v) = pade9(a, a2.as_ref(), a4.as_ref(), a6.as_ref(), a8.as_ref());
+        let a4 = mm(a2.as_ref(), a2.as_ref(), par);
+        let a6 = mm(a4.as_ref(), a2.as_ref(), par);
+        let a8 = mm(a6.as_ref(), a2.as_ref(), par);
+        let (u, v) = pade9(a, a2.as_ref(), a4.as_ref(), a6.as_ref(), a8.as_ref(), par);
         return (u, v, alpha);
     } else {
         let maxnorm: f64 = 5.371920351148152;
@@ -287,14 +289,15 @@ where
         }
         let scale_f64 = (2.0_f64).powi(alpha as i32);
         let a_scaled = a * Scale(from_f64::<T>(1.0 / scale_f64));
-        let a2_scaled = dense_matmul(a_scaled.as_ref(), a_scaled.as_ref());
-        let a4_scaled = dense_matmul(a2_scaled.as_ref(), a2_scaled.as_ref());
-        let a6_scaled = dense_matmul(a4_scaled.as_ref(), a2_scaled.as_ref());
+        let a2_scaled = mm(a_scaled.as_ref(), a_scaled.as_ref(), par);
+        let a4_scaled = mm(a2_scaled.as_ref(), a2_scaled.as_ref(), par);
+        let a6_scaled = mm(a4_scaled.as_ref(), a2_scaled.as_ref(), par);
         let (u, v) = pade13(
             a_scaled.as_ref(),
             a2_scaled.as_ref(),
             a4_scaled.as_ref(),
             a6_scaled.as_ref(),
+            par,
         );
         return (u, v, alpha);
     }
@@ -305,22 +308,22 @@ where
 // Each function receives pre-computed even powers of A and returns (U, V)
 // such that the [p/p] Pade approximant of exp(A) equals (V-U)^{-1}(V+U).
 
-fn pade3<T: ComplexField>(a: MatRef<T>, a2: MatRef<T>) -> (Mat<T>, Mat<T>) {
+fn pade3<T: ComplexField>(a: MatRef<T>, a2: MatRef<T>, par: Par) -> (Mat<T>, Mat<T>) {
     const B3: [f64; 4] = [120.0, 60.0, 12.0, 1.0];
     let ident = Mat::<T>::identity(a.ncols(), a.nrows());
     let temp = a2 * Scale(from_f64::<T>(B3[3])) + ident.as_ref() * Scale(from_f64::<T>(B3[1]));
-    let u = dense_matmul(a, temp.as_ref());
+    let u = mm(a, temp.as_ref(), par);
     let v = a2 * Scale(from_f64::<T>(B3[2])) + ident.as_ref() * Scale(from_f64::<T>(B3[0]));
     (u, v)
 }
 
-fn pade5<T: ComplexField>(a: MatRef<T>, a2: MatRef<T>, a4: MatRef<T>) -> (Mat<T>, Mat<T>) {
+fn pade5<T: ComplexField>(a: MatRef<T>, a2: MatRef<T>, a4: MatRef<T>, par: Par) -> (Mat<T>, Mat<T>) {
     const B5: [f64; 6] = [30240.0, 15120.0, 3360.0, 420.0, 30.0, 1.0];
     let ident = Mat::<T>::identity(a.ncols(), a.nrows());
     let temp = a4 * Scale(from_f64::<T>(B5[5]))
         + a2 * Scale(from_f64::<T>(B5[3]))
         + ident.as_ref() * Scale(from_f64::<T>(B5[1]));
-    let u = dense_matmul(a, temp.as_ref());
+    let u = mm(a, temp.as_ref(), par);
     let v = a4 * Scale(from_f64::<T>(B5[4]))
         + a2 * Scale(from_f64::<T>(B5[2]))
         + ident.as_ref() * Scale(from_f64::<T>(B5[0]));
@@ -332,6 +335,7 @@ fn pade7<T: ComplexField>(
     a2: MatRef<T>,
     a4: MatRef<T>,
     a6: MatRef<T>,
+    par: Par,
 ) -> (Mat<T>, Mat<T>) {
     const B7: [f64; 8] = [
         17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.,
@@ -341,7 +345,7 @@ fn pade7<T: ComplexField>(
         + a4 * Scale(from_f64::<T>(B7[5]))
         + a2 * Scale(from_f64::<T>(B7[3]))
         + ident.as_ref() * Scale(from_f64::<T>(B7[1]));
-    let u = dense_matmul(a, temp.as_ref());
+    let u = mm(a, temp.as_ref(), par);
     let v = a6 * Scale(from_f64::<T>(B7[6]))
         + a4 * Scale(from_f64::<T>(B7[4]))
         + a2 * Scale(from_f64::<T>(B7[2]))
@@ -355,6 +359,7 @@ fn pade9<T: ComplexField>(
     a4: MatRef<T>,
     a6: MatRef<T>,
     a8: MatRef<T>,
+    par: Par,
 ) -> (Mat<T>, Mat<T>) {
     const B9: [f64; 10] = [
         17643225600.,
@@ -374,7 +379,7 @@ fn pade9<T: ComplexField>(
         + a4 * Scale(from_f64::<T>(B9[5]))
         + a2 * Scale(from_f64::<T>(B9[3]))
         + ident.as_ref() * Scale(from_f64::<T>(B9[1]));
-    let u = dense_matmul(a, temp.as_ref());
+    let u = mm(a, temp.as_ref(), par);
     let v = a8 * Scale(from_f64::<T>(B9[8]))
         + a6 * Scale(from_f64::<T>(B9[6]))
         + a4 * Scale(from_f64::<T>(B9[4]))
@@ -388,6 +393,7 @@ fn pade13<T: ComplexField>(
     a2: MatRef<T>,
     a4: MatRef<T>,
     a6: MatRef<T>,
+    par: Par,
 ) -> (Mat<T>, Mat<T>) {
     const B13: [f64; 14] = [
         64764752532480000.,
@@ -411,18 +417,18 @@ fn pade13<T: ComplexField>(
     let v1 = a6 * Scale(from_f64::<T>(B13[13]))
         + a4 * Scale(from_f64::<T>(B13[11]))
         + a2 * Scale(from_f64::<T>(B13[9]));
-    let temp = dense_matmul(a6, v1.as_ref())
+    let temp = mm(a6, v1.as_ref(), par)
         + a6 * Scale(from_f64::<T>(B13[7]))
         + a4 * Scale(from_f64::<T>(B13[5]))
         + a2 * Scale(from_f64::<T>(B13[3]))
         + ident.as_ref() * Scale(from_f64::<T>(B13[1]));
-    let u = dense_matmul(a, temp.as_ref());
+    let u = mm(a, temp.as_ref(), par);
 
     // V polynomial (even Pade denominator)
     let temp2 = a6 * Scale(from_f64::<T>(B13[12]))
         + a4 * Scale(from_f64::<T>(B13[10]))
         + a2 * Scale(from_f64::<T>(B13[8]));
-    let v2 = dense_matmul(a6, temp2.as_ref())
+    let v2 = mm(a6, temp2.as_ref(), par)
         + a6 * Scale(from_f64::<T>(B13[6]))
         + a4 * Scale(from_f64::<T>(B13[4]))
         + a2 * Scale(from_f64::<T>(B13[2]))
@@ -463,6 +469,7 @@ pub fn phi_scaler<T: ComplexFloat>(z: T, k: usize) -> T {
 #[cfg(test)]
 mod test_matexp_pade {
     use super::*;
+    const PAR: Par = Par::Seq;
     use crate::mat_utils::{mat_mat_approx_eq, random_mat_normal};
     use faer::c64;
     use std::f64::consts::PI;
@@ -473,8 +480,8 @@ mod test_matexp_pade {
     fn test_phi_ext() {
         let dense_a: Mat<f64> = random_mat_normal(5, 5);
         for k in 0..=3 {
-            let phi_a = phi(dense_a.as_ref(), k);
-            let phi_ext_a = phi_ext(dense_a.as_ref(), k);
+            let phi_a = phi(dense_a.as_ref(), k, PAR);
+            let phi_ext_a = phi_ext(dense_a.as_ref(), k, PAR);
             mat_mat_approx_eq(phi_a.as_ref(), phi_ext_a.as_ref(), 1e-9);
         }
     }
@@ -496,7 +503,7 @@ mod test_matexp_pade {
             a[(i, i)] = v;
         }
 
-        let result = matexp(a.as_ref(), dt);
+        let result = matexp(a.as_ref(), dt, PAR);
         let tol = 1e-12_f64;
 
         // Diagonal entries
@@ -541,7 +548,7 @@ mod test_matexp_pade {
 
         let a = faer::mat![[0.0_f64, -theta], [theta, 0.0_f64]];
 
-        let result = matexp(a.as_ref(), dt);
+        let result = matexp(a.as_ref(), dt, PAR);
 
         let tol = 1e-14_f64;
         let (c, s) = ((theta * dt).cos(), (theta * dt).sin());
@@ -583,7 +590,7 @@ mod test_matexp_pade {
         a[(0, 0)] = c64::new(0.0, PI);
         a[(1, 1)] = c64::new(0.0, PI / 2.0);
 
-        let result = matexp(a.as_ref(), 1.0);
+        let result = matexp(a.as_ref(), 1.0, PAR);
 
         let tol = 1e-12_f64;
 
@@ -646,7 +653,7 @@ mod test_matexp_pade {
         a[(0, 1)] = c64::new(0.0, 1.0); // i
         a[(1, 0)] = c64::new(0.0, 1.0); // i
 
-        let result = matexp(a.as_ref(), 1.0);
+        let result = matexp(a.as_ref(), 1.0, PAR);
 
         let tol = 1e-14_f64;
         let c = 1.0_f64.cos(); // cos(1)
@@ -678,6 +685,39 @@ mod test_matexp_pade {
                 "Im(result[({r},{ci})]) expected sin(1) = {s}, got {}",
                 result[(r, ci)].im
             );
+        }
+    }
+
+    /// `Par::Seq` and a threaded setting must agree for every Pade branch
+    /// (norms chosen to hit degree 3, 5, 7, 9 and 13 with scaling).
+    #[test]
+    fn test_matexp_phi_ext_par_agree() {
+        for scale in [0.001, 0.1, 0.5, 1.5, 20.0] {
+            let a: Mat<f64> = random_mat_normal(70, 70);
+            let a = a.as_ref() * Scale(scale / a.norm_l1());
+            let seq = matexp(a.as_ref(), 1.0, Par::Seq);
+            let thr = matexp(a.as_ref(), 1.0, Par::rayon(4));
+            mat_mat_approx_eq(seq.as_ref(), thr.as_ref(), 1e-11);
+            for k in 1..=2 {
+                let seq = phi_ext(a.as_ref(), k, Par::Seq);
+                let thr = phi_ext(a.as_ref(), k, Par::rayon(4));
+                mat_mat_approx_eq(seq.as_ref(), thr.as_ref(), 1e-11);
+            }
+        }
+    }
+
+    /// The complex path with non-unit-stride inputs and the exponential
+    /// identity exp(A) exp(-A) = I.
+    #[test]
+    fn test_matexp_complex_inverse_par() {
+        let a: Mat<c64> = Mat::from_fn(40, 40, |i, j| {
+            c64::new(((i * 7 + j) as f64).sin(), ((i + 3 * j) as f64).cos()) * 0.1
+        });
+        for par in [Par::Seq, Par::rayon(3)] {
+            let e = matexp(a.as_ref(), 1.0, par);
+            let ei = matexp(a.as_ref(), -1.0, par);
+            let id = Mat::<c64>::identity(40, 40);
+            assert!((e * ei - id).norm_max() < 1e-10);
         }
     }
 }

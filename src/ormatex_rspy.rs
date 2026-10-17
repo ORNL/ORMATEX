@@ -464,7 +464,7 @@ fn phi_k_rs<'py>(py: Python<'py>, a: PyReadonlyArray2<f64>, k: usize) -> Bound<'
     let a_mat = a.into_faer();
 
     // run phi_k(dt*A)
-    let phik = phi_ext(a_mat, k);
+    let phik = phi_ext(a_mat, k, Par::Seq);
 
     // convert faer mats into numpy arrays
     let phik_ndarray = phik.as_ref().into_ndarray().to_owned();
@@ -722,7 +722,7 @@ impl DensePhikvEvalRs {
     ) {
         let a = a_np.into_faer();
         let v0 = v0_np.into_faer();
-        self.evaluator.apply_prepare(a, dt, v0, k);
+        self.evaluator.apply_prepare(a, dt, v0, k, Par::Seq);
     }
 
     /// Evaluate $\varphi_k(\Delta t A) v_0$.
@@ -747,7 +747,7 @@ impl DensePhikvEvalRs {
     ) -> Py<PyArray2<f64>> {
         let a = a_np.into_faer();
         let v0 = v0_np.into_faer();
-        let phikv = self.evaluator.apply_phi_k(a, dt, v0, k);
+        let phikv = self.evaluator.apply_phi_k(a, dt, v0, k, Par::Seq);
         let ndarray_phikv = phikv.as_ref().into_ndarray().to_owned();
         ndarray_phikv.into_pyarray(py).to_owned().into()
     }
@@ -774,7 +774,7 @@ impl DensePhikvEvalRs {
     {
         let a = a_np.into_faer();
         let bs: Vec<MatRef<f64>> = bs_np.iter().map(|b| b.clone().into_faer()).collect();
-        let phikv = self.evaluator.apply_phi_k_v(a, dt, &bs, &ks);
+        let phikv = self.evaluator.apply_phi_k_v(a, dt, &bs, &ks, Par::Seq);
         let ndarray_phikv = phikv.as_ref().into_ndarray().to_owned();
         ndarray_phikv.into_pyarray(py).to_owned().into()
     }
