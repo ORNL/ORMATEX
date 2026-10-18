@@ -32,7 +32,7 @@ log = "0.4"
 # faer lin alg
 faer = {version = "0.24.4", features=["unstable",]}
 faer-traits = "0.24.0"
-faer_gmres = "0.5"
+faer_gmres = "0.6"
 
 # optional deps
 kuva = {version="0.1", optional=true}
