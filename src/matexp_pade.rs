@@ -475,10 +475,17 @@ mod test_matexp_pade {
     use std::f64::consts::PI;
 
     /// Verify that the recurrence formula and the extension formula for phi_k
-    /// agree to within 1e-9 on a random 5x5 real matrix.
+    /// agree to within 1e-9 on a 5x5 real matrix.
+    ///
+    /// The matrix is drawn from a fixed seed: the recurrence in [`phi`] inverts
+    /// `Z`, so an unlucky near-singular random draw fails this check (about 1%
+    /// of draws at this tolerance).
     #[test]
     fn test_phi_ext() {
-        let dense_a: Mat<f64> = random_mat_normal(5, 5);
+        use rand::prelude::*;
+        use rand_distr::StandardNormal;
+        let mut rng = StdRng::seed_from_u64(42);
+        let dense_a: Mat<f64> = Mat::from_fn(5, 5, |_, _| rng.sample(StandardNormal));
         for k in 0..=3 {
             let phi_a = phi(dense_a.as_ref(), k, PAR);
             let phi_ext_a = phi_ext(dense_a.as_ref(), k, PAR);

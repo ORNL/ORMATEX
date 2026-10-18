@@ -481,10 +481,9 @@ mod test_matexp_krylov {
     // bring everything from above (parent) module into scope
     use super::*;
 
-    fn _run_krylov_phikv(test_b: Mat<f64>, test_v: Mat<f64>) {
+    fn _run_krylov_phikv(test_b: Mat<f64>, test_v: Mat<f64>, iom: usize) {
         // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
         // krylov method.
-        let iom = 2;
         let m = 10;
         let tol = 1e-12;
         let krylov_dim_max = 100;
@@ -524,7 +523,9 @@ mod test_matexp_krylov {
         // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
         // krylov method for a small 3x3 A
         let (test_b, test_v) = gen_test_b();
-        _run_krylov_phikv(test_b, test_v);
+        // The system is smaller than the Krylov dimension and nonsymmetric,
+        // so exactness requires full orthogonalization (iom=2 is truncated).
+        _run_krylov_phikv(test_b, test_v, 10);
     }
 
     #[test]
@@ -533,6 +534,6 @@ mod test_matexp_krylov {
         // krylov method for a larger 80x80 A
         let (test_b, test_v) = gen_test_c(80);
         let scale = 20.0; // increase stiffness of the problem
-        _run_krylov_phikv(faer::Scale(scale) * test_b, test_v);
+        _run_krylov_phikv(faer::Scale(scale) * test_b, test_v, 2);
     }
 }

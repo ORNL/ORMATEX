@@ -41,15 +41,20 @@ use reborrow::ReborrowMut;
 
 /// Scales and orthogonalizes an Arnoldi residual using modified Gram-Schmidt.
 ///
-/// Given the already computed vector $A q_k$, first scales it to
+/// Given the already computed vector $A q_k$, computes
 /// $v = \mathrm{scale} \thinspace A q_k$. For each selected basis vector $q_i$,
 /// computes $h_{i,k} = v^T q_i$ and updates $v \leftarrow v - h_{i,k} q_i$.
 /// Each projection uses the updated residual; `zip!` performs the updates in
-/// place without allocating temporary vectors. This helper does not apply $A$.
+/// place without allocating temporary vectors. The scaling is fused into the
+/// first projection, so the residual is not traversed separately to scale it.
+/// This helper does not apply $A$.
 ///
-/// The incomplete orthogonalization window is `k.saturating_sub(iom)..=k`,
-/// containing up to `iom + 1` basis vectors. Only the selected entries of `h`
-/// are overwritten; the caller must initialize other entries as needed.
+/// The incomplete orthogonalization window is
+/// `(k + 1).saturating_sub(iom)..=k`, i.e. the `iom` most recent basis vectors
+/// (including $q_k$), as in KIOPS and Saad's IOM($iom$). `iom = 2` on a
+/// symmetric operator is the Lanczos three-term recurrence. Only the selected
+/// entries of `h` are overwritten; the caller must initialize other entries as
+/// needed.
 /// If `store_next` is true, writes $\Vert v\Vert_2$ to `h[k + 1]` and normalizes
 /// the residual, or zeroes it on happy breakdown. Otherwise, leaves the residual
 /// unnormalized and does not write the subdiagonal entry.
@@ -64,8 +69,9 @@ use reborrow::ReborrowMut;
 ///   entries when `store_next` is true
 /// * `scale` - scale factor applied to the input vector
 /// * `k` - zero-based index of the current Arnoldi iteration
-/// * `iom` - incomplete orthogonalization window parameter; the current vector
-///   and up to `iom` preceding basis vectors are used
+/// * `iom` - incomplete orthogonalization depth, at least 1; the residual is
+///   orthogonalized against the `iom` most recent basis vectors, including the
+///   current one
 /// * `store_next` - whether to store the subdiagonal norm and prepare the
 ///   residual as the next basis vector
 ///
@@ -77,7 +83,7 @@ use reborrow::ReborrowMut;
 /// # Panics
 ///
 /// Panics if the residual and basis dimensions are incompatible, if basis
-/// column `k` is missing, or if `h` has insufficient entries.
+/// column `k` is missing, if `h` has insufficient entries, or if `iom` is zero.
 fn arnoldi_orthogonalize<T>(
     mut residual: ColMut<T>,
     basis: MatRef<T>,
@@ -90,9 +96,15 @@ fn arnoldi_orthogonalize<T>(
 where
     T: RealField + Float,
 {
-    faer::zip!(residual.rb_mut()).for_each(|faer::unzip!(y)| *y = *y * scale);
-    // Preserve the existing IOM window (up to iom + 1 vectors).
-    for i in k.saturating_sub(iom)..=k {
+    // IOM window: the `iom` most recent basis vectors, ending at q_k.
+    let first = (k + 1).saturating_sub(iom);
+    // Fold the scale into the first projection: with v = A q_k unscaled,
+    // h = scale * (v^T q) and v <- scale * v - h q.
+    let qi = basis.col(first);
+    let ht = scale * (residual.as_ref().transpose() * qi);
+    h[first] = ht;
+    faer::zip!(residual.rb_mut(), qi).for_each(|faer::unzip!(y, x)| *y = *y * scale - ht * *x);
+    for i in first + 1..=k {
         let qi = basis.col(i);
         let ht = residual.as_ref().transpose() * qi;
         h[i] = ht;
@@ -121,7 +133,7 @@ where
 /// * `a_lo_scale` - scale factor on the linear operator
 /// * `k` - current krylov iteration
 /// * `n` - max krylov iteration
-/// * `iom` - incomplete ortho depth
+/// * `iom` - incomplete ortho depth (at least 1)
 /// * `hs` - upper hessenberg
 /// * `qs` - orthonormal basis of krylov subspace
 /// * `extended` - return extended, nonsquare hessenberg
@@ -208,8 +220,9 @@ where
 /// * `a_lo_scale` - scale factor on the linear operator
 /// * `b` - initial vector $b$ (column) of the Krylov sequence `b, Ab, A^2 b, ...`
 /// * `n` - max krylov iteration
-/// * `iom` - incomplete ortho depth, i.e. each new vector is orthogonalized
-///   against at most the previous `iom` basis vectors
+/// * `iom` - incomplete ortho depth (at least 1; typically 2), i.e. each new
+///   vector is orthogonalized against the `iom` most recent basis vectors
+///   (including the current one), as in KIOPS
 ///
 /// # Returns
 ///
@@ -218,6 +231,10 @@ where
 /// by `m`) and `m` is the number of Arnoldi iterations actually performed
 /// (the Krylov dimension actually reached, less than the requested value
 /// upon happy breakdown).
+///
+/// # Panics
+///
+/// Panics if `iom` is zero.
 pub fn arnoldi_lop<T>(
     a_lo: &dyn LinOp<T>,
     a_lo_scale: T,
@@ -228,6 +245,7 @@ pub fn arnoldi_lop<T>(
 where
     T: RealField + Float,
 {
+    assert!(iom >= 1, "iom must be at least 1");
     let mut breakdown_n = 0;
     let m = std::cmp::min(n, b.nrows());
     let mut hs = faer::Mat::zeros(m, m);
@@ -305,7 +323,8 @@ where
 /// * `qs` - orthonormal matrix. View of mutable matrix
 /// * `i` - index to start from.
 /// * `n` - number of additional arnoldi iterations to compute.
-/// * `iom` - incomplete ortho depth
+/// * `iom` - incomplete ortho depth (at least 1; typically 2), see
+///   [`arnoldi_lop`]
 ///
 /// # Returns
 ///
@@ -317,7 +336,8 @@ where
 /// # Panics
 ///
 /// Panics if `hs` is not square, if `hs.ncols() <= i + n`, or if
-/// `qs.nrows() != b.nrows()`, or if `qs.ncols() <= i + n`.
+/// `qs.nrows() != b.nrows()`, or if `qs.ncols() <= i + n`, or if `iom` is
+/// zero.
 ///
 pub fn arnoldi_lop_restarted<T>(
     a_lo: &dyn LinOp<T>,
@@ -333,6 +353,7 @@ where
     T: RealField + Float,
 {
     let dim = b.nrows();
+    assert!(iom >= 1, "iom must be at least 1");
     // ensure preallocated hessenberg storage is square
     assert!(hs.nrows() == hs.ncols());
     // ensure enough space avail in hs to write into
@@ -415,7 +436,7 @@ mod test_arnoldi {
             let mut v = Mat::zeros(b.nrows(), 1);
             a.apply(v.as_mut(), q.col(k).as_mat(), par, MemStack::new(&mut buf));
             v = v * faer::Scale(scale);
-            for i in k.saturating_sub(iom)..=k {
+            for i in (k + 1).saturating_sub(iom)..=k {
                 let ht = v.col(0).transpose() * q.col(i);
                 h[(i, k)] = ht;
                 v = v - q.col(i).as_mat() * faer::Scale(ht);
@@ -441,7 +462,7 @@ mod test_arnoldi {
             }
         });
         let b = Mat::from_fn(20, 1, |i, _| ((i + 1) as f64).cos());
-        for iom in [0, 2, 1000] {
+        for iom in [1, 2, 1000] {
             let (q_ref, h_ref) = allocating_reference(&a, b.as_ref(), -0.7, 6, iom);
             let mut q = Mat::full(20, 7, f64::NAN);
             let mut h = Mat::zeros(7, 7);
@@ -484,6 +505,78 @@ mod test_arnoldi {
         assert!(bd);
         assert_eq!(m, 0);
         assert_eq!(q.col(0).norm_l2(), 0.0);
+    }
+
+    #[test]
+    fn test_arnoldi_iom_window_band() {
+        // IOM(iom) orthogonalizes against exactly the `iom` most recent basis
+        // vectors, so column k of H is nonzero only in rows k+1-iom..=k+1.
+        let a = Mat::from_fn(20, 20, |i, j| {
+            if i == j {
+                -((i + 1) as f64)
+            } else {
+                ((3 * i + 7 * j + 1) as f64).sin() / 5.0
+            }
+        });
+        let b = Mat::from_fn(20, 1, |i, _| ((i + 1) as f64).cos());
+        let m = 8;
+        for iom in [1, 2, 3] {
+            let (_, h, bd) = arnoldi_lop(&a, 1.0, b.as_ref(), m, iom);
+            assert_eq!(bd, m);
+            for k in 0..m {
+                for i in 0..m {
+                    if i + iom <= k {
+                        assert_eq!(h[(i, k)], 0.0, "iom={iom} h[{i},{k}]");
+                    } else if i <= k {
+                        assert!(h[(i, k)].abs() > 1e-8, "iom={iom} h[{i},{k}]");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_arnoldi_iom2_is_lanczos_for_symmetric() {
+        // iom=2 is the three-term Lanczos recurrence for a symmetric operator,
+        // so it must agree with full orthogonalization.
+        let a = Mat::from_fn(20, 20, |i, j| {
+            let (lo, hi) = (i.min(j), i.max(j));
+            if i == j {
+                -((i + 1) as f64)
+            } else {
+                ((3 * lo + 7 * hi + 1) as f64).sin() / 5.0
+            }
+        });
+        let b = Mat::from_fn(20, 1, |i, _| ((i + 1) as f64).cos());
+        let (q2, h2, _) = arnoldi_lop(&a, -0.7, b.as_ref(), 8, 2);
+        let (qf, hf, _) = arnoldi_lop(&a, -0.7, b.as_ref(), 8, 1000);
+        mat_mat_approx_eq(q2.as_ref(), qf.as_ref(), 1e-9);
+        mat_mat_approx_eq(h2.as_ref(), hf.as_ref(), 1e-9);
+    }
+
+    #[test]
+    #[should_panic(expected = "iom must be at least 1")]
+    fn test_arnoldi_lop_rejects_zero_iom() {
+        let a = Mat::<f64>::identity(5, 5);
+        let b = Mat::full(5, 1, 1.0);
+        arnoldi_lop(&a, 1.0, b.as_ref(), 3, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "iom must be at least 1")]
+    fn test_arnoldi_lop_restarted_rejects_zero_iom() {
+        let a = Mat::<f64>::identity(5, 5);
+        let b = Mat::full(5, 1, 1.0);
+        arnoldi_lop_restarted(
+            &a,
+            1.0,
+            b.as_ref(),
+            Mat::zeros(5, 5).as_mut(),
+            Mat::zeros(5, 5).as_mut(),
+            0,
+            3,
+            0,
+        );
     }
 
     #[test]
