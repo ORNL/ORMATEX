@@ -45,10 +45,9 @@ use crate::arnoldi::{arnoldi_lop, arnoldi_lop_restarted};
 use crate::matexp_traits::{DensePhikvEvaluator, LinOpPhikvEvaluator};
 use crate::ode_sys::DynRefExtendedLinOp;
 use crate::mat_utils::scaled_mm;
-use faer::linalg::matmul::matmul;
 use faer::matrix_free::LinOp;
 use faer::prelude::*;
-use faer::{Accum, Par};
+use faer::Par;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 
@@ -662,6 +661,18 @@ mod test_matexp_krylov {
     // bring everything from above (parent) module into scope
     use super::*;
 
+    // helper method to create new krylov KrylovExpm for tests
+    fn new_eval(m: usize, krylov_dim_max: usize, iom: usize, max_substeps: usize) -> KrylovExpm {
+        let expmv = Box::new(crate::matexp_pade::PadeExpm::new(12));
+        let mut eval = KrylovExpm::new(expmv, m, krylov_dim_max, 1e-12, Some(iom));
+        eval.set_max_substeps(max_substeps);
+        eval
+    }
+
+    fn max_abs_diff(a: &Mat<f64>, b: &Mat<f64>) -> f64 {
+        (a - b).norm_max()
+    }
+
     fn _run_krylov_phikv(test_b: Mat<f64>, test_v: Mat<f64>, iom: usize) {
         // test that phi_0(dt*A)*b0 + ... phi_k(dt*A)*bk can be computed by a
         // krylov method.
@@ -716,17 +727,6 @@ mod test_matexp_krylov {
         let (test_b, test_v) = gen_test_c(80);
         let scale = 20.0; // increase stiffness of the problem
         _run_krylov_phikv(faer::Scale(scale) * test_b, test_v, 2);
-    }
-
-    fn new_eval(m: usize, krylov_dim_max: usize, iom: usize, max_substeps: usize) -> KrylovExpm {
-        let expmv = Box::new(crate::matexp_pade::PadeExpm::new(12));
-        let mut eval = KrylovExpm::new(expmv, m, krylov_dim_max, 1e-12, Some(iom));
-        eval.set_max_substeps(max_substeps);
-        eval
-    }
-
-    fn max_abs_diff(a: &Mat<f64>, b: &Mat<f64>) -> f64 {
-        (a - b).norm_max()
     }
 
     #[test]
