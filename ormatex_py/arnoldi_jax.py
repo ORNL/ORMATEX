@@ -42,7 +42,8 @@ def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k
     print(f"jit-compiling MGS")
 
     m = hs.shape[0]
-    iom_depth = jnp.maximum(k - iom, 0)
+    # window is the `iom` most recent basis vectors, including q_k (Saad IOM(iom))
+    iom_depth = jnp.maximum(k + 1 - iom, 0)
 
     # current vector to ortho against
     q_k = qs[:, k]
