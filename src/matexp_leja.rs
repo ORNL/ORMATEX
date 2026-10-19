@@ -1863,7 +1863,13 @@ impl LinOpPhikvEvaluator for LejaPhiEval {
         res
     }
 
-    fn apply_phi_k(&self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, k: usize) -> Mat<f64> {
+    fn apply_phi_k(
+        &mut self,
+        a_lo: &dyn LinOp<f64>,
+        dt: f64,
+        v: MatRef<f64>,
+        k: usize,
+    ) -> Mat<f64> {
         let clock = std::time::Instant::now();
         // create an extended linop
         let mut vbk: Vec<MatRef<f64>> = vec![];

@@ -190,7 +190,8 @@ impl FromStr for DenseExpmMethod {
 /// The action of $\varphi_k(hA)$ on a vector is approximated in the Krylov
 /// subspace $\mathcal K_m(A, v)$ built by Arnoldi iteration. The default
 /// values (see the `Default` impl) are: dense method `Pade`, `m = 100`,
-/// `max_dim = 100`, `iom = 2`, `tol = 1e-8`, `dense_par = Par::Seq`.
+/// `max_dim = 100`, `iom = 2`, `max_substeps = 0`, `tol = 1e-8`,
+/// `dense_par = Par::Seq`.
 ///
 /// Options are validated when the integrator is built; see
 /// [`ExponentialIntegratorBuilder::build`].
@@ -208,6 +209,7 @@ pub struct KrylovOptions {
     m: usize,
     max_dim: usize,
     iom: usize,
+    max_substeps: usize,
     tol: f64,
     dense_par: Par,
 }
@@ -219,6 +221,7 @@ impl Default for KrylovOptions {
             m: 100,
             max_dim: 100,
             iom: 2,
+            max_substeps: 0,
             tol: 1e-8,
             dense_par: Par::Seq,
         }
@@ -271,8 +274,9 @@ impl KrylovOptions {
 
     /// Set the incomplete orthogonalization depth of the Arnoldi iteration.
     ///
-    /// Each new basis vector is orthogonalized against at most the previous
-    /// `iom` basis vectors. Default: `2`. This value is not range checked by
+    /// Each new basis vector is orthogonalized against the `iom` most recent
+    /// basis vectors, including the current one (as in KIOPS). Default: `2`.
+    /// Valid range: `iom` $\ge 1$, checked by
     /// [`ExponentialIntegratorBuilder::build`].
     ///
     /// # Arguments
@@ -280,6 +284,21 @@ impl KrylovOptions {
     /// * `iom` - incomplete orthogonalization depth
     pub fn with_iom(mut self, iom: usize) -> Self {
         self.iom = iom;
+        self
+    }
+
+    /// Set the number of substeps used to evaluate one exponential.
+    ///
+    /// Default: `0`, which means no substepping (a single Krylov
+    /// approximation over the full step). A value $N > 0$ evaluates the
+    /// product in $N$ equal substeps of size $h / N$, each with the same
+    /// tolerance. Any `usize` value is accepted.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_substeps` - number of substeps, or 0 to disable substepping
+    pub fn with_max_substeps(mut self, max_substeps: usize) -> Self {
+        self.max_substeps = max_substeps;
         self
     }
 
@@ -318,7 +337,7 @@ impl KrylovOptions {
     /// # Errors
     ///
     /// Returns an error if `tol` is not finite and positive, `max_dim` is 0,
-    /// `m` is 0, or `m` is greater than `max_dim`.
+    /// `m` is 0, `m` is greater than `max_dim`, or `iom` is 0.
     fn validate(&self) -> Result<(), IntegratorBuildError> {
         positive_f64("Krylov tolerance", self.tol)?;
         if self.max_dim == 0 {
@@ -330,6 +349,9 @@ impl KrylovOptions {
             return Err(IntegratorBuildError::new(
                 "Krylov m must be positive and no greater than max_dim",
             ));
+        }
+        if self.iom == 0 {
+            return Err(IntegratorBuildError::new("Krylov iom must be at least 1"));
         }
         Ok(())
     }
@@ -348,6 +370,7 @@ impl KrylovOptions {
             Some(self.iom),
         );
         krylov.set_dense_par(self.dense_par);
+        krylov.set_max_substeps(self.max_substeps);
         krylov
     }
 }
@@ -984,7 +1007,7 @@ impl ExponentialIntegratorBuilder {
     ///
     /// * `tol_fdt` is not finite, or
     /// * for a Krylov evaluator: `tol` is not finite and positive, `max_dim`
-    ///   is 0, `m` is 0, or `m` is greater than `max_dim`, or
+    ///   is 0, `m` is 0, `m` is greater than `max_dim`, or `iom` is 0, or
     /// * for a Leja evaluator: `tol` is not finite and positive, `m` is 0,
     ///   `m + 2` overflows, the spectrum bounds `a`, `b`, `c` are not finite,
     ///   `a > b` or `c < 0`, or (adaptive spectrum) `spec_tol` is not finite
@@ -1082,6 +1105,54 @@ mod tests {
         .with_krylov(KrylovOptions::default().with_m(21).with_max_dim(20))
         .build()
         .is_err());
+        // iom must be at least 1
+        assert!(ExponentialIntegratorBuilder::new(
+            0.0,
+            y0.as_ref(),
+            ExponentialMethod::Epi2,
+        )
+        .with_krylov(KrylovOptions::default().with_iom(0))
+        .build()
+        .is_err());
+    }
+
+    #[test]
+    fn krylov_max_substeps_is_plumbed_to_evaluator() {
+        assert_eq!(KrylovOptions::default().evaluator().max_substeps(), 0);
+        let options = KrylovOptions::default().with_max_substeps(3);
+        assert_eq!(options.evaluator().max_substeps(), 3);
+    }
+
+    #[test]
+    fn krylov_max_substeps_matches_unsubstepped() {
+        let y0 = faer::mat![[1.0_f64], [2.0_f64]];
+        let sys = TestLvSys::new();
+        // Exprb3 is left out: its last stage uses the fixed dimension
+        // `apply_phi_k`, whose substepped form runs on the extended operator
+        // and so needs a larger (n + k) Krylov dimension than the state size.
+        for method in [ExponentialMethod::Epi2, ExponentialMethod::Exprb2] {
+            let step_with = |max_substeps: usize| {
+                let options = KrylovOptions::default()
+                    .with_m(10)
+                    .with_max_dim(20)
+                    .with_iom(20)
+                    .with_tol(1e-12)
+                    .with_max_substeps(max_substeps);
+                let mut solver = ExponentialIntegratorBuilder::new(0.0, y0.as_ref(), method)
+                    .with_krylov(options)
+                    .build()
+                    .unwrap();
+                solver.step(&sys, 0.1).unwrap().y
+            };
+            let base = step_with(0);
+            for max_substeps in [2, 4] {
+                let sub = step_with(max_substeps);
+                assert!(
+                    (&sub - &base).norm_max() < 1e-9,
+                    "{method:?} N={max_substeps}"
+                );
+            }
+        }
     }
 
     #[test]

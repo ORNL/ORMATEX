@@ -50,15 +50,16 @@ use faer::matrix_free::LinOp;
 use faer::prelude::*;
 use faer::{Accum, Par};
 use std::cmp::{max, min};
+use std::collections::HashMap;
 
 /// Krylov methods to compute the sparse (matrix-free) matrix exponential
 /// and phi-function vector products.
 ///
 /// Holds the Krylov dimension state (current, maximum, adaptive increment and
-/// lookback), the incomplete orthogonalization depth, the tolerance, and
-/// work storage for the Arnoldi basis and Hessenberg matrix. The adaptive
-/// evaluation updates the current Krylov dimension, so it persists between
-/// calls.
+/// lookback), the incomplete orthogonalization depth, the tolerance, the
+/// number of substeps, and work storage for the Arnoldi basis and Hessenberg
+/// matrix. The adaptive evaluation updates the current Krylov dimension, so it
+/// persists between calls.
 pub struct KrylovExpm {
     /// dense matrix exponential and phi function evaluator
     expmv: Box<dyn DensePhikvEvaluator>,
@@ -72,6 +73,13 @@ pub struct KrylovExpm {
     krylov_dim_lookback: usize,
     /// incomplete ortho depth
     iom: usize,
+    /// number of equal substeps used to evaluate one phi-function product,
+    /// 0 disables substepping
+    max_substeps: usize,
+    /// last adapted krylov dim for each kind of adaptive call, keyed by
+    /// (phi order, vector length). Used as the starting dimension of the next
+    /// call of the same kind.
+    m_by_call: HashMap<(usize, usize), usize>,
     /// parallelism for the dense phi-function of the small Hessenberg matrix
     dense_par: Par,
     /// storage for tmp hessenberg
@@ -88,8 +96,10 @@ impl KrylovExpm {
     /// Creates a new Krylov phi-function evaluator.
     ///
     /// The adaptive dimension increment defaults to 20 and the lookback
-    /// to 10, and verbosity is off. See [`KrylovExpm::set_krylov_dim_inc`],
-    /// [`KrylovExpm::set_krylov_dim_lookback`] and [`KrylovExpm::set_verbosity`].
+    /// to 10, the number of substeps to 0 (no substepping), and verbosity is
+    /// off. See [`KrylovExpm::set_krylov_dim_inc`],
+    /// [`KrylovExpm::set_krylov_dim_lookback`], [`KrylovExpm::set_max_substeps`]
+    /// and [`KrylovExpm::set_verbosity`].
     ///
     /// # Arguments
     ///
@@ -121,6 +131,8 @@ impl KrylovExpm {
             hs: faer::Mat::zeros(0, 0),
             qs: faer::Mat::zeros(0, 0),
             iom: iom_in.unwrap_or(2),
+            max_substeps: 0,
+            m_by_call: HashMap::new(),
             tol: tol,
             verbose: false,
         }
@@ -170,6 +182,56 @@ impl KrylovExpm {
         self.krylov_dim_lookback = krylov_dim_lookback;
     }
 
+    /// Sets the number of substeps.
+    ///
+    /// With `max_substeps = N > 0`, [`KrylovExpm::apply_linop_ext`] (and so
+    /// `apply_phi_k_v`) and [`KrylovExpm::apply_phik_linop`] (and so
+    /// `apply_phi_k` and [`KrylovExpm::apply_linop`]) evaluate the product in
+    /// $N$ equal substeps of size $dt / N$, using the same tolerance in each
+    /// substep. The total error therefore grows roughly like $N$ times the
+    /// per-substep tolerance. This is a fixed substep count, as in the Leja
+    /// evaluator. [`KrylovExpm::apply_phik_linop_adapt`] and
+    /// [`KrylovExpm::apply_phik_linop_fixed`] are not substepped.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_substeps` - number of substeps. 0 disables substepping
+    pub fn set_max_substeps(&mut self, max_substeps: usize) {
+        self.max_substeps = max_substeps;
+    }
+
+    /// Returns the number of substeps. 0 means substepping is disabled.
+    pub fn max_substeps(&self) -> usize {
+        self.max_substeps
+    }
+
+    /// Sets the current Krylov subspace dimension.
+    ///
+    /// This is the dimension used by [`KrylovExpm::apply_phik_linop_fixed`]. The
+    /// adaptive methods only use it as the starting dimension: they update it
+    /// after each converged evaluation, so it rarely needs to be set by hand
+    /// unless the fixed dimension method is used.
+    ///
+    /// This also clears the starting dimensions the adaptive methods remember
+    /// for each kind of call (see [`KrylovExpm::apply_phik_linop_adapt`]), so the
+    /// next adaptive call of every kind starts from `m`.
+    ///
+    /// # Arguments
+    ///
+    /// * `m` - Krylov subspace dimension
+    ///
+    /// # Panics
+    ///
+    /// Panics if `m` is zero or greater than the maximum Krylov dimension.
+    pub fn set_m(&mut self, m: usize) {
+        assert!(
+            m >= 1 && m <= self.krylov_dim_max,
+            "m must be in 1..=krylov_dim_max"
+        );
+        self.m = m;
+        self.m_by_call.clear();
+    }
+
     /// Computes $\exp(A \thinspace dt) v_0$ when `A` is a linear operator.
     ///
     /// Alias to [`KrylovExpm::apply_phik_linop`] with $k = 0$.
@@ -203,9 +265,20 @@ impl KrylovExpm {
     /// maximum Krylov dimension is reached, in which case the result may not
     /// satisfy the tolerance and no error is returned.
     ///
-    /// This method mutates the stored Krylov dimension and work storage,
-    /// and prints a summary (convergence, dimension, error estimate and
-    /// timing) to stdout.
+    /// The final dimension is remembered separately for each kind of call,
+    /// identified by the phi order `k` and the length of `v0`, and a later call
+    /// of the same kind starts from it. For example the two stages of an
+    /// exponential Rosenbrock step, which need different dimensions, each keep
+    /// their own. A call of a kind not seen before starts from the current
+    /// dimension (see [`KrylovExpm::set_m`], which also forgets the remembered
+    /// dimensions).
+    ///
+    /// This method mutates the stored Krylov dimension and work storage. With
+    /// verbosity on (see [`KrylovExpm::set_verbosity`]) it prints a summary
+    /// (convergence, dimension, error estimate and timing) to stdout.
+    ///
+    /// The product is not substepped; see [`KrylovExpm::apply_phik_linop`] for
+    /// the substepped evaluation.
     ///
     /// # Arguments
     ///
@@ -226,17 +299,30 @@ impl KrylovExpm {
     ) -> Mat<f64> {
         let clock = std::time::Instant::now();
         log::info!("=== Adaptive KrylovExpm");
-        println!("=== Adaptive KrylovExpm");
+        if self.verbose {
+            println!("=== Adaptive KrylovExpm");
+        }
         // Allocate storage matrices with correct dimensions
         // The storage must be large enough to hold:
         // - hs: square matrix at least (m+1) x (m+1) where m can grow up to krylov_dim_max
         // - qs: (v0.nrows()) x (m+1) where m can grow up to krylov_dim_max
+        // The basis storage only grows in rows, so alternating between operators
+        // of different sizes (e.g. an extended operator and its inner operator)
+        // does not reallocate. Arnoldi works on the leading `v0_dim` rows.
         let v0_dim = v0.nrows();
+        // Start from the dimension this kind of call (phi order, vector length)
+        // converged to last time, so that calls of different kinds that share
+        // this evaluator (e.g. the stages of an exponential Rosenbrock method)
+        // do not disturb each other's starting dimension.
+        let call_key = (k, v0_dim);
+        if let Some(&m_call) = self.m_by_call.get(&call_key) {
+            self.m = m_call;
+        }
         let storage_size = self.krylov_dim_max + 1; // +1 for extended Hessenberg
         if self.hs.nrows() != storage_size || self.hs.ncols() != storage_size {
             self.hs = faer::Mat::zeros(storage_size, storage_size);
         }
-        if self.qs.nrows() != v0_dim || self.qs.ncols() != storage_size {
+        if self.qs.nrows() < v0_dim || self.qs.ncols() != storage_size {
             self.qs = faer::Mat::zeros(v0_dim, storage_size);
         }
 
@@ -250,7 +336,7 @@ impl KrylovExpm {
             dt,
             v0,
             self.hs.as_mut(),
-            self.qs.as_mut(),
+            self.qs.get_mut(0..v0_dim, ..),
             0,
             self.m,
             self.iom,
@@ -269,12 +355,14 @@ impl KrylovExpm {
             // Match freshly zeroed storage if the legacy control flow includes
             // columns skipped by Arnoldi (e.g. after a dimension-limit exit).
             if qs_initialized < h_dim + 1 {
-                self.qs.get_mut(.., qs_initialized..h_dim + 1).fill(0.0);
+                self.qs
+                    .get_mut(0..v0_dim, qs_initialized..h_dim + 1)
+                    .fill(0.0);
                 qs_initialized = h_dim + 1;
             }
             // get H_{m+1} view
             let h = self.hs.get(0..h_dim + 1, 0..h_dim + 1);
-            let q = self.qs.get(.., 0..h_dim + 1);
+            let q = self.qs.get(0..v0_dim, 0..h_dim + 1);
 
             // compute the dense matrix exponential of the hessenberg
             let mut unit_vec = faer::Mat::zeros(h.nrows(), 1);
@@ -331,14 +419,16 @@ impl KrylovExpm {
                     // Preserve the original requested restart index, but never
                     // pass a stale seed or gap to an operator in reused storage.
                     if qs_initialized < self.m + 1 {
-                        self.qs.get_mut(.., qs_initialized..self.m + 1).fill(0.0);
+                        self.qs
+                            .get_mut(0..v0_dim, qs_initialized..self.m + 1)
+                            .fill(0.0);
                     }
                     let (bd, bd_n) = arnoldi_lop_restarted(
                         a_lo,
                         dt,
                         v0,
                         self.hs.as_mut(),
-                        self.qs.as_mut(),
+                        self.qs.get_mut(0..v0_dim, ..),
                         self.m,
                         dim_inc,
                         self.iom,
@@ -359,21 +449,37 @@ impl KrylovExpm {
             adapt_iter += 1;
         }
 
-        println!(
-            "converged: {converged}, m: {}, err_est: {:0.6e}",
-            self.m, err_est_p
-        );
-        println!("Krylov expmv time (s): {}", clock.elapsed().as_secs_f64());
+        if self.verbose {
+            println!(
+                "converged: {converged}, m: {}, err_est: {:0.6e}",
+                self.m, err_est_p
+            );
+            println!("Krylov expmv time (s): {}", clock.elapsed().as_secs_f64());
+        }
+        // remember the dimension for the next call of this kind
+        self.m_by_call.insert(call_key, self.m);
         // return final approximation beta*Q*exp(H)*e1
         res
     }
 
-    /// Computes $\varphi_k(A \thinspace dt) v_0$ where `A` is a linear operator.
+    /// Computes $\varphi_k(A \thinspace dt) v_0$ where `A` is a linear operator,
+    /// optionally in substeps.
     ///
-    /// Uses a fixed Krylov dimension (the current dimension `m`) and no
-    /// error control. The Arnoldi iteration is run on $A$ and the time step
-    /// `dt` is applied in the dense evaluation of the Hessenberg matrix
-    /// phi-function.
+    /// This is the method used by the
+    /// [`crate::matexp_traits::LinOpPhikvEvaluator`] implementation. The Krylov
+    /// dimension is adapted as in [`KrylovExpm::apply_phik_linop_adapt`].
+    ///
+    /// If `max_substeps` is 0 (the default) this is
+    /// [`KrylovExpm::apply_phik_linop_adapt`]. If it is $N > 0$ (see
+    /// [`KrylovExpm::set_max_substeps`]) the product is evaluated in $N$ equal
+    /// substeps. Since $\varphi_k$ for $k \ge 1$ has no semigroup property, the
+    /// substeps are applied to the exponential of the extended operator built
+    /// from $A \thinspace dt$ and $v_0$ (placed at index $k$ of the right hand
+    /// sides), and the full extended vector is carried from one substep to the
+    /// next. This is the same construction the Leja evaluator uses. In this case
+    /// `v0` must be a single column.
+    ///
+    /// Use [`KrylovExpm::apply_phik_linop_fixed`] for a fixed Krylov dimension.
     ///
     /// # Arguments
     ///
@@ -386,6 +492,47 @@ impl KrylovExpm {
     ///
     /// The approximation of $\varphi_k(A \thinspace dt) v_0$.
     pub fn apply_phik_linop(
+        &mut self,
+        a_lo: &dyn LinOp<f64>,
+        dt: f64,
+        v0: MatRef<f64>,
+        k: usize,
+    ) -> Mat<f64> {
+        if self.max_substeps == 0 {
+            return self.apply_phik_linop_adapt(a_lo, dt, v0, k);
+        }
+        // phi_k(dt*A) v0 is the first n rows of exp(ext_a_lo) [v0; 0..0; 1]
+        // with the extended operator [[dt*A, B], [0, K]].
+        let zeros = Mat::<f64>::zeros(v0.nrows(), v0.ncols());
+        let mut vbk: Vec<MatRef<f64>> = (0..k).map(|_| zeros.as_ref()).collect();
+        vbk.push(v0);
+        let ext_a_lo = DynRefExtendedLinOp::new(dt, a_lo, &vbk);
+        let (w, n) = ext_a_lo.get_v(&vbk);
+        let w = self.adapt_substepped(&ext_a_lo, 1.0, w);
+        w.get(0..n, 0..1).to_owned()
+    }
+
+    /// Computes $\varphi_k(A \thinspace dt) v_0$ with a fixed Krylov dimension.
+    ///
+    /// Uses the current Krylov dimension `m` (see [`KrylovExpm::set_m`]) and no
+    /// error control, so the caller is responsible for choosing a dimension
+    /// large enough for the requested accuracy. The Arnoldi iteration is run on
+    /// $A$ and the time step `dt` is applied in the dense evaluation of the
+    /// Hessenberg matrix phi-function. Unlike the adaptive methods this does not
+    /// modify the stored Krylov dimension, is not substepped, and allocates its
+    /// own Krylov basis.
+    ///
+    /// # Arguments
+    ///
+    /// * `a_lo` - Linear operator, $A$
+    /// * `dt` - time step scale
+    /// * `v0` - the vector to which the matrix phi-function is applied
+    /// * `k` - the phi function order
+    ///
+    /// # Returns
+    ///
+    /// The approximation of $\varphi_k(A \thinspace dt) v_0$.
+    pub fn apply_phik_linop_fixed(
         &self,
         a_lo: &dyn LinOp<f64>,
         dt: f64,
@@ -400,6 +547,28 @@ impl KrylovExpm {
             .expmv
             .apply_phi_k(h.as_ref(), dt, unit_vec.as_ref(), k, self.dense_par);
         return scaled_mm(beta, q.as_ref(), phi_v.as_ref(), faer::get_global_parallelism());
+    }
+
+    /// Computes $\exp(\tau A_{ext}) w_0$ in `max(max_substeps, 1)` equal substeps
+    /// with the adaptive Krylov dimension, and returns the full extended vector.
+    ///
+    /// With `max_substeps = 0` this is a single call to
+    /// [`KrylovExpm::apply_phik_linop_adapt`]. Since
+    /// $\exp(\tau A) = \exp(\tau A / N)^N$, the full extended vector is carried
+    /// from one substep to the next.
+    fn adapt_substepped(
+        &mut self,
+        ext_a_lo: &DynRefExtendedLinOp,
+        tau: f64,
+        w0: Mat<f64>,
+    ) -> Mat<f64> {
+        let n_sub = max(self.max_substeps, 1);
+        let tau_sub = tau / n_sub as f64;
+        let mut w = w0;
+        for _ in 0..n_sub {
+            w = self.apply_phik_linop_adapt(ext_a_lo, tau_sub, w.as_ref(), 0);
+        }
+        w
     }
 
     /// Evaluates a linear combination of phi-functions applied to vectors.
@@ -418,7 +587,13 @@ impl KrylovExpm {
     /// NOTE: Currently `apply_phik_linop_adapt` implements an
     /// adaptive Krylov subspace dimension procedure via the
     /// error estimate noted in the reference.
-    /// TODO: Implement substepping adaptivity.
+    ///
+    /// If `max_substeps` is $N > 0$ (see [`KrylovExpm::set_max_substeps`]) the
+    /// exponential is evaluated in $N$ equal substeps of size `tau / N`, each
+    /// with the same tolerance, and the full extended vector is carried from
+    /// one substep to the next. The adaptive Krylov dimension is then chosen
+    /// per substep.
+    /// TODO: Implement adaptive selection of the number of substeps.
     ///
     /// # Arguments
     ///
@@ -447,10 +622,10 @@ impl KrylovExpm {
         vb: &Vec<MatRef<f64>>,
     ) -> Mat<f64> {
         // setup the extended rhs vector
-        let (ext_v, n) = ext_a_lo.get_v(vb);
+        let (w, n) = ext_a_lo.get_v(vb);
 
         // compute phi_0(tau*A_ext)*v_ext with adaptive krylov dimension
-        let w = self.apply_phik_linop_adapt(&ext_a_lo, tau, ext_v.as_ref(), 0);
+        let w = self.adapt_substepped(ext_a_lo, tau, w);
 
         // extract first n rows
         w.get(0..n, 0..1).to_owned()
@@ -467,7 +642,13 @@ impl LinOpPhikvEvaluator for KrylovExpm {
         self.apply_linop_ext(ext_a_lo, dt, vb)
     }
 
-    fn apply_phi_k(&self, a_lo: &dyn LinOp<f64>, dt: f64, v: MatRef<f64>, k: usize) -> Mat<f64> {
+    fn apply_phi_k(
+        &mut self,
+        a_lo: &dyn LinOp<f64>,
+        dt: f64,
+        v: MatRef<f64>,
+        k: usize,
+    ) -> Mat<f64> {
         self.apply_phik_linop(a_lo, dt, v, k)
     }
 }
@@ -535,5 +716,248 @@ mod test_matexp_krylov {
         let (test_b, test_v) = gen_test_c(80);
         let scale = 20.0; // increase stiffness of the problem
         _run_krylov_phikv(faer::Scale(scale) * test_b, test_v, 2);
+    }
+
+    fn new_eval(m: usize, krylov_dim_max: usize, iom: usize, max_substeps: usize) -> KrylovExpm {
+        let expmv = Box::new(crate::matexp_pade::PadeExpm::new(12));
+        let mut eval = KrylovExpm::new(expmv, m, krylov_dim_max, 1e-12, Some(iom));
+        eval.set_max_substeps(max_substeps);
+        eval
+    }
+
+    fn max_abs_diff(a: &Mat<f64>, b: &Mat<f64>) -> f64 {
+        (a - b).norm_max()
+    }
+
+    #[test]
+    fn test_krylov_max_substeps_default_and_setter() {
+        let expmv = Box::new(crate::matexp_pade::PadeExpm::new(12));
+        let mut eval = KrylovExpm::new(expmv, 10, 20, 1e-8, None);
+        assert_eq!(eval.max_substeps, 0);
+        eval.set_max_substeps(4);
+        assert_eq!(eval.max_substeps, 4);
+        assert_eq!(eval.max_substeps(), 4);
+        eval.set_max_substeps(0);
+        assert_eq!(eval.max_substeps, 0);
+    }
+
+    /// Adaptive `apply_phi_k_v`: substepped results agree with the unsubstepped
+    /// result and with the dense Pade reference for several right hand sides.
+    /// The mixed case exercises the augmented block carried between substeps.
+    fn _run_krylov_substep_phi_k_v(
+        test_b: Mat<f64>,
+        test_v: Mat<f64>,
+        dt: f64,
+        iom: usize,
+        tol_cmp: f64,
+    ) {
+        let n = test_v.nrows();
+        let v1 = Mat::from_fn(n, 1, |i, _| ((i + 1) as f64).sin());
+        let v2 = Mat::from_fn(n, 1, |i, _| 0.5 * ((2 * i + 1) as f64).cos());
+        let zeros = Mat::<f64>::zeros(n, 1);
+        let cases: Vec<Vec<MatRef<f64>>> = vec![
+            vec![test_v.as_ref()],
+            vec![zeros.as_ref(), test_v.as_ref()],
+            vec![zeros.as_ref(), zeros.as_ref(), test_v.as_ref()],
+            vec![test_v.as_ref(), v1.as_ref(), v2.as_ref()],
+        ];
+        for vb in &cases {
+            let mut reference = Mat::<f64>::zeros(n, 1);
+            for (j, v) in vb.iter().enumerate() {
+                let z = faer::Scale(dt) * test_b.as_ref();
+                reference += phi_ext(z.as_ref(), j, Par::Seq) * v.as_ref();
+            }
+            let eval = |max_substeps: usize| {
+                let mut e = new_eval(10, 100, iom, max_substeps);
+                let ext_lo = DynRefExtendedLinOp::new(dt, &test_b, vb);
+                e.apply_phi_k_v(&ext_lo, 1.0, vb)
+            };
+            let base = eval(0);
+            println!(
+                "p={} base vs pade: {:.3e}",
+                vb.len() - 1,
+                max_abs_diff(&base, &reference)
+            );
+            mat_mat_approx_eq(base.as_ref(), reference.as_ref(), tol_cmp);
+            for max_substeps in [2, 4] {
+                let sub = eval(max_substeps);
+                println!(
+                    "p={} substeps={max_substeps} vs base: {:.3e}, vs pade: {:.3e}",
+                    vb.len() - 1,
+                    max_abs_diff(&sub, &base),
+                    max_abs_diff(&sub, &reference)
+                );
+                mat_mat_approx_eq(sub.as_ref(), base.as_ref(), tol_cmp);
+                mat_mat_approx_eq(sub.as_ref(), reference.as_ref(), tol_cmp);
+            }
+        }
+    }
+
+    /// Adaptive `apply_phi_k` (and the `apply_linop` alias): substepped
+    /// results agree with the unsubstepped result and the dense Pade reference.
+    fn _run_krylov_substep_phi_k(
+        test_b: Mat<f64>,
+        test_v: Mat<f64>,
+        dt: f64,
+        iom: usize,
+        tol_cmp: f64,
+    ) {
+        for k in 0..=3 {
+            let z = faer::Scale(dt) * test_b.as_ref();
+            let reference = phi_ext(z.as_ref(), k, Par::Seq) * test_v.as_ref();
+            let eval = |max_substeps: usize| {
+                new_eval(10, 100, iom, max_substeps).apply_phi_k(&test_b, dt, test_v.as_ref(), k)
+            };
+            let base = eval(0);
+            println!(
+                "k={k} base vs pade: {:.3e}",
+                max_abs_diff(&base, &reference)
+            );
+            mat_mat_approx_eq(base.as_ref(), reference.as_ref(), tol_cmp);
+            for max_substeps in [2, 4] {
+                let sub = eval(max_substeps);
+                println!(
+                    "k={k} substeps={max_substeps} vs base: {:.3e}, vs pade: {:.3e}",
+                    max_abs_diff(&sub, &base),
+                    max_abs_diff(&sub, &reference)
+                );
+                mat_mat_approx_eq(sub.as_ref(), base.as_ref(), tol_cmp);
+                mat_mat_approx_eq(sub.as_ref(), reference.as_ref(), tol_cmp);
+            }
+        }
+        // the exponential alias is substepped as well
+        let reference = matexp(test_b.as_ref(), dt, Par::Seq) * test_v.as_ref();
+        let sub = new_eval(10, 100, iom, 4).apply_linop(&test_b, dt, test_v.as_ref());
+        mat_mat_approx_eq(sub.as_ref(), reference.as_ref(), tol_cmp);
+    }
+
+    #[test]
+    fn test_krylov_substep_phi_k_v_small() {
+        let (test_b, test_v) = gen_test_b();
+        _run_krylov_substep_phi_k_v(test_b, test_v, 0.3, 10, 1e-12);
+    }
+
+    #[test]
+    fn test_krylov_substep_phi_k_v_large() {
+        let (test_b, test_v) = gen_test_c(80);
+        _run_krylov_substep_phi_k_v(faer::Scale(20.0) * test_b, test_v, 0.3, 2, 1e-10);
+    }
+
+    #[test]
+    fn test_krylov_substep_phi_k_small() {
+        let (test_b, test_v) = gen_test_b();
+        _run_krylov_substep_phi_k(test_b, test_v, 0.3, 10, 1e-12);
+    }
+
+    #[test]
+    fn test_krylov_substep_phi_k_large() {
+        let (test_b, test_v) = gen_test_c(80);
+        _run_krylov_substep_phi_k(faer::Scale(20.0) * test_b, test_v, 0.3, 2, 1e-10);
+    }
+
+    #[test]
+    fn test_krylov_substep_helps_convergence() {
+        // With a maximum Krylov dimension that is too small for the full
+        // (stiff) step, the adaptive method cannot reach the tolerance, but
+        // substepping does.
+        let (test_b, test_v) = gen_test_c(80);
+        let test_b = faer::Scale(20.0) * test_b;
+        let dt = 0.3;
+        let reference = matexp(test_b.as_ref(), dt, Par::Seq) * test_v.as_ref();
+        let kmax = 12;
+        let err = |max_substeps: usize| {
+            let res = new_eval(kmax, kmax, kmax, max_substeps).apply_phi_k(
+                &test_b,
+                dt,
+                test_v.as_ref(),
+                0,
+            );
+            max_abs_diff(&res, &reference)
+        };
+        let (err0, err8) = (err(0), err(8));
+        println!("kmax={kmax}: N=0 error {err0:.3e}, N=8 error {err8:.3e}");
+        // observed: about 4e-4 and 1e-13
+        assert!(err0 > 1e-6);
+        assert!(err8 < 1e-10);
+    }
+
+    #[test]
+    fn test_krylov_m_remembered_per_call_kind() {
+        // The adaptive methods remember the converged dimension separately for
+        // each kind of call (phi order, vector length), and start from it.
+        let (test_b, test_v) = gen_test_c(80);
+        // a mildly stiff system, for which a small dimension suffices
+        let dt = 0.3;
+        let n = test_v.nrows();
+        let v1 = Mat::from_fn(n, 1, |i, _| ((i + 1) as f64).sin());
+        let vb = vec![test_v.as_ref(), v1.as_ref()];
+        let ext_lo = DynRefExtendedLinOp::new(dt, &test_b, &vb);
+        let key_ext = (0, n + 1);
+        let key_phi3 = (3, n);
+
+        // alternating call kinds do not overwrite each other's dimension
+        let mut eval = new_eval(10, 100, 2, 0);
+        assert!(eval.m_by_call.is_empty());
+        for _ in 0..3 {
+            eval.apply_phi_k_v(&ext_lo, 1.0, &vb);
+            let m_ext = eval.m;
+            assert_eq!(eval.m_by_call[&key_ext], m_ext);
+            eval.apply_phi_k(&test_b, dt, test_v.as_ref(), 3);
+            assert_eq!(eval.m_by_call[&key_phi3], eval.m);
+            assert_eq!(eval.m_by_call[&key_ext], m_ext);
+        }
+        assert_eq!(eval.m_by_call.len(), 2);
+        // phi_3 converges faster than phi_0 so the two kinds settle apart
+        assert!(eval.m_by_call[&key_ext] > eval.m_by_call[&key_phi3]);
+
+        // a remembered dimension is the starting dimension of the next call of
+        // its kind: an over-provisioned start only shrinks by the lookback
+        // (here from 60), while a fresh evaluator starting from 12 settles
+        // near the dimension actually needed
+        let mut remembered = new_eval(12, 100, 2, 0);
+        remembered.m_by_call.insert(key_ext, 60);
+        remembered.apply_phi_k_v(&ext_lo, 1.0, &vb);
+        let mut fresh = new_eval(12, 100, 2, 0);
+        fresh.apply_phi_k_v(&ext_lo, 1.0, &vb);
+        // observed: 53 (= 60 - 7) and 25
+        assert!(remembered.m > 40);
+        assert!(fresh.m < 40);
+
+        // set_m forgets the remembered dimensions
+        eval.set_m(10);
+        assert_eq!(eval.m, 10);
+        assert!(eval.m_by_call.is_empty());
+    }
+
+    #[test]
+    fn test_krylov_fixed_dimension() {
+        // The fixed dimension method uses the user chosen dimension, is not
+        // substepped and does not modify the stored dimension.
+        let (test_b, test_v) = gen_test_c(80);
+        let test_b = faer::Scale(20.0) * test_b;
+        let dt = 0.3;
+        // full orthogonalization and a dimension spanning the whole space
+        let mut eval = new_eval(10, 100, 90, 0);
+        eval.set_m(90);
+        assert_eq!(eval.m, 90);
+        let mut base = vec![];
+        for k in 0..=3 {
+            let z = faer::Scale(dt) * test_b.as_ref();
+            let reference = phi_ext(z.as_ref(), k, Par::Seq) * test_v.as_ref();
+            let res = eval.apply_phik_linop_fixed(&test_b, dt, test_v.as_ref(), k);
+            println!(
+                "fixed k={k} vs pade: {:.3e}",
+                max_abs_diff(&res, &reference)
+            );
+            mat_mat_approx_eq(res.as_ref(), reference.as_ref(), 1e-10);
+            base.push(res);
+        }
+        assert_eq!(eval.m, 90);
+        // not substepped: identical result with substeps enabled
+        eval.set_max_substeps(4);
+        for k in 0..=3 {
+            let res = eval.apply_phik_linop_fixed(&test_b, dt, test_v.as_ref(), k);
+            assert_eq!(max_abs_diff(&res, &base[k]), 0.0);
+        }
     }
 }

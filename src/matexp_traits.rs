@@ -167,6 +167,9 @@ pub trait LinOpPhikvEvaluator<T: ComplexField = f64> {
 
     /// Evaluates the phi-function vector product $\varphi_k(dt \thinspace A) v$.
     ///
+    /// Takes `&mut self` because implementations may update internal state,
+    /// for example the adaptive Krylov dimension and work storage.
+    ///
     /// # Arguments
     ///
     /// * `a_lo` - linear operator $A$
@@ -177,7 +180,7 @@ pub trait LinOpPhikvEvaluator<T: ComplexField = f64> {
     /// # Returns
     ///
     /// The product $\varphi_k(dt \thinspace A) v$, same size as `v`.
-    fn apply_phi_k(&self, a_lo: &dyn LinOp<T>, dt: f64, v: MatRef<T>, k: usize) -> Mat<T>;
+    fn apply_phi_k(&mut self, a_lo: &dyn LinOp<T>, dt: f64, v: MatRef<T>, k: usize) -> Mat<T>;
 
     /// Prepare for a subsequent `apply_*` call.
     ///
