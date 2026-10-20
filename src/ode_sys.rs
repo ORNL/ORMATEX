@@ -113,15 +113,19 @@ fn build_extended_v(vb: &[MatRef<f64>]) -> (Mat<f64>, usize) {
     assert!(!vb.is_empty(), "extended operator requires at least v0");
     let n = vb[0].nrows();
     let p = vb.len() - 1;
-    let out = Mat::from_fn(n + p, 1, |r, _| {
-        if r < n {
-            vb[0][(r, 0)]
-        } else if r == n + p - 1 {
-            1.0
-        } else {
-            0.0
+    // Reading past the end of v0 yields zero, which keeps the fill loop free of
+    // per-element branching so it compiles to a copy plus a short zero tail.
+    let mut out = match vb[0].col(0).try_as_col_major() {
+        Some(v0) => {
+            let v0 = v0.as_slice();
+            Mat::from_fn(n + p, 1, |r, _| v0.get(r).copied().unwrap_or(0.0))
         }
-    });
+        // v0 is a strided view, e.g. a transposed row.
+        None => Mat::from_fn(n + p, 1, |r, _| if r < n { vb[0][(r, 0)] } else { 0.0 }),
+    };
+    if p > 0 {
+        out[(n + p - 1, 0)] = 1.0;
+    }
     (out, n)
 }
 
@@ -978,6 +982,36 @@ mod test_extended_linop {
                         assert!((out - explicit.as_ref() * rhs.as_ref()).norm_max() < 1e-12);
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_v_strided_v0() {
+        let n = 7;
+        // a transposed row is an n x 1 view with a non-unit row stride
+        let src = Mat::from_fn(3, n, |r, c| (10 * r + c + 1) as f64);
+        let v0 = src.as_ref().get(1..2, ..).transpose();
+        assert!(v0.col(0).try_as_col_major().is_none());
+        for p in [0, 1, 3] {
+            let extra: Vec<_> = (0..p)
+                .map(|c| Mat::from_fn(n, 1, |r, _| (r * (c + 2)) as f64))
+                .collect();
+            let mut vb = vec![v0];
+            vb.extend(extra.iter().map(|v| v.as_ref()));
+            let a = Mat::<f64>::identity(n, n);
+            let (v, original_n) = DynRefExtendedLinOp::new(1.0, &a, &vb).get_v(&vb);
+            assert_eq!(original_n, n);
+            assert_eq!(v.nrows(), n + p);
+            for r in 0..n + p {
+                let expected = if r < n {
+                    v0[(r, 0)]
+                } else if r == n + p - 1 {
+                    1.0
+                } else {
+                    0.0
+                };
+                assert_eq!(v[(r, 0)], expected);
             }
         }
     }
