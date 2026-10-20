@@ -152,6 +152,7 @@ def arnoldi_lop(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int) -> 
         hs: (reduced) hessenberg
         qs: (reduced) orthonormal basis of krylov subspace
     """
+    assert iom >= 1
 
     hs, qs, breakdown_k = arnoldi_lop_jit(a_lo, a_scale, b.reshape(-1), m, iom)
 
