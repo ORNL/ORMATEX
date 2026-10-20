@@ -23,10 +23,12 @@ from jax import numpy as jnp
 
 from ormatex_py.ode_sys import LinOp
 
-# inner ortho procedure, based on MGS
 @jax.jit
 def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k: int, iom: int, breakdown_tol: float=1e-25) -> bool:
     """
+    Inner ortho procedure, based on MGS.
+    The integer iom >=0 counts the number of orthogonalizations performed.
+
     Args:
         a_lo: linear operator
         a_scale: scaling factor
@@ -42,7 +44,6 @@ def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k
     print(f"jit-compiling MGS")
 
     m = hs.shape[0]
-    # window is the `iom` most recent basis vectors, including q_k (Saad IOM(iom))
     iom_depth = jnp.maximum(k + 1 - iom, 0)
 
     # current vector to ortho against
