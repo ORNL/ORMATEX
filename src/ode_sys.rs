@@ -156,7 +156,7 @@ fn extended_apply(
         bmat,
         rhs.get(n.., ..),
         1.0,
-        parallelism,
+        Par::Seq,
     );
     // K has ones only on its first superdiagonal.
     out.rb_mut()
