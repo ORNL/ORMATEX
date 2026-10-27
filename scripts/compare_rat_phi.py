@@ -1,5 +1,5 @@
 import argparse
-import ast
+import json
 import numpy as np
 from matplotlib import pyplot as plt
 from pathlib import Path
@@ -24,12 +24,15 @@ def plot_error_real(method, pfd_methods, order, pade_sub_str, s=0):
             raise NotImplementedError()
 
     if method_str in pfd_methods:
-        z, c, r_inf = pfd_methods[method_str]
+        pfd_method = pfd_methods[method_str]
+        z = [complex(z_str) for z_str in pfd_method["poles"]]
+        c = [complex(c_str) for c_str in pfd_method["coeffs"]]
+        r_inf = float(pfd_method["poly"][0])
         # we only save one pole for each complex conjugate pair, needs factor two
-        pfd_factor = 2.0
+        pfd_conj = pfd_method["pole_type"] == "conj"
     else:
         # regenerate complex conjuagte poles from scratch
-        pfd_factor = 1.0
+        pfd_conj = False
         match method:
             case "pade":
                 _, _, _, z, c, r_inf = padephi_s(nominator_order, order, s=s)
@@ -38,21 +41,37 @@ def plot_error_real(method, pfd_methods, order, pade_sub_str, s=0):
 
     z = np.asarray(z, dtype=complex).reshape((-1, 1))
     c = np.asarray(c, dtype=complex).reshape((-1, 1))
+    r_inf = float(r_inf)
 
     prt_str = (
-        f"loaded {method_str} from {file_path}:" if pfd_factor == 2.0
+        f"loaded {method_str} from {file_path}:" if pfd_conj
         else f"recomputed {method_str}:"
     )
     print(f"{prt_str}\n{z.T=}\n{c.T=}")
 
-    def eval_phi_pfd(Z, s=s, z_pole=z, c_pole=c, pfd_factor=pfd_factor):
+    def eval_phi_pfd(Z, s=s, z_pole=z, c_pole=c, r_inf=r_inf, pfd_conj=pfd_conj):
         Z = np.atleast_1d(Z)
         shape = Z.shape
-        out = pfd_factor * np.sum(c_pole * np.pow(z_pole, -s) / (Z.reshape(-1) - z_pole), axis=0)
-        constant = r_inf if s == 0 else 0.0
-        return np.real(constant + out.reshape(shape))
+        # initial expression, valid for complex poles, with conjugate pairs
+        out = np.sum(
+            c_pole * np.pow(z_pole, -s) / (Z.reshape(-1) - z_pole),
+            axis=0,
+        )
+        if np.iscomplexobj(Z):
+            if pfd_conj:
+                # add the expression with conjugate (c, z)
+                out += np.sum(
+                    c_pole.conj() * np.pow(z_pole.conj(), -s) / (Z.reshape(-1) - z_pole.conj()),
+                    axis=0,
+                )
+        else:
+            out = np.real(out) if not pfd_conj else np.real(2 * out)
+        if s == 0:
+            out += r_inf
+        out = out.reshape(shape)
+        return out
 
-    # plot approximation
+    # plot approximation on negative real line
     ts = np.linspace(-100, 0.01, 1000)
 
     exp_ts = np.exp(ts)
@@ -70,7 +89,7 @@ def plot_error_real(method, pfd_methods, order, pade_sub_str, s=0):
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(
         nrows=2,
         ncols=2,
-        figsize=(10, 10),
+        figsize=(12, 10),
         sharex=True,
     )
 
@@ -109,6 +128,75 @@ def plot_error_real(method, pfd_methods, order, pade_sub_str, s=0):
     plots_dir = Path("phi_error_plots")
     plots_dir.mkdir(exist_ok=True)
     plot_path = plots_dir / f"phi_comparison_{method_str}.png"
+
+    plt.savefig(plot_path, dpi=300)
+    plt.close()
+
+
+    # plot approximation on complex plane
+    rs = np.linspace(-30, 10, 200)
+    cs = np.linspace(-20, 20, 200)
+    Rs, Cs = np.meshgrid(rs, cs)
+    Zs = Rs + 1.0j*Cs
+
+    exp_zs = np.exp(Zs)
+    phi1_zs = phiS(Zs, s=1)
+
+    exp_zs_0 = eval_phi_pfd(Zs, s=0)
+    phi1_zs_0 = eval_phi_pfd(Zs, s=1)
+
+    fig, (ax1, ax2) = plt.subplots(
+        nrows=1,
+        ncols=2,
+        figsize=(12, 6),
+        sharey=True,
+    )
+
+    exp_err = np.log10(1e-20 + np.abs(exp_zs_0 - exp_zs))
+    contour_plot_1 = ax1.contour(
+        Rs,
+        Cs,
+        exp_err,
+        linestyles="solid",
+    )
+    cbar = fig.colorbar(contour_plot_1, ax=ax1)
+    ax1.scatter(
+        [z.real, z.real],
+        [z.imag, -z.imag],
+        marker="x",
+        color="black",
+        label=r"poles",
+    )
+    ax1.set_xlabel(r"$\Re(z)$")
+    ax1.set_ylabel(r"$\Im(z)$")
+    ax1.legend()
+    ax1.set_title(r"Exponential approximation error ($\log_{10}$)")
+
+    phi1_err = np.log10(1e-20 + np.abs(phi1_zs_0 - phi1_zs))
+    contour_plot_2 = ax2.contour(
+        Rs,
+        Cs,
+        phi1_err,
+        linestyles="solid",
+        #label=r"log-error of $\varphi_1(z)$"
+    )
+    cbar = fig.colorbar(contour_plot_2, ax=ax2)
+    ax2.scatter(
+        [z.real, z.real],
+        [z.imag, -z.imag],
+        marker="x",
+        color="black",
+        label=r"poles",
+    )
+    ax1.set_xlabel(r"$\Re(z)$")
+    ax2.legend()
+    ax2.set_title(r"$\varphi_1$ approximation error ($\log_{10}$)")
+
+    fig.suptitle(f"Errors on complex plane for method {method_str}")
+
+    plots_dir = Path("phi_error_plots")
+    plots_dir.mkdir(exist_ok=True)
+    plot_path = plots_dir / f"phi_error_{method_str}.png"
 
     plt.savefig(plot_path, dpi=300)
     plt.close()
@@ -154,12 +242,12 @@ if __name__ == "__main__":
     assert(s == 0) # comparison is only valid for s==0 right now
     method = args.method
 
-    filename = "%s_poles.txt" % method if not args.file else args.file
+    filename = f"{method}_poles.json" if not args.file else args.file
     file_path = Path(filename)
-    pfd_methods: dict[str, tuple] = {}
+    pfd_methods: dict[str, dict] = {}
     if file_path.exists():
-        text_content = file_path.read_text(encoding="utf-8")
-        pfd_methods = ast.literal_eval(text_content)
+        with open(file_path, "r", encoding="utf-8") as file:
+            pfd_methods = json.load(file)
 
     order = args.n_pfd
     assert(order == -1 or order > 0 and order % 2 == 0)

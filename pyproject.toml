@@ -26,7 +26,7 @@ dependencies = [
     "jax>=0.10.2",
     "equinox>=0.13.8",
     "pytest",
-    "mpmath",
+    "mpmath>=1.4.0",
 ]
 
 [project.optional-dependencies]

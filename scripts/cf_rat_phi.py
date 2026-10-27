@@ -64,7 +64,6 @@ def cf_rat_phi(n, s):
     pt = rt.*polyval(qc,w); % numerator
     ptc = real(fft(pt)/nf); % coeffs of numerator
     ptc = ptc(n+1:-1:1); ci = 0*qj;
-
     for k = 1:n % calculate residues
       q = qj(k);
       q2 = poly(qj(qj~=q));
@@ -77,7 +76,8 @@ def cf_rat_phi(n, s):
     zi=zi(order); % reorder poles
     ci=ci(order); % reorder residues
     end
-    `"""
+    ```
+    """
     K = 75  # no of Cheb coeffs
     nf = 1024  # no of pts for FFT
 
@@ -140,4 +140,4 @@ def cf_rat_phi(n, s):
     zi = zi[order]
     ci = ci[order]
 
-    return zi, ci, r_inf
+    return zi, ci, r_inf.real
