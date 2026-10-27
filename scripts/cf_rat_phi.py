@@ -118,15 +118,13 @@ def cf_rat_phi(n, s):
 
     zr = np.roots(v)
     qj = zr[np.abs(zr) > 1]  # poles
-
     qc = np.poly(qj)  # coeffs of denominator
-    pt = rt * np.polyval(qc, w)  # numerator
 
+    pt = rt * np.polyval(qc, w)  # numerator
     ptc = np.real(np.fft.fft(pt) / nf)  # coeffs of numerator
     ptc = ptc[n::-1]  # Slice n down to 0
 
     ci = np.zeros(qj.shape, dtype=complex)
-
     for k in range(n):  # calculate residues
         q = qj[k]
         q2 = np.poly(qj[qj != q])
