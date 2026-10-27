@@ -111,7 +111,9 @@ pub fn jac_newton<'jac>(
             a.as_mut(),
             iters_lin,
             tol_lin,
+            0.0,
             None,
+            faer::get_global_parallelism()
         )
         .unwrap();
         // apply a:  x_k+1 = x_k - a
@@ -199,7 +201,9 @@ pub fn jac_newton_sys<'a>(
             a.as_mut(),
             iters_lin,
             tol_lin,
+            0.0,
             None,
+            faer::get_global_parallelism()
         )
         .unwrap();
         // apply a:  x_k+1 = x_k - a

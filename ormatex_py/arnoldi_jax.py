@@ -23,10 +23,12 @@ from jax import numpy as jnp
 
 from ormatex_py.ode_sys import LinOp
 
-# inner ortho procedure, based on MGS
 @jax.jit
 def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k: int, iom: int, breakdown_tol: float=1e-25) -> bool:
     """
+    Inner ortho procedure, based on MGS.
+    The integer iom >=0 counts the number of orthogonalizations performed.
+
     Args:
         a_lo: linear operator
         a_scale: scaling factor
@@ -42,7 +44,7 @@ def arnoldi_mgs_lop(a_lo: LinOp, a_scale: float, hs: jax.Array, qs: jax.Array, k
     print(f"jit-compiling MGS")
 
     m = hs.shape[0]
-    iom_depth = jnp.maximum(k - iom, 0)
+    iom_depth = jnp.maximum(k + 1 - iom, 0)
 
     # current vector to ortho against
     q_k = qs[:, k]
@@ -150,6 +152,7 @@ def arnoldi_lop(a_lo: LinOp, a_scale: float, b: jax.Array, m: int, iom: int) -> 
         hs: (reduced) hessenberg
         qs: (reduced) orthonormal basis of krylov subspace
     """
+    assert iom >= 1
 
     hs, qs, breakdown_k = arnoldi_lop_jit(a_lo, a_scale, b.reshape(-1), m, iom)
 

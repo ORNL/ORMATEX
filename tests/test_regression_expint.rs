@@ -86,7 +86,7 @@ fn bateman_reference(t: f64, y0: MatRef<f64>) -> Mat<f64> {
         [0.0, -lambda_1, lambda_2],
         [0.0, 0.0, -lambda_2],
     ];
-    PadeExpm::new(12).apply_phi_k(bateman_matrix.as_ref(), t, y0, 0)
+    PadeExpm::new(12).apply_phi_k(bateman_matrix.as_ref(), t, y0, 0, faer::Par::Seq)
 }
 
 fn run_bateman<T: LinOpPhikvEvaluator>(method: &str, expm: T) -> Mat<f64> {

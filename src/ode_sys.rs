@@ -35,10 +35,11 @@
 //!   a linear combination of $\varphi_k$ function products to be evaluated with a
 //!   single matrix exponential action.
 //! * [`get_fd_jac`], [`get_fd_jac_shifted`] and [`apply_linop`] - helper functions.
+use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::matrix_free::LinOp;
 use faer::prelude::*;
-use faer::Par;
+use reborrow::ReborrowMut;
 use std::{error::Error, fmt};
 
 /// Error returned when a time integrator fails to produce a step.
@@ -96,6 +97,74 @@ impl<T, S> StepResult<T, S> {
     }
 }
 
+/// Builds the reversed forcing columns and the shift matrix in a single pass.
+fn build_extended_blocks(vb: &[MatRef<f64>]) -> (Mat<f64>, Mat<f64>) {
+    assert!(!vb.is_empty(), "extended operator requires at least v0");
+    let n = vb[0].nrows();
+    assert!(vb.iter().all(|v| v.nrows() == n && v.ncols() == 1));
+    let p = vb.len() - 1;
+    let bmat = Mat::from_fn(n, p, |r, c| vb[p - c][(r, 0)]);
+    let kmat = Mat::from_fn(p, p, |r, c| if c == r + 1 { 1.0 } else { 0.0 });
+    (bmat, kmat)
+}
+
+/// Builds [v0; 0; ...; 1], or just v0 when there is no augmented block.
+fn build_extended_v(vb: &[MatRef<f64>]) -> (Mat<f64>, usize) {
+    assert!(!vb.is_empty(), "extended operator requires at least v0");
+    let n = vb[0].nrows();
+    let p = vb.len() - 1;
+    // Reading past the end of v0 yields zero, which keeps the fill loop free of
+    // per-element branching so it compiles to a copy plus a short zero tail.
+    let mut out = match vb[0].col(0).try_as_col_major() {
+        Some(v0) => {
+            let v0 = v0.as_slice();
+            Mat::from_fn(n + p, 1, |r, _| v0.get(r).copied().unwrap_or(0.0))
+        }
+        // v0 is a strided view, e.g. a transposed row.
+        None => Mat::from_fn(n + p, 1, |r, _| if r < n { vb[0][(r, 0)] } else { 0.0 }),
+    };
+    if p > 0 {
+        out[(n + p - 1, 0)] = 1.0;
+    }
+    (out, n)
+}
+
+/// Applies [[t*A, B], [0, K]] without temporary product matrices.
+fn extended_apply(
+    inner: &dyn LinOp<f64>,
+    bmat: MatRef<f64>,
+    t: f64,
+    mut out: MatMut<f64>,
+    rhs: MatRef<f64>,
+    parallelism: Par,
+    stack: &mut MemStack,
+) {
+    let n = bmat.nrows();
+    let p = bmat.ncols();
+    assert_eq!(rhs.nrows(), n + p);
+    assert_eq!(out.nrows(), n + p);
+    assert_eq!(out.ncols(), rhs.ncols());
+    let mut top = out.rb_mut().get_mut(0..n, ..);
+    inner.apply(top.rb_mut(), rhs.get(0..n, ..), parallelism, stack);
+    faer::zip!(top.rb_mut()).for_each(|faer::unzip!(y)| *y = t * *y);
+    if p == 0 {
+        return;
+    }
+    faer::linalg::matmul::matmul(
+        top,
+        faer::Accum::Add,
+        bmat,
+        rhs.get(n.., ..),
+        1.0,
+        Par::Seq,
+    );
+    // K has ones only on its first superdiagonal.
+    out.rb_mut()
+        .get_mut(n..n + p - 1, ..)
+        .copy_from(rhs.get(n + 1.., ..));
+    out.rb_mut().row_mut(n + p - 1).fill(0.0);
+}
+
 /// Apply a linear operator to a matrix or vector and return the result.
 ///
 /// Convenience helper that allocates the output matrix (and uses faer's global
@@ -112,12 +181,9 @@ impl<T, S> StepResult<T, S> {
 /// The product $A q$ as a new matrix with `lop.nrows()` rows and `q.ncols()` columns.
 pub fn apply_linop(lop: &impl LinOp<f64>, q: MatRef<f64>) -> Mat<f64> {
     let mut out = faer::Mat::zeros(lop.nrows(), q.ncols());
-    lop.apply(
-        out.as_mut(),
-        q,
-        faer::get_global_parallelism(),
-        MemStack::new(&mut MemBuffer::new(StackReq::empty())),
-    );
+    let par = faer::get_global_parallelism();
+    let mut buffer = MemBuffer::new(lop.apply_scratch(q.ncols(), par));
+    lop.apply(out.as_mut(), q, par, MemStack::new(&mut buffer));
     out
 }
 
@@ -146,13 +212,11 @@ pub fn apply_linop(lop: &impl LinOp<f64>, q: MatRef<f64>) -> Mat<f64> {
 /// ```ignore
 /// let elop = ExtendedLinOp::new(dt, lop, &vb);
 /// let (v, n) = elop.get_v(&vb);
-/// let mut res = faer::Mat::zeros(n, 1);
+/// let mut res = faer::Mat::zeros(elop.nrows(), 1);
 /// elop.apply(res.as_mut(), v.as_ref(), ..);
 /// ```
 ///
-/// Note: `nrows`/`ncols` of this operator report the size of the inner
-/// operator only (not $n+p$); see [`DynRefExtendedLinOp`] for a variant that
-/// reports the extended size.
+/// Both `nrows` and `ncols` report the extended size $n+p$.
 pub struct ExtendedLinOp<'a> {
     t: f64,
     inner_lop: Box<dyn LinOp<f64> + 'a>,
@@ -172,23 +236,9 @@ impl<'a> ExtendedLinOp<'a> {
     ///
     /// # Panics
     ///
-    /// Panics if `vb` is empty or contains only one vector ($p = 0$).
+    /// Panics if `vb` is empty or its vectors have inconsistent shapes.
     pub fn new(t: f64, inner_lop: Box<dyn LinOp<f64> + 'a>, vb: &Vec<MatRef<f64>>) -> Self {
-        let n = vb[0].nrows();
-        let p = vb.len() - 1;
-        let mut bmat = faer::Mat::zeros(n, p);
-        let mut i = 1;
-        // build extended linear operator blocks
-        for k in (0..p).rev() {
-            bmat.as_mut()
-                .get_mut(.., k..k + 1)
-                .copy_from(vb[i].as_ref());
-            i += 1;
-        }
-        let mut kmat = faer::Mat::zeros(p, p);
-        kmat.as_mut()
-            .get_mut(0..p - 1, 1..)
-            .copy_from(faer::Mat::<f64>::identity(p - 1, p - 1));
+        let (bmat, kmat) = build_extended_blocks(vb);
         Self {
             t,
             inner_lop,
@@ -200,7 +250,8 @@ impl<'a> ExtendedLinOp<'a> {
     /// Create the starting vector for this extended linop.
     ///
     /// The result has length $n+p$: the first $n$ entries are `vb[0]`, the
-    /// following $p-1$ entries are zero and the last entry is one.
+    /// following $p-1$ entries are zero and the last entry is one. For $p=0$,
+    /// the result is just `vb[0]`.
     ///
     /// # Arguments
     ///
@@ -210,14 +261,7 @@ impl<'a> ExtendedLinOp<'a> {
     ///
     /// A tuple `(v, n)` of the extended vector and the size $n$ of the original system.
     pub fn get_v(&self, vb: &Vec<MatRef<f64>>) -> (Mat<f64>, usize) {
-        let n = vb[0].nrows();
-        let p = vb.len() - 1;
-        // let mut unit_vec = faer::Mat::zeros(p, 1);
-        // unit_vec[(n, 0)] = 1.0;
-        let mut out: Mat<f64> = faer::Mat::zeros(n + p, 1);
-        out[(n + p - 1, 0)] = 1.0;
-        out.as_mut().get_mut(0..n, 0..1).copy_from(vb[0].as_ref());
-        (out, n)
+        build_extended_v(vb)
     }
 }
 
@@ -236,34 +280,25 @@ impl<'a> LinOp<f64> for ExtendedLinOp<'a> {
 
     /// Number of rows in the linop
     fn nrows(&self) -> usize {
-        self.inner_lop.nrows()
+        self.inner_lop.nrows() + self.kmat.nrows()
     }
 
     /// Number of cols in the linop
     fn ncols(&self) -> usize {
-        self.inner_lop.ncols()
+        self.inner_lop.ncols() + self.kmat.ncols()
     }
 
     /// Apply the extended lop
-    fn apply(
-        &self,
-        mut out: MatMut<f64>,
-        rhs: MatRef<f64>,
-        parallelism: Par,
-        stack: &mut MemStack,
-    ) {
-        let n = self.bmat.nrows();
-        let p = self.bmat.ncols();
-
-        let mut av = faer::Mat::zeros(n, rhs.ncols());
-        self.inner_lop
-            .apply(av.as_mut(), rhs.get(0..n, ..), parallelism, stack);
-        let ab_v = faer::Scale(self.t) * av + self.bmat.as_ref() * rhs.get(rhs.nrows() - p.., ..);
-        let k_v = self.kmat.as_ref() * rhs.get(rhs.nrows() - p.., ..);
-        out.as_mut()
-            .get_mut(0..ab_v.nrows(), ..)
-            .copy_from(ab_v.as_ref());
-        out.as_mut().get_mut(ab_v.nrows().., ..).copy_from(k_v);
+    fn apply(&self, out: MatMut<f64>, rhs: MatRef<f64>, parallelism: Par, stack: &mut MemStack) {
+        extended_apply(
+            &*self.inner_lop,
+            self.bmat.as_ref(),
+            self.t,
+            out,
+            rhs,
+            parallelism,
+            stack,
+        );
     }
 
     fn conj_apply(
@@ -304,25 +339,9 @@ impl<'a> DynRefExtendedLinOp<'a> {
     ///
     /// # Panics
     ///
-    /// Panics if `vb` is empty.
+    /// Panics if `vb` is empty or its vectors have inconsistent shapes.
     pub fn new(t: f64, inner_lop: &'a dyn LinOp<f64>, vb: &Vec<MatRef<f64>>) -> Self {
-        let n = vb[0].nrows();
-        let p = vb.len() - 1;
-        let mut bmat = faer::Mat::zeros(n, p);
-        let mut i = 1;
-        // build extended linear operator blocks
-        for k in (0..p).rev() {
-            bmat.as_mut()
-                .get_mut(.., k..k + 1)
-                .copy_from(vb[i].as_ref());
-            i += 1;
-        }
-        let mut kmat = faer::Mat::zeros(p, p);
-        if p > 0 {
-            kmat.as_mut()
-                .get_mut(0..p - 1, 1..)
-                .copy_from(faer::Mat::<f64>::identity(p - 1, p - 1));
-        }
+        let (bmat, kmat) = build_extended_blocks(vb);
         Self {
             t,
             inner_lop,
@@ -334,7 +353,8 @@ impl<'a> DynRefExtendedLinOp<'a> {
     /// Create the starting vector for this extended linop.
     ///
     /// The result has length $n+p$: the first $n$ entries are `vb[0]`, the
-    /// following $p-1$ entries are zero and the last entry is one.
+    /// following $p-1$ entries are zero and the last entry is one. For $p=0$,
+    /// the result is just `vb[0]`.
     ///
     /// # Arguments
     ///
@@ -344,14 +364,7 @@ impl<'a> DynRefExtendedLinOp<'a> {
     ///
     /// A tuple `(v, n)` of the extended vector and the size $n$ of the original system.
     pub fn get_v(&self, vb: &Vec<MatRef<f64>>) -> (Mat<f64>, usize) {
-        let n = vb[0].nrows();
-        let p = vb.len() - 1;
-        // let mut unit_vec = faer::Mat::zeros(p, 1);
-        // unit_vec[(n, 0)] = 1.0;
-        let mut out: Mat<f64> = faer::Mat::zeros(n + p, 1);
-        out[(n + p - 1, 0)] = 1.0;
-        out.as_mut().get_mut(0..n, 0..1).copy_from(vb[0].as_ref());
-        (out, n)
+        build_extended_v(vb)
     }
 }
 
@@ -380,25 +393,16 @@ impl<'a> LinOp<f64> for DynRefExtendedLinOp<'a> {
     }
 
     /// Apply the extended lop
-    fn apply(
-        &self,
-        mut out: MatMut<f64>,
-        rhs: MatRef<f64>,
-        parallelism: Par,
-        stack: &mut MemStack,
-    ) {
-        let n = self.bmat.nrows();
-        let p = self.bmat.ncols();
-
-        let mut av = faer::Mat::zeros(n, rhs.ncols());
-        self.inner_lop
-            .apply(av.as_mut(), rhs.get(0..n, ..), parallelism, stack);
-        let ab_v = faer::Scale(self.t) * av + self.bmat.as_ref() * rhs.get(rhs.nrows() - p.., ..);
-        let k_v = self.kmat.as_ref() * rhs.get(rhs.nrows() - p.., ..);
-        out.as_mut()
-            .get_mut(0..ab_v.nrows(), ..)
-            .copy_from(ab_v.as_ref());
-        out.as_mut().get_mut(ab_v.nrows().., ..).copy_from(k_v);
+    fn apply(&self, out: MatMut<f64>, rhs: MatRef<f64>, parallelism: Par, stack: &mut MemStack) {
+        extended_apply(
+            self.inner_lop,
+            self.bmat.as_ref(),
+            self.t,
+            out,
+            rhs,
+            parallelism,
+            stack,
+        );
     }
 
     fn conj_apply(
@@ -478,9 +482,13 @@ impl<'a> fmt::Debug for ShiftedLinOp<'a> {
 
 impl<'a> LinOp<f64> for ShiftedLinOp<'a> {
     fn apply_scratch(&self, rhs_ncols: usize, parallelism: Par) -> StackReq {
-        let _ = parallelism;
-        let _ = rhs_ncols;
-        StackReq::empty()
+        let req = self.inner_lop.apply_scratch(rhs_ncols, parallelism);
+        // The two applications are sequential, so they can reuse the same
+        // workspace. An inactive mass operator does not need scratch.
+        match (self.gamma, self.mass.as_ref()) {
+            (Some(_), Some(mass)) => req.or(mass.apply_scratch(rhs_ncols, parallelism)),
+            _ => req,
+        }
     }
 
     /// Number of rows in the linop
@@ -910,4 +918,101 @@ pub fn get_fd_jac_shifted<'a>(
     // No OdeSys available here, so mass matrix is always None.
     // Use OdeSys::fjac_shifted if a mass matrix is required.
     ShiftedLinOp::new(t, inner_lop, scale, gamma, None)
+}
+
+#[cfg(test)]
+mod test_extended_linop {
+    use super::*;
+
+    #[test]
+    fn test_extended_operators_against_explicit_matrix() {
+        let n = 6;
+        let a = Mat::from_fn(n, n, |i, j| ((3 * i + j + 1) as f64).sin());
+        for p in [0, 1, 2] {
+            let vectors: Vec<_> = (0..=p)
+                .map(|c| Mat::from_fn(n, 1, |r, _| (r + c + 1) as f64 / 7.0))
+                .collect();
+            let vb: Vec<_> = vectors.iter().map(|v| v.as_ref()).collect();
+            for t in [0.0, -0.77, 1.0] {
+                let owned = ExtendedLinOp::new(t, Box::new(a.clone()), &vb);
+                let borrowed = DynRefExtendedLinOp::new(t, &a, &vb);
+                assert_eq!((owned.nrows(), owned.ncols()), (n + p, n + p));
+                assert_eq!((borrowed.nrows(), borrowed.ncols()), (n + p, n + p));
+                let explicit = Mat::from_fn(n + p, n + p, |r, c| {
+                    if r < n && c < n {
+                        t * a[(r, c)]
+                    } else if r < n {
+                        vb[p - (c - n)][(r, 0)]
+                    } else if c == r + 1 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                });
+                let (v, original_n) = owned.get_v(&vb);
+                assert_eq!(original_n, n);
+                assert_eq!((v.nrows(), v.ncols()), (n + p, 1));
+                for r in 0..n + p {
+                    let expected = if r < n {
+                        vb[0][(r, 0)]
+                    } else if r == n + p - 1 {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    assert_eq!(v[(r, 0)], expected);
+                }
+                let (v_borrowed, _) = borrowed.get_v(&vb);
+                assert_eq!((v - v_borrowed).norm_max(), 0.0);
+                for nrhs in [1, 3] {
+                    let rhs = Mat::from_fn(n + p, nrhs, |r, c| ((r + 2 * c + 1) as f64).cos());
+                    for par in [Par::Seq, Par::rayon(4)] {
+                        let mut buf = MemBuffer::new(owned.apply_scratch(nrhs, par));
+                        let mut out = Mat::full(n + p, nrhs, f64::NAN);
+                        owned.apply(out.as_mut(), rhs.as_ref(), par, MemStack::new(&mut buf));
+                        let mut buf = MemBuffer::new(borrowed.apply_scratch(nrhs, par));
+                        let mut out_borrowed = Mat::full(n + p, nrhs, f64::NAN);
+                        borrowed.apply(
+                            out_borrowed.as_mut(),
+                            rhs.as_ref(),
+                            par,
+                            MemStack::new(&mut buf),
+                        );
+                        assert!((out.as_ref() - out_borrowed).norm_max() < 1e-12);
+                        assert!((out - explicit.as_ref() * rhs.as_ref()).norm_max() < 1e-12);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_v_strided_v0() {
+        let n = 7;
+        // a transposed row is an n x 1 view with a non-unit row stride
+        let src = Mat::from_fn(3, n, |r, c| (10 * r + c + 1) as f64);
+        let v0 = src.as_ref().get(1..2, ..).transpose();
+        assert!(v0.col(0).try_as_col_major().is_none());
+        for p in [0, 1, 3] {
+            let extra: Vec<_> = (0..p)
+                .map(|c| Mat::from_fn(n, 1, |r, _| (r * (c + 2)) as f64))
+                .collect();
+            let mut vb = vec![v0];
+            vb.extend(extra.iter().map(|v| v.as_ref()));
+            let a = Mat::<f64>::identity(n, n);
+            let (v, original_n) = DynRefExtendedLinOp::new(1.0, &a, &vb).get_v(&vb);
+            assert_eq!(original_n, n);
+            assert_eq!(v.nrows(), n + p);
+            for r in 0..n + p {
+                let expected = if r < n {
+                    v0[(r, 0)]
+                } else if r == n + p - 1 {
+                    1.0
+                } else {
+                    0.0
+                };
+                assert_eq!(v[(r, 0)], expected);
+            }
+        }
+    }
 }

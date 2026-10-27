@@ -14,12 +14,12 @@ pub fn main() {
 
     // expm(dt*L) with pade approx
     let dt = 1.0;
-    let exp_lmat_pade = matexp_pade::matexp(lmat.as_ref(), dt);
+    let exp_lmat_pade = matexp_pade::matexp(lmat.as_ref(), dt, faer::Par::Seq);
 
     // expm(dt*L) with partial fraction decomposition method
     let order = 24;
     let matexp_eval = matexp_cauchy::gen_parabolic_expm(order);
-    let exp_lmat_pdf = matexp_eval.matexp_dense_cauchy(lmat.as_ref(), dt);
+    let exp_lmat_pdf = matexp_eval.matexp_dense_cauchy(lmat.as_ref(), dt, faer::Par::Seq);
 
     // show the results are consistent
     println!("Pade expm: {:?}", exp_lmat_pade.as_ref());
@@ -40,7 +40,7 @@ pub fn main() {
     let mut y = faer::mat![[0.001], [0.1], [1.0]];
     let mut t = 0.0;
     for _i in 0..10000 {
-        y = matexp_eval.matexp_dense_cauchy(lmat.as_ref(), dt) * y.as_ref();
+        y = matexp_eval.matexp_dense_cauchy(lmat.as_ref(), dt, faer::Par::Seq) * y.as_ref();
         t += dt;
         t_points.push(t);
         c0.push(y[(0, 0)]);

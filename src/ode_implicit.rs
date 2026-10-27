@@ -128,7 +128,7 @@ fn solve_mass(
     iters_lin: usize,
 ) -> Result<Mat<f64>, StepError> {
     let mut k = Mat::zeros(f.nrows(), f.ncols());
-    gmres(MassRef(mass), f, k.as_mut(), iters_lin, tol_lin, None).map_err(|_| StepError {
+    gmres(MassRef(mass), f, k.as_mut(), iters_lin, tol_lin, 0.0, None, faer::get_global_parallelism()).map_err(|_| StepError {
         error_code: 2,
         msg: String::from("mass matrix solve (GMRES) failed"),
     })?;
