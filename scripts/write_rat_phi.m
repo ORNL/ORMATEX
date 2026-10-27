@@ -7,6 +7,7 @@ method = 'cram'
 
 filename = sprintf("%s_poles.txt", method);
 fid = fopen(filename, "w");
+fprintf(fid, "{\n")
 
 for degree = 2:2:16
 
@@ -32,5 +33,6 @@ for degree = 2:2:16
   #         -1.443886338474624*1.3048745815331186/2],
   #        0.),
 end
+fprintf(fid, "}\n")
 
 fclose(fid);
