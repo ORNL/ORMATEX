@@ -259,11 +259,11 @@ where
 /// * `tol` - evaluator tolerance (1e-8)
 /// * `m` - Krylov initial dimension or Leja/Taylor polynomial degree (`max_krylov_dim`)
 /// * `max_krylov_dim` - maximum Krylov dimension (100)
-/// * `iom` - incomplete orthogonalization depth (2)
+/// * `iom` - incomplete orthogonalization depth, at least 1 (2)
 /// * `expmv_method` - Krylov dense method: `pade`, `cram`, `cram_16`, `parabolic` (`pade`)
 /// * `dd_method` - Leja/Taylor divided differences: `dd_phi` or `dd_taylor` (`dd_phi`)
 /// * `krylov_reuse` - Leja/Taylor, re-use Krylov information (False)
-/// * `max_substeps` - Leja, number of substeps, 0 for none (0)
+/// * `max_substeps` - Krylov/Leja, number of equal substeps, 0 for none (0)
 /// * `leja_a`, `leja_b`, `leja_c` - Leja/Taylor spectrum bounds (-1.0, 0.0, 1.0)
 /// * `spec_method` - Leja spectrum, `arnoldi` (adaptive) or `none` (static) (`arnoldi`)
 /// * `spec_tol`, `spec_iter`, `spec_saftey_factor` - adaptive Leja spectrum
@@ -363,6 +363,7 @@ fn integrate_wrapper_rs<'py>(
                         .with_m(m)
                         .with_max_dim(max_krylov_dim)
                         .with_iom(iom)
+                        .with_max_substeps(max_substeps)
                         .with_tol(tol),
                 )
             }
@@ -464,7 +465,7 @@ fn phi_k_rs<'py>(py: Python<'py>, a: PyReadonlyArray2<f64>, k: usize) -> Bound<'
     let a_mat = a.into_faer();
 
     // run phi_k(dt*A)
-    let phik = phi_ext(a_mat, k);
+    let phik = phi_ext(a_mat, k, Par::Seq);
 
     // convert faer mats into numpy arrays
     let phik_ndarray = phik.as_ref().into_ndarray().to_owned();
@@ -479,7 +480,7 @@ fn phi_k_rs<'py>(py: Python<'py>, a: PyReadonlyArray2<f64>, k: usize) -> Bound<'
 /// * `a_lo_scale` - scale factor applied to the linear operator
 /// * `b` - starting vector, 2D numpy array of shape `(n, 1)`
 /// * `m` - max krylov iteration
-/// * `iom` - incomplete ortho depth
+/// * `iom` - incomplete ortho depth, at least 1 (panics otherwise)
 ///
 /// # Returns
 ///
@@ -597,7 +598,7 @@ fn complex_diag_leja_phikv_static_rs<'py>(
 /// * `v_re`, `v_im` - real and imaginary parts of the vector $v$
 /// * `k` - phi-function order, 0 for the matrix exponential
 /// * `m` - maximum Leja polynomial degree
-/// * `iom` - incomplete orthogonalization depth
+/// * `iom` - incomplete orthogonalization depth, at least 1 (panics otherwise)
 /// * `n_ritz` - number of Arnoldi iterations used in the spectrum fit
 /// * `krylov_reuse` - re-use Krylov information in the Leja interpolation
 /// * `spec_saftey_factor` - scale factor applied to the fitted spectrum bounds
@@ -722,7 +723,7 @@ impl DensePhikvEvalRs {
     ) {
         let a = a_np.into_faer();
         let v0 = v0_np.into_faer();
-        self.evaluator.apply_prepare(a, dt, v0, k);
+        self.evaluator.apply_prepare(a, dt, v0, k, Par::Seq);
     }
 
     /// Evaluate $\varphi_k(\Delta t A) v_0$.
@@ -747,7 +748,7 @@ impl DensePhikvEvalRs {
     ) -> Py<PyArray2<f64>> {
         let a = a_np.into_faer();
         let v0 = v0_np.into_faer();
-        let phikv = self.evaluator.apply_phi_k(a, dt, v0, k);
+        let phikv = self.evaluator.apply_phi_k(a, dt, v0, k, Par::Seq);
         let ndarray_phikv = phikv.as_ref().into_ndarray().to_owned();
         ndarray_phikv.into_pyarray(py).to_owned().into()
     }
@@ -774,7 +775,7 @@ impl DensePhikvEvalRs {
     {
         let a = a_np.into_faer();
         let bs: Vec<MatRef<f64>> = bs_np.iter().map(|b| b.clone().into_faer()).collect();
-        let phikv = self.evaluator.apply_phi_k_v(a, dt, &bs, &ks);
+        let phikv = self.evaluator.apply_phi_k_v(a, dt, &bs, &ks, Par::Seq);
         let ndarray_phikv = phikv.as_ref().into_ndarray().to_owned();
         ndarray_phikv.into_pyarray(py).to_owned().into()
     }

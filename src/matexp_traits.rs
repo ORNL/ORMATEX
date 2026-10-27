@@ -38,6 +38,7 @@
 use crate::ode_sys::DynRefExtendedLinOp;
 use faer::matrix_free::LinOp;
 use faer::prelude::*;
+use faer::Par;
 use faer_traits::ComplexField;
 
 /// Status report of an iterative phi-function vector product evaluation.
@@ -65,11 +66,12 @@ pub trait DensePhikvEvaluator<T: ComplexField = f64> {
     /// * `dt` - time step scale factor
     /// * `v0` - the vector (or matrix of column vectors) to which $\varphi_k$ is applied
     /// * `k` - the phi-function order
+    /// * `par` - faer parallelism for the dense linear algebra
     ///
     /// # Returns
     ///
     /// The product $\varphi_k(dt \thinspace A) v_0$, same size as `v0`.
-    fn apply_phi_k(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize) -> Mat<T>;
+    fn apply_phi_k(&self, a: MatRef<T>, dt: f64, v0: MatRef<T>, k: usize, par: Par) -> Mat<T>;
 
     /// Evaluates a linear combination of phi-function vector products.
     ///
@@ -88,6 +90,7 @@ pub trait DensePhikvEvaluator<T: ComplexField = f64> {
     /// * `dt` - time step scale factor
     /// * `vb` - the vectors $v_j$ to which each phi-function is applied
     /// * `ks` - the phi-function orders $k_j$, one per entry of `vb`
+    /// * `par` - faer parallelism for the dense linear algebra
     ///
     /// # Returns
     ///
@@ -96,15 +99,21 @@ pub trait DensePhikvEvaluator<T: ComplexField = f64> {
     /// # Panics
     ///
     /// Panics if `vb` is empty or if `vb` and `ks` differ in length.
-    fn apply_phi_k_v(&self, a: MatRef<T>, dt: f64, vb: &Vec<MatRef<T>>, ks: &Vec<usize>) -> Mat<T>
-    {
+    fn apply_phi_k_v(
+        &self,
+        a: MatRef<T>,
+        dt: f64,
+        vb: &Vec<MatRef<T>>,
+        ks: &Vec<usize>,
+        par: Par,
+    ) -> Mat<T> {
         assert!(!vb.is_empty());
         assert!(vb.len() == ks.len());
         let mut out = Mat::zeros(a.nrows(), vb[0].ncols());
         // default loops over each phi_k function in serial
         for (v, k) in vb.iter().zip(ks) {
             // if v.norm_l2() >= 0.0 {
-            out += self.apply_phi_k(a, dt, v.as_ref(), *k);
+            out += self.apply_phi_k(a, dt, v.as_ref(), *k, par);
         }
         out
     }
@@ -121,7 +130,8 @@ pub trait DensePhikvEvaluator<T: ComplexField = f64> {
     /// * `_dt` - time step scale factor
     /// * `_v0` - the vector to which the phi-function will be applied
     /// * `_k` - the phi-function order
-    fn apply_prepare(&mut self, _a: MatRef<T>, _dt: f64, _v0: MatRef<T>, _k: usize) {
+    /// * `_par` - faer parallelism for the dense linear algebra
+    fn apply_prepare(&mut self, _a: MatRef<T>, _dt: f64, _v0: MatRef<T>, _k: usize, _par: Par) {
         // default is null-op
     }
 }
@@ -157,6 +167,9 @@ pub trait LinOpPhikvEvaluator<T: ComplexField = f64> {
 
     /// Evaluates the phi-function vector product $\varphi_k(dt \thinspace A) v$.
     ///
+    /// Takes `&mut self` because implementations may update internal state,
+    /// for example the adaptive Krylov dimension and work storage.
+    ///
     /// # Arguments
     ///
     /// * `a_lo` - linear operator $A$
@@ -167,7 +180,7 @@ pub trait LinOpPhikvEvaluator<T: ComplexField = f64> {
     /// # Returns
     ///
     /// The product $\varphi_k(dt \thinspace A) v$, same size as `v`.
-    fn apply_phi_k(&self, a_lo: &dyn LinOp<T>, dt: f64, v: MatRef<T>, k: usize) -> Mat<T>;
+    fn apply_phi_k(&mut self, a_lo: &dyn LinOp<T>, dt: f64, v: MatRef<T>, k: usize) -> Mat<T>;
 
     /// Prepare for a subsequent `apply_*` call.
     ///

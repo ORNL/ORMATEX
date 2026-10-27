@@ -24,7 +24,7 @@
 //!
 //! * Hochbruck, M. and Ostermann, A., "Exponential integrators",
 //!   Acta Numerica 19 (2010) 209-286, doi:10.1017/S0962492910000048
-use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
+use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::matrix_free::LinOp;
 use faer::prelude::*;
 
@@ -166,16 +166,22 @@ pub trait StepperExponential {
     ) -> Mat<f64> {
         let frhs_yr = sys.frhs(tr, yr);
 
-        let mut jac_yd = faer::Mat::zeros(y0.nrows(), 1);
+        let yd = yr.as_ref() - y0.as_ref();
+        let par = faer::get_global_parallelism();
+        let mut buffer = MemBuffer::new(sys_jac_lop_y0.apply_scratch(yd.ncols(), par));
+        let mut jac_yd = faer::Mat::zeros(sys_jac_lop_y0.nrows(), yd.ncols());
         sys_jac_lop_y0.apply(
             jac_yd.as_mut(),
-            (yr.as_ref() - y0.as_ref()).as_ref(),
-            faer::get_global_parallelism(),
-            MemStack::new(&mut MemBuffer::new(StackReq::empty())),
+            yd.as_ref(),
+            par,
+            MemStack::new(&mut buffer),
         );
 
         let dt = tr - t0;
-        let vn_t = Scale(dt) * v.unwrap_or(Mat::zeros(yr.nrows(), yr.ncols()).as_ref());
+        let vn_t = match v {
+            Some(v) => Scale(dt) * v,
+            None => Scale(dt) * Mat::<f64>::zeros(yr.nrows(), yr.ncols()).as_ref(),
+        };
         frhs_yr - frhs_y0 - jac_yd - vn_t
     }
 }
@@ -201,6 +207,37 @@ mod tests {
     struct TestStepper;
 
     impl StepperExponential for TestStepper {}
+
+    #[test]
+    fn remf_with_and_without_time_correction() {
+        let sys = TimeScaledSys;
+        let stepper = TestStepper;
+        let y0 = faer::mat![[2.0_f64], [3.0]];
+        let yr = faer::mat![[2.5_f64], [4.0]];
+        let jac = Mat::<f64>::identity(2, 2);
+        let without = stepper.remf(
+            &sys,
+            1.0,
+            y0.as_ref(),
+            1.5,
+            yr.as_ref(),
+            y0.as_ref(),
+            &jac,
+            None,
+        );
+        let with = stepper.remf(
+            &sys,
+            1.0,
+            y0.as_ref(),
+            1.5,
+            yr.as_ref(),
+            y0.as_ref(),
+            &jac,
+            Some(y0.as_ref()),
+        );
+        assert!((without - Scale(0.5) * yr.as_ref()).norm_max() < 1e-12);
+        assert!((with - Scale(0.5) * (yr - y0)).norm_max() < 1e-12);
+    }
 
     #[test]
     fn frhs_fdt_estimates_time_derivative() {

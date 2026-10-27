@@ -23,13 +23,153 @@
 //! to a vector, together with implementations for a finite difference
 //! Jacobian-vector product ([`JacobianRhsLinOp`]), a sparse matrix
 //! ([`JacobianMatLinOp`]) and the enum [`MatrixLinOp`] combining them.
+use faer::dyn_stack::{MemBuffer, MemStack};
+use faer::linalg::lu::partial_pivoting::{factor as lu_factor, solve as lu_solve};
+use faer::linalg::qr::no_pivoting::{factor as qr_factor, solve as qr_solve_mod};
+use faer::perm::PermRef;
 use faer::prelude::*;
+use faer::linalg::matmul::matmul;
+use faer::{Accum, Par};
 use faer_traits::ComplexField;
 use faer_traits::RealField;
 use num_traits::Float;
 use rand::prelude::*;
 use rand_distr::{StandardNormal, Uniform};
 use std::cell::RefCell;
+
+/// Solves the square system $A X = B$ with a Householder QR factorization.
+///
+/// Unlike `a.qr().solve(b)`, which always uses faer's global parallelism, the
+/// factorization and the solve both run with the caller supplied `par`.
+///
+/// # Arguments
+///
+/// * `a` - square matrix $A$
+/// * `b` - right hand side(s) $B$ with `a.nrows()` rows
+/// * `par` - faer parallelism used for the factorization and solve
+///
+/// # Panics
+///
+/// Panics if `a` is not square or `b` does not have `a.nrows()` rows.
+pub(crate) fn qr_solve<T: ComplexField>(a: MatRef<T>, b: MatRef<T>, par: Par) -> Mat<T> {
+    let n = a.nrows();
+    assert_eq!(n, a.ncols(), "qr_solve requires a square matrix");
+    assert_eq!(n, b.nrows(), "qr_solve rhs row mismatch");
+    let mut x = b.to_owned();
+    if n == 0 {
+        return x;
+    }
+    let mut qr = a.to_owned();
+    let block_size = qr_factor::recommended_block_size::<T>(n, n);
+    let mut q_coeff = Mat::<T>::zeros(block_size, n);
+    qr_factor::qr_in_place(
+        qr.as_mut(),
+        q_coeff.as_mut(),
+        par,
+        MemStack::new(&mut MemBuffer::new(qr_factor::qr_in_place_scratch::<T>(
+            n,
+            n,
+            block_size,
+            par,
+            Default::default(),
+        ))),
+        Default::default(),
+    );
+    qr_solve_mod::solve_in_place(
+        qr.as_ref(),
+        q_coeff.as_ref(),
+        qr.as_ref(),
+        x.as_mut(),
+        par,
+        MemStack::new(&mut MemBuffer::new(
+            qr_solve_mod::solve_in_place_scratch::<T>(n, block_size, b.ncols(), par),
+        )),
+    );
+    x
+}
+
+/// Partial pivoting LU factors of a square matrix, factored and applied with
+/// a caller supplied parallelism setting.
+///
+/// This stands in for faer's `PartialPivLu`, whose constructor always uses the
+/// global parallelism.
+#[derive(Clone, Debug)]
+pub(crate) struct LuFactors<T> {
+    lu: Mat<T>,
+    perm: Vec<usize>,
+    perm_inv: Vec<usize>,
+}
+
+impl<T: ComplexField> LuFactors<T> {
+    /// Factors the square matrix `a` using `par`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a` is not square.
+    pub(crate) fn new(a: MatRef<T>, par: Par) -> Self {
+        let n = a.nrows();
+        assert_eq!(n, a.ncols(), "LuFactors requires a square matrix");
+        let mut lu = a.to_owned();
+        let mut perm = vec![0usize; n];
+        let mut perm_inv = vec![0usize; n];
+        lu_factor::lu_in_place(
+            lu.as_mut(),
+            &mut perm,
+            &mut perm_inv,
+            par,
+            MemStack::new(&mut MemBuffer::new(lu_factor::lu_in_place_scratch::<usize, T>(
+                n,
+                n,
+                par,
+                Default::default(),
+            ))),
+            Default::default(),
+        );
+        Self { lu, perm, perm_inv }
+    }
+
+    /// Solves $A X = B$ using `par`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `b` does not have as many rows as the factored matrix.
+    pub(crate) fn solve(&self, b: MatRef<T>, par: Par) -> Mat<T> {
+        let n = self.lu.nrows();
+        assert_eq!(n, b.nrows(), "LuFactors::solve rhs row mismatch");
+        let mut x = b.to_owned();
+        if n == 0 {
+            return x;
+        }
+        lu_solve::solve_in_place(
+            self.lu.as_ref(),
+            self.lu.as_ref(),
+            PermRef::<usize>::new_checked(&self.perm, &self.perm_inv, n),
+            x.as_mut(),
+            par,
+            MemStack::new(&mut MemBuffer::new(lu_solve::solve_in_place_scratch::<usize, T>(
+                n,
+                b.ncols(),
+                par,
+            ))),
+        );
+        x
+    }
+}
+
+/// Dense matrix product `a * b` evaluated with the given parallelism.
+pub(crate) fn mm<T: ComplexField>(a: MatRef<T>, b: MatRef<T>, par: Par) -> Mat<T> {
+    let mut out = Mat::zeros(a.nrows(), b.ncols());
+    matmul(out.as_mut(), Accum::Replace, a, b, T::one_impl(), par);
+    out
+}
+
+/// Computes the scaled dense matrix product `beta * (a * b)`
+/// evaluated with the given parallelism.
+pub(crate) fn scaled_mm<T: ComplexField>(beta: T, a: MatRef<T>, b: MatRef<T>, par: Par) -> Mat<T> {
+    let mut out = Mat::zeros(a.nrows(), b.ncols());
+    matmul(out.as_mut(), Accum::Replace, a, b, beta, par);
+    out
+}
 
 /// Creates a matrix filled with standard normal samples.
 ///
@@ -136,7 +276,10 @@ pub fn real_mat<T: RealField + Float>(a: MatRef<num_complex::Complex<T>>) -> Mat
 /// # Returns
 ///
 /// The complex matrix $dt \cdot A$ with zero imaginary part, same size as `a`.
-pub fn complex_mat_scale<T: RealField + Float>(a: MatRef<T>, dt: f64) -> Mat<num_complex::Complex<T>> {
+pub fn complex_mat_scale<T: RealField + Float>(
+    a: MatRef<T>,
+    dt: f64,
+) -> Mat<num_complex::Complex<T>> {
     let dt = T::from(dt).unwrap();
     Mat::from_fn(a.nrows(), a.ncols(), |i, j| {
         num_complex::Complex::new(a[(i, j)] * dt, T::from(0.0).unwrap())
@@ -394,6 +537,34 @@ where
 mod test_matexp_rs {
     // bring everything from above (parent) module into scope
     use super::*;
+
+    #[test]
+    fn test_qr_solve_matches_faer() {
+        use faer::c64;
+        for par in [Par::Seq, Par::rayon(4)] {
+            for n in [0, 1, 7, 150] {
+                let a = Mat::from_fn(n, n, |i, j| {
+                    c64::new(((i + 3 * j) as f64).sin() + if i == j { 5.0 } else { 0.0 }, (i as f64 - j as f64).cos())
+                });
+                let b = Mat::from_fn(n, 3, |i, j| c64::new((i + j) as f64, (i * j) as f64 / 7.0));
+                let x = qr_solve(a.as_ref(), b.as_ref(), par);
+                assert!((&a * &x - &b).norm_max() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn test_lu_factors_solve() {
+        for par in [Par::Seq, Par::rayon(4)] {
+            for n in [0, 1, 7, 150] {
+                let a = Mat::from_fn(n, n, |i, j| ((i + 3 * j) as f64).sin() + if i == j { 0.5 } else { 0.0 });
+                let b = Mat::from_fn(n, 2, |i, j| (i + j) as f64);
+                let lu = LuFactors::new(a.as_ref(), par);
+                let x = lu.solve(b.as_ref(), par);
+                assert!((&a * &x - &b).norm_max() < 1e-8);
+            }
+        }
+    }
 
     /// define Lotka-Volterra system for testing ONLY
     fn lv_sys_rhs(_t: f64, x: MatRef<f64>) -> Mat<f64> {
