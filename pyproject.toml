@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ormatex_py"
-version = "0.0.2"
+version = "0.0.1"
 #dynamic = ["version"]
 authors = [
     {name = "William Gurecky", email = "gureckywl@ornl.gov"},

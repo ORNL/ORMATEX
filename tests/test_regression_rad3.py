@@ -4,6 +4,7 @@ Regression test for 3 species Reaction-Advection-Diffusion system
 Check that all exponential integrators solve a simple
 RAD system to the expected precission.
 """
+import pytest
 from ormatex_py import integrate_wrapper
 from ormatex_py.progression.rad_1d_3s import RAD_SEM
 from ormatex_py.progression.advection_diffusion_1d import AdDiffSEM, torus_distance
@@ -123,12 +124,17 @@ def test_rad_3s():
     _rad_3s("exprb3", "pfd")
     _rad_3s("exprb3_pfd", "pfd")
     _rad_3s("epi3", "leja")
-    _rad_3s("epi3_rs", "leja")
     _rad_3s("exp3_dense", "")
     _rad_3s("exprb3", "krylov")
     _rad_3s("epi3", "krylov")
     _rad_3s("exprb3", "pfd")
     _rad_3s("exprb3_pfd", "pfd")
     _rad_3s("epi3", "leja")
-    _rad_3s("epi3_rs", "leja")
     _rad_3s("exp3_dense", "")
+
+@pytest.mark.skipif(not HAS_ORMATEX_RUST, reason="rust ormatex bindings not built")
+def test_rad_3s_rs():
+    print(f"Running on {jax.devices()} using {jnp.zeros((2, 1)).dtype} by default.")
+
+    _rad_3s("epi3_rs", "leja")
+    _rad_3s("epi3_rs", "leja")
