@@ -8,7 +8,7 @@ from padephi_s import padephi_s
 from cf_rat_phi import cf_rat_phi, phiS
 
 
-def plot_error_real(method, pfd_methods, order, pade_sub_str, s=0):
+def plot_error(method, pfd_methods, order, pade_sub_str, s=0):
     match method:
         case "pade":
             pade_sub = (
@@ -234,8 +234,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-pfd",
         type=int,
-        default=2,
-        help="The number of partial fractions (even, default 2, the lowest for complex poles)."
+        default=-1,
+        help=(
+            "The number of partial fractions, counting conjugate pairs. "
+            "A value of -1 will run through all available orders (default -1)."
+        )
     )
     args = parser.parse_args()
     s = args.s
@@ -254,7 +257,7 @@ if __name__ == "__main__":
     pade_sub_str = args.pade_sub_diag
 
     if order > 0:
-        plot_error_real(method, pfd_methods, order, pade_sub_str, s=s)
+        plot_error(method, pfd_methods, order, pade_sub_str, s=s)
     elif order == -1:
         for order_ in range(2, 16+1, 2):
-            plot_error_real(method, pfd_methods, order_, pade_sub_str, s=s)
+            plot_error(method, pfd_methods, order_, pade_sub_str, s=s)

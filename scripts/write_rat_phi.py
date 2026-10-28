@@ -63,8 +63,8 @@ if __name__ == "__main__":
 
                 json_dict[method_str] = asdict(
                     PFD(
-                        poles=[f"{zi.real: 1.17e}{zi.imag:+1.17e}j" for zi in z[:len(z) // 2]],
-                        coeffs=[f"{ci.real: 1.17e}{ci.imag:+1.17e}j" for ci in c[:len(c) // 2]],
+                        poles=[f"{zi.real:+1.17e}{zi.imag:+1.17e}j" for zi in z[:len(z) // 2]],
+                        coeffs=[f"{ci.real:+1.17e}{ci.imag:+1.17e}j" for ci in c[:len(c) // 2]],
                         poly=[f"{r_inf:+1.17e}"],
                         pole_type=Pole.Conj,
                     )
