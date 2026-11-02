@@ -44,10 +44,10 @@ def plot_error(method, pfd_methods, order, pade_sub_str, s=0):
     r_inf = float(r_inf)
 
     prt_str = (
-        f"loaded {method_str} from {file_path}:" if pfd_conj
+        f"loaded {method_str}:" if pfd_conj
         else f"recomputed {method_str}:"
     )
-    print(f"{prt_str}\n{z.T=}\n{c.T=}")
+    print(f"{prt_str}\n{z=}\n{c=}")
 
     def eval_phi_pfd(Z, s=s, z_pole=z, c_pole=c, r_inf=r_inf, pfd_conj=pfd_conj):
         Z = np.atleast_1d(Z)
@@ -188,7 +188,7 @@ def plot_error(method, pfd_methods, order, pade_sub_str, s=0):
         color="black",
         label=r"poles",
     )
-    ax1.set_xlabel(r"$\Re(z)$")
+    ax2.set_xlabel(r"$\Re(z)$")
     ax2.legend()
     ax2.set_title(r"$\varphi_1$ approximation error ($\log_{10}$)")
 
@@ -259,5 +259,5 @@ if __name__ == "__main__":
     if order > 0:
         plot_error(method, pfd_methods, order, pade_sub_str, s=s)
     elif order == -1:
-        for order_ in range(2, 16+1, 2):
+        for order_ in range(2, 26+1, 2):
             plot_error(method, pfd_methods, order_, pade_sub_str, s=s)

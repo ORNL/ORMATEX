@@ -5,3 +5,4 @@ __pycache__
 *.png
 target/*
 src/target/*
+/ormatex_py/*.so
