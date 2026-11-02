@@ -26,7 +26,7 @@ dependencies = [
     "jax>=0.10.2",
     "equinox>=0.13.8",
     "pytest",
-    "mpmath",
+    "mpmath>=1.4.0",
 ]
 
 [project.optional-dependencies]
@@ -35,14 +35,11 @@ plot = ["matplotlib"]
 fem = ["scikit-fem"]
 diffrax = ["diffrax", "optimistix", "lineax"]
 
-#[project.scripts]
-#my-script = "my_package.module:function"
-
-#[tool.setuptools.packages]
-#find = {namespaces = false}  # Disable implicit namespaces
-
 [tool.setuptools]
-packages = ["ormatex_py"]
+packages = ["ormatex_py", "ormatex_py.pfd_library"]
+
+[tool.setuptools.package-data]
+"ormatex_py.pfd_library" = ["*.json"]
 
 [tool.maturin]
 module-name = "ormatex_py.ormatex"

@@ -12,7 +12,7 @@ from ormatex_py.matexp_leja import leja_coeffs_dd_phi, leja_coeffs_exp, leja_coe
 
 from ormatex_py.matexp_leja import leja_shift_scale, gen_complex_conj_leja_fast, gen_leja_circle, gen_leja_fast, gen_leja_conjugate, newton_poly_div_diff
 
-# arbitrary precision arithmitic package
+# arbitrary precision arithmetic package
 from mpmath import mp
 
 
@@ -36,10 +36,10 @@ def newton_poly_div_diff_mp(x, y, dps=80):
     return np.asarray([complex(v) for v in a])
 
 
-def _conv_allclose(a, b, rtol=1e-4):
+def _conv_allclose(a, b, rtol=1e-4, atol=1e-8):
     # convert jax arrays to np then compare
     return np.allclose(np.asarray(a, np.complex64),
-                       np.asarray(b, np.complex64), rtol=rtol)
+                       np.asarray(b, np.complex64), rtol=rtol, atol=atol)
 
 
 def test_dd_exp_re():
@@ -104,7 +104,7 @@ def test_dd_exp_im():
 
     for the leja points on the imaginary axis
     """
-    leja_x = gen_complex_conj_leja_fast(-2.0, 10)
+    leja_x = gen_complex_conj_leja_fast(-4.0, 10)
     coeffs_mp = newton_poly_div_diff_mp(leja_x, jnp.exp(leja_x))
 
     coeffs_dd = newton_poly_div_diff(leja_x, jnp.exp(leja_x))

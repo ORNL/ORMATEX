@@ -1,6 +1,9 @@
 """
 Exponential time integration methods
 """
+
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +20,6 @@ from ormatex_py.matexp_krylov import phi_linop, kiops_fixedsteps
 from ormatex_py.matexp_phi import (
     f_phi_k_sq_all,
     PhiEvaluator_PFD_Dense,
-    get_pfd_coeffs
 )
 
 from ormatex_py.matexp_leja import (
@@ -89,7 +91,7 @@ class PhiEvaluator():
         "leja",
         "pfd",
         "pfd_rs",
-        "dense"
+        "dense",
     }
 
     def __init__(self,

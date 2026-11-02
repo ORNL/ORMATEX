@@ -137,12 +137,11 @@ def test_phi_k_appl_pfd():
     Test partial fraction decomposition calc of phi_k(A)b products
     """
     pfd_methods = ["cram_16", "pade_0_14", "pade_0_16"] \
-                + [f"pade_{2*k}_{2*k}" for k in range(3,6)] \
-                + [f"pade_{2*k-1}_{2*k}" for k in range(3,6)] \
-                + [f"pade_{2*k-2}_{2*k}" for k in range(3,6)]
-    # methods are included if they can pass the tolearnce check
+                + [f"pade_{k}_{k}" for k in range(6, 16, 2)] \
+                + [f"pade_{k-1}_{k}" for k in range(6, 16, 2)] \
+                + [f"pade_{k-2}_{k}" for k in range(6, 16, 2)]
+    # methods are included if they can pass the tolerance check
     # low order methods are excluded due to accuracy limits (which is to be expected)
-    # high order methods are excluded since they are affected by cancellation errors. consider removing the ones that are. 
     print(f"test PFD methods for: {pfd_methods}")
     close = {}
     for pfd_method in pfd_methods:
